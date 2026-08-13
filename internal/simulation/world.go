@@ -115,14 +115,21 @@ func (w *World) Entity(id world.EntityID) (world.EntityState, bool) {
 
 // QueryAOI 回傳中心附近的實體 snapshot。
 func (w *World) QueryAOI(center world.Position, radius float32, options spatial.QueryOptions) []world.EntityState {
-	ids := w.spatial.QueryRadius(center, radius, options)
+	result, _ := w.QueryAOIWithStats(center, radius, options)
+	return result
+}
+
+// QueryAOIWithStats 在同一次 Spatial scan 中回傳 AOI snapshot 與候選統計，
+// 供 Siege Load Lab 量測 bucket candidate amplification。
+func (w *World) QueryAOIWithStats(center world.Position, radius float32, options spatial.QueryOptions) ([]world.EntityState, spatial.QueryStats) {
+	ids, stats := w.spatial.QueryRadiusWithStats(center, radius, options)
 	result := make([]world.EntityState, 0, len(ids))
 	for _, id := range ids {
 		if a, ok := w.actors[id]; ok {
 			result = append(result, a.entity)
 		}
 	}
-	return result
+	return result, stats
 }
 
 // Snapshot 回傳穩定排序的全世界 entity snapshot，主要供測試與管理工具使用。
