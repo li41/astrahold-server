@@ -11,9 +11,7 @@ import (
 
 var ErrUnknownBlocker = errors.New("navigation: unknown blocker")
 
-// GameplayNavigator 是 S3 起由版本化 Gameplay Proxy 驅動的權威導航實作。
-// 它刻意先使用簡單 Surface/Portal/Blocker 幾何，讓 World Compiler schema、Layer transition、
-// dynamic gate 與 LOS contract 先穩定；日後可以在不改 movement API 的前提下替換為 Recast/Detour。
+// GameplayNavigator 是版本化 Gameplay Proxy 驅動的權威導航實作。
 type GameplayNavigator struct {
 	surfaces map[world.LayerID][]gameplayworld.Surface
 	portals  []gameplayworld.Portal
@@ -57,8 +55,6 @@ func (n *GameplayNavigator) ResolveMove(from world.Position, displacement world.
 		return from, ErrBlocked
 	}
 
-	// Portal 優先於同 layer surface。只有從 portal 外部進入／穿越 trigger 才轉層，
-	// 避免 bidirectional portal 在 trigger 內每 tick 來回切 layer。
 	if targetLayer, ok := n.portalTarget(from.Layer, from.X, from.Z, toX, toZ); ok {
 		sourceSurface, sourceFound := n.surfaceAt(from.Layer, toX, toZ)
 		if !sourceFound {
@@ -71,9 +67,6 @@ func (n *GameplayNavigator) ResolveMove(from world.Position, displacement world.
 		if n.movementBlocked(targetLayer, from.X, from.Z, toX, toZ, agent.Radius) {
 			return from, ErrBlocked
 		}
-
-		// Portal 的 step contract 比較同一個 X/Z 接點兩個 surface 的高度，而不是 from.Y。
-		// 如此角色在同一 tick 先沿斜坡移動再跨 portal，不會把「坡度位移 + 跨層 step」誤算成一個大台階。
 		sourceY := sourceSurface.Plane.HeightAt(toX, toZ)
 		targetY := targetSurface.Plane.HeightAt(toX, toZ)
 		if !stepAllowed(sourceY, targetY, agent.MaxStepHeight) {
@@ -94,6 +87,16 @@ func (n *GameplayNavigator) ResolveMove(from world.Position, displacement world.
 }
 
 func (n *GameplayNavigator) HasLineOfSight(from, to world.Position) bool {
+	return n.hasLineOfSight(from, to, "")
+}
+
+// HasLineOfSightIgnoringBlocker 用於對 blocker 本體的互動，例如攻擊城門。
+// 目標 blocker 不應因為射線終點落在自身 AABB 而遮蔽自己；其他 blocker 仍照常阻擋。
+func (n *GameplayNavigator) HasLineOfSightIgnoringBlocker(from, to world.Position, ignoreBlockerID string) bool {
+	return n.hasLineOfSight(from, to, ignoreBlockerID)
+}
+
+func (n *GameplayNavigator) hasLineOfSight(from, to world.Position, ignoreBlockerID string) bool {
 	if _, ok := n.surfaceAt(from.Layer, from.X, from.Z); !ok {
 		return false
 	}
@@ -104,7 +107,7 @@ func (n *GameplayNavigator) HasLineOfSight(from, to world.Position) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	for id, blocker := range n.blockers {
-		if !n.enabled[id] || !blocker.BlocksLOS {
+		if id == ignoreBlockerID || !n.enabled[id] || !blocker.BlocksLOS {
 			continue
 		}
 		if segmentIntersectsAABB(from, to, blocker) {
@@ -114,8 +117,6 @@ func (n *GameplayNavigator) HasLineOfSight(from, to world.Position) bool {
 	return true
 }
 
-// SetBlockerEnabled 是 Siege/Gate runtime 切換 Gameplay blocker 的唯一入口。
-// 它不修改原始 world definition，也不需要重建整張導航資料。
 func (n *GameplayNavigator) SetBlockerEnabled(id string, enabled bool) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -133,6 +134,14 @@ func (n *GameplayNavigator) BlockerEnabled(id string) (bool, error) {
 		return false, ErrUnknownBlocker
 	}
 	return n.enabled[id], nil
+}
+
+func (n *GameplayNavigator) BlockerDefinition(id string) (gameplayworld.Blocker, error) {
+	blocker, ok := n.blockers[id]
+	if !ok {
+		return gameplayworld.Blocker{}, ErrUnknownBlocker
+	}
+	return blocker, nil
 }
 
 func (n *GameplayNavigator) surfaceAt(layer world.LayerID, x, z float32) (gameplayworld.Surface, bool) {
