@@ -67,12 +67,12 @@ Grid 仍然存在，但只用來做高速空間索引：
 
 ## Server Authoritative Movement
 
-Client 只送移動意圖：方向、input sequence 與時間片。
+Client 只送移動意圖：方向與 input sequence；時間推進完全由 server clock / fixed tick 決定。
 
 Server 自己決定：
 
 - 移動速度
-- 最長可接受時間片
+- 固定 tick 的時間推進
 - 碰撞
 - 導航
 - 高度

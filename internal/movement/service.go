@@ -9,15 +9,15 @@ import (
 )
 
 var (
-	ErrInvalidDelta = errors.New("movement: invalid delta time")
+	ErrInvalidDelta = errors.New("movement: invalid server delta time")
 	ErrStaleInput   = errors.New("movement: stale input sequence")
 )
 
-// Input 是 client 傳來的移動意圖，而不是 client 宣告的最終座標。
+// Input 是 client 傳來的移動意圖，而不是 client 宣告的座標或時間片。
+// 真正位移距離只由 server tick 與 server-side speed 決定。
 type Input struct {
-	Sequence     uint32
-	Direction    world.Vec3
-	DeltaSeconds float32
+	Sequence  uint32
+	Direction world.Vec3
 }
 
 // AgentState 是 movement subsystem 需要的權威角色狀態。
@@ -27,9 +27,10 @@ type AgentState struct {
 	Radius        float32
 	MaxStepHeight float32
 	LastSequence  uint32
+	Direction     world.Vec3
 }
 
-// Service 套用移動輸入並交給 Navigator 驗證。
+// Service 接收 client 意圖，並在 server tick 中透過 Navigator 推進權威位置。
 type Service struct {
 	navigator       navigation.Navigator
 	maxDeltaSeconds float32
@@ -45,27 +46,29 @@ func NewService(navigator navigation.Navigator, maxDeltaSeconds float32) *Servic
 	return &Service{navigator: navigator, maxDeltaSeconds: maxDeltaSeconds}
 }
 
-// ApplyInput 消耗一筆 input。
-//
-// client 只能提供方向與時間片；速度、碰撞與最終 Position 都由 server 決定。
-func (s *Service) ApplyInput(state *AgentState, input Input) (world.Position, error) {
+// AcceptInput 只更新移動意圖，不直接改變角色位置。
+func (s *Service) AcceptInput(state *AgentState, input Input) error {
 	if input.Sequence <= state.LastSequence {
-		return state.Position, ErrStaleInput
+		return ErrStaleInput
 	}
-	if input.DeltaSeconds <= 0 {
+	state.LastSequence = input.Sequence
+	state.Direction = input.Direction.NormalizedXZ()
+	return nil
+}
+
+// Step 由 server simulation tick 呼叫。
+// deltaSeconds 必須來自 server clock，而不是 client packet。
+func (s *Service) Step(state *AgentState, deltaSeconds float32) (world.Position, error) {
+	if deltaSeconds <= 0 {
 		return state.Position, ErrInvalidDelta
 	}
 
-	// 即使被牆擋住，這個 sequence 仍視為已消耗，避免重送舊 input。
-	state.LastSequence = input.Sequence
-
-	delta := input.DeltaSeconds
+	delta := deltaSeconds
 	if delta > s.maxDeltaSeconds {
 		delta = s.maxDeltaSeconds
 	}
 
-	direction := input.Direction.NormalizedXZ()
-	displacement := direction.Scale(state.Speed * delta)
+	displacement := state.Direction.Scale(state.Speed * delta)
 	next, err := s.navigator.ResolveMove(state.Position, displacement, navigation.Agent{
 		Radius:        state.Radius,
 		MaxStepHeight: state.MaxStepHeight,

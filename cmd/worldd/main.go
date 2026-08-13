@@ -30,6 +30,14 @@ func main() {
 	if err := sim.Spawn(player, 6, 0.35, 0.5); err != nil {
 		log.Fatal(err)
 	}
+	if err := sim.SetMoveInput(1, movement.Input{Sequence: 1, Direction: world.Vec3{X: 1}}); err != nil {
+		log.Fatal(err)
+	}
+	if errs := sim.Tick(0.05); len(errs) != 0 {
+		log.Fatalf("world tick failed: %v", errs)
+	}
 
-	log.Printf("Astrahold world core ready: entities=%d", len(sim.Snapshot()))
+	entity, _ := sim.Entity(1)
+	log.Printf("Astrahold world core ready: entities=%d player=(%.2f, %.2f, %.2f)",
+		len(sim.Snapshot()), entity.Transform.Position.X, entity.Transform.Position.Y, entity.Transform.Position.Z)
 }

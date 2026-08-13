@@ -9,11 +9,11 @@ import "github.com/li41/astrahold-server/internal/world"
 const Version uint16 = 1
 
 // ClientMoveInput 是 client 上送的移動意圖。
+// Client 不提供權威 delta time 或最終座標。
 type ClientMoveInput struct {
-	Sequence     uint32
-	DirectionX   float32
-	DirectionZ   float32
-	DeltaSeconds float32
+	Sequence   uint32
+	DirectionX float32
+	DirectionZ float32
 }
 
 // EntityTransform 是 server 對 client 發布的權威空間狀態。

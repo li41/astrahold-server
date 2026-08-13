@@ -57,13 +57,13 @@ Spatial Grid 32m x 32m（可調）
 
 ## 移動模型
 
-Client 不提交最終座標，只提交移動意圖：
+Client 不提交最終座標，也不提供權威 delta time，只提交移動意圖：
 
 ```text
 Client input
-(direction, sequence, delta)
+(direction, sequence)
         ↓
-Server speed / state
+Server fixed tick + speed / state
         ↓
 Navigator.ResolveMove
         ↓

@@ -20,6 +20,12 @@ type actor struct {
 	move   movement.AgentState
 }
 
+// TickError 表示單一實體在某個 server tick 中的移動失敗。
+type TickError struct {
+	EntityID world.EntityID
+	Err      error
+}
+
 // World 是單一 zone/world simulation 的第一版容器。
 //
 // 目前假設由單一 simulation goroutine 呼叫，因此不放 mutex。
@@ -66,20 +72,37 @@ func (w *World) Remove(id world.EntityID) {
 	w.spatial.Remove(id)
 }
 
-// ApplyMove 套用 client 移動意圖，成功後同步更新 AOI index。
-func (w *World) ApplyMove(id world.EntityID, input movement.Input) (world.Position, error) {
+// SetMoveInput 只更新 client 的移動意圖；實際位置要等下一個 server Tick 才改變。
+func (w *World) SetMoveInput(id world.EntityID, input movement.Input) error {
 	a, ok := w.actors[id]
 	if !ok {
-		return world.Position{}, ErrEntityNotFound
+		return ErrEntityNotFound
 	}
+	return w.movement.AcceptInput(&a.move, input)
+}
 
-	position, err := w.movement.ApplyInput(&a.move, input)
-	if err != nil {
-		return position, err
+// Tick 由 server clock 推進世界。
+//
+// 某個 actor 被阻擋不會中止整個 world tick；錯誤會逐一回報，方便之後產生 correction/event。
+func (w *World) Tick(deltaSeconds float32) []TickError {
+	ids := make([]world.EntityID, 0, len(w.actors))
+	for id := range w.actors {
+		ids = append(ids, id)
 	}
-	a.entity.Transform.Position = position
-	w.spatial.Upsert(id, position)
-	return position, nil
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	var tickErrors []TickError
+	for _, id := range ids {
+		a := w.actors[id]
+		position, err := w.movement.Step(&a.move, deltaSeconds)
+		if err != nil {
+			tickErrors = append(tickErrors, TickError{EntityID: id, Err: err})
+			continue
+		}
+		a.entity.Transform.Position = position
+		w.spatial.Upsert(id, position)
+	}
+	return tickErrors
 }
 
 func (w *World) Entity(id world.EntityID) (world.EntityState, bool) {
