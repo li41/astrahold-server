@@ -7,14 +7,14 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
-func TestGateControlMessagesRoundTrip(t *testing.T) {
+func TestActionControlMessagesRoundTrip(t *testing.T) {
 	codec := Codec{}
-	attack := protocol.ClientAttackGate{GateID: "main-gate"}
-	data, err := codec.Marshal(attack)
+	action := protocol.ClientUseAction{ActionID: "basic-attack", TargetKind: protocol.ActionTargetGate, TargetID: "main-gate"}
+	data, err := codec.Marshal(action)
 	if err != nil { t.Fatal(err) }
-	decoded, err := codec.Unmarshal(protocol.MessageClientAttackGate, data)
+	decoded, err := codec.Unmarshal(protocol.MessageClientUseAction, data)
 	if err != nil { t.Fatal(err) }
-	if !reflect.DeepEqual(decoded, attack) { t.Fatalf("attack got=%#v want=%#v", decoded, attack) }
+	if !reflect.DeepEqual(decoded, action) { t.Fatalf("action got=%#v want=%#v", decoded, action) }
 
 	state := protocol.WorldDynamicState{
 		Revision: 4,
