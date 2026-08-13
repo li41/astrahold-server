@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "world_id": "castle-sandbox",
-  "revision": "s3a-001",
+  "revision": "s3c-001",
   "units": "meters",
   "agent": {
     "radius": 0.35,
@@ -12,19 +12,25 @@
     {
       "id": "ground",
       "layer": 0,
-      "bounds": { "min_x": -40, "max_x": 40, "min_z": -50, "max_z": 20 },
+      "bounds": { "min_x": -40, "max_x": 40, "min_z": -50, "max_z": 40 },
       "plane": { "origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0 }
     },
     {
       "id": "west-stair",
       "layer": 1,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 0, "max_z": 8 },
-      "plane": { "origin_x": -25, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 1 }
+      "bounds": { "min_x": -27, "max_x": -23, "min_z": 12, "max_z": 20 },
+      "plane": { "origin_x": -25, "origin_z": 20, "base_y": 0, "slope_x": 0, "slope_z": -1 }
     },
     {
-      "id": "wall-walk",
+      "id": "east-stair",
+      "layer": 1,
+      "bounds": { "min_x": 23, "max_x": 27, "min_z": 12, "max_z": 20 },
+      "plane": { "origin_x": 25, "origin_z": 20, "base_y": 0, "slope_x": 0, "slope_z": -1 }
+    },
+    {
+      "id": "front-wall-walk",
       "layer": 2,
-      "bounds": { "min_x": -30, "max_x": 30, "min_z": 7.2, "max_z": 12 },
+      "bounds": { "min_x": -30, "max_x": 30, "min_z": 8.5, "max_z": 12.5 },
       "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
     }
   ],
@@ -33,14 +39,28 @@
       "id": "ground-to-west-stair",
       "from_layer": 0,
       "to_layer": 1,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 0, "max_z": 0.8 },
+      "bounds": { "min_x": -27, "max_x": -23, "min_z": 19.5, "max_z": 20 },
       "bidirectional": true
     },
     {
-      "id": "west-stair-to-wall",
+      "id": "west-stair-to-front-wall",
       "from_layer": 1,
       "to_layer": 2,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 7.2, "max_z": 8 },
+      "bounds": { "min_x": -27, "max_x": -23, "min_z": 12, "max_z": 12.5 },
+      "bidirectional": true
+    },
+    {
+      "id": "ground-to-east-stair",
+      "from_layer": 0,
+      "to_layer": 1,
+      "bounds": { "min_x": 23, "max_x": 27, "min_z": 19.5, "max_z": 20 },
+      "bidirectional": true
+    },
+    {
+      "id": "east-stair-to-front-wall",
+      "from_layer": 1,
+      "to_layer": 2,
+      "bounds": { "min_x": 23, "max_x": 27, "min_z": 12, "max_z": 12.5 },
       "bidirectional": true
     }
   ],
@@ -60,7 +80,7 @@
       "layer": 0,
       "bounds": { "min_x": -30, "max_x": -3, "min_z": 9.5, "max_z": 10.5 },
       "min_y": 0,
-      "max_y": 10,
+      "max_y": 7.5,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
@@ -70,7 +90,37 @@
       "layer": 0,
       "bounds": { "min_x": 3, "max_x": 30, "min_z": 9.5, "max_z": 10.5 },
       "min_y": 0,
-      "max_y": 10,
+      "max_y": 7.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "west-side-wall",
+      "layer": 0,
+      "bounds": { "min_x": -30.5, "max_x": -29.5, "min_z": 10.5, "max_z": 35.5 },
+      "min_y": 0,
+      "max_y": 7.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "east-side-wall",
+      "layer": 0,
+      "bounds": { "min_x": 29.5, "max_x": 30.5, "min_z": 10.5, "max_z": 35.5 },
+      "min_y": 0,
+      "max_y": 7.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "rear-wall",
+      "layer": 0,
+      "bounds": { "min_x": -30, "max_x": 30, "min_z": 34.5, "max_z": 35.5 },
+      "min_y": 0,
+      "max_y": 7.5,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
