@@ -6,16 +6,19 @@ import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 var ErrDynamicWorldUnavailable = errors.New("worldruntime: dynamic world unavailable")
 
 // DynamicWorld 是 WorldRuntime 對動態 Gameplay Proxy 的最小需求。
-// Siege/Gate domain 只應提交 Runtime command，不應直接依賴 navigation implementation。
+// Siege/Gate domain 只透過此 contract 操作 blocker/LOS，不依賴 navigation implementation。
 type DynamicWorld interface {
 	SetBlockerEnabled(id string, enabled bool) error
 	BlockerEnabled(id string) (bool, error)
+	BlockerDefinition(id string) (gameplayworld.Blocker, error)
 	BlockerStates() []gameplayworld.BlockerState
+	HasLineOfSightIgnoringBlocker(from, to world.Position, ignoreBlockerID string) bool
 }
 
 type Option func(*Runtime)
@@ -48,9 +51,12 @@ func (r *Runtime) applySetBlocker(name string, command setBlockerCommand, report
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err})
 		return
 	}
+	r.bumpDynamicRevision()
+}
+
+func (r *Runtime) bumpDynamicRevision() {
 	r.dynamicRevision++
 	if r.dynamicRevision == 0 {
-		// uint64 wrap 在實務上不可達；仍避免 0 被當成「從未同步」。
 		r.dynamicRevision = 1
 	}
 }
@@ -65,7 +71,15 @@ func (r *Runtime) replicateDynamicState(tick uint64, report *StepReport) {
 	for i, state := range domainStates {
 		blockers[i] = protocol.WorldBlockerState{ID: state.ID, Enabled: state.Enabled}
 	}
-	message := protocol.WorldDynamicState{Revision: r.dynamicRevision, Blockers: blockers}
+	gates := make([]protocol.WorldGateState, 0)
+	if r.siege != nil {
+		states := r.siege.States()
+		gates = make([]protocol.WorldGateState, len(states))
+		for i, state := range states {
+			gates[i] = protocol.WorldGateState{ID: state.ID, HP: state.HP, MaxHP: state.MaxHP, Destroyed: state.Destroyed}
+		}
+	}
+	message := protocol.WorldDynamicState{Revision: r.dynamicRevision, Blockers: blockers, Gates: gates}
 
 	sessions := r.sessions.List()
 	active := make(map[session.ID]struct{}, len(sessions))
@@ -89,7 +103,6 @@ func (r *Runtime) replicateDynamicState(tick uint64, report *StepReport) {
 		r.sessionDynamicRevision[s.ID] = r.dynamicRevision
 	}
 
-	// Session 離開後清除 per-session revision，避免長時間 world process 緩慢累積 key。
 	for id := range r.sessionDynamicRevision {
 		if _, ok := active[id]; !ok {
 			delete(r.sessionDynamicRevision, id)
