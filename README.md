@@ -2,11 +2,11 @@
 
 Astrahold 的全新權威 MMORPG 伺服器核心。
 
-> 目標不是把天堂私服 Server 換名字，而是保留我們已經學會的 MMO 經驗，重新建立適合 **3D 王城、多人攻城與長期商用開發** 的底層。
+> 目標不是把天堂私服 Server 換名字，而是保留已驗證的 MMO 經驗，重新建立適合 **3D 王城、多人攻城與長期商用開發** 的底層。
 
-## 現階段目標
+## 現階段狀態
 
-目前已完成 S0 世界核心與 S1 即時世界 Runtime 基線：
+目前已完成 S0、S1、S2-A 與 **Server 端 S2-B**：
 
 ```text
 World Position (XYZ + Layer)
@@ -23,21 +23,25 @@ Session / Sequence
         ↓
 Replication
         ↓
-Protocol Envelope / Frame
+Astrahold Frame + JSON v1
         ↓
-Godot Thin Client
+TCP Reliable + UDP Realtime
+        ↓
+Godot Thin Client（下一步 S2-C）
 ```
 
 ## 與 Myriad Throne 的關係
 
 `myriad-throne-server` 是參考來源，不是 Astrahold 的基底。
 
-我們會逐項評估真正值得保留的 domain 邏輯，例如角色、道具、技能、Buff、Party、Guild、持久化與資料驅動經驗；舊 Lineage protocol、2D 地圖座標、舊地圖格式與私服相容包袱不直接搬入。
+舊 Lineage protocol、2D `gx/gy`、舊地圖格式與私服相容包袱不直接搬入。角色、道具、技能、Buff、Party、Guild、持久化等 domain 經驗，之後只在符合 Astrahold 新架構時逐項移植。
 
-詳細原則見：
+詳細規約：
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/S1_RUNTIME.md`](docs/S1_RUNTIME.md)
+- [`docs/S2_PROTOCOL.md`](docs/S2_PROTOCOL.md)
+- [`docs/S2B_TRANSPORT.md`](docs/S2B_TRANSPORT.md)
 
 ## 世界座標
 
@@ -56,26 +60,28 @@ type Position struct {
 - `Y`：高度
 - `Layer`：邏輯樓層／拓樸層
 
-因此未來可以正確表達城牆、樓梯、地下層、橋面與高低差，而不必把 3D 世界硬壓回 2D Grid。
+因此可以表達城牆、樓梯、地下層、橋面與高低差，而不需要把 3D 世界硬壓回 2D Grid。
 
-## S1 Runtime 核心原則
+## Runtime 不變量
 
-Astrahold 現在明確維持兩條不變量：
+Astrahold 維持兩條核心規則：
 
-1. Network、DB、GM、管理介面不得直接修改 World mutable state，只能透過 Command Queue。
-2. World Tick 不得直接做 blocking socket I/O，只能把 outbound message 丟到非阻塞 Connection / Outbox。
+1. Network、DB、GM、管理介面不得直接修改 World mutable state，只能透過 bounded Command Queue。
+2. World Tick 不得直接做 blocking socket I/O，只能把 outbound message 送到非阻塞 Connection / Outbox。
 
-這樣可以讓每個 World/Zone 維持單一 simulation owner，避免未來 Combat、Skill、NPC AI、Siege 到處加 mutex。
+這讓每個 World/Zone 可以維持單一 simulation owner，避免未來 Combat、Skill、NPC AI、Siege 到處加 mutex。
 
 ## Server Authoritative Movement
 
-Client 只送方向與 **Session scoped input sequence**；時間推進完全由 Server fixed tick 決定。
+Client 只送方向與 **Session-scoped input sequence**；時間推進完全由 Server fixed tick 決定。
 
 ```text
 ClientMoveInput
-(direction + sequence)
+(direction)
         ↓
-Session sequence validation
+Envelope.Sequence
+        ↓
+Gateway / Session validation
         ↓
 Command Queue
         ↓
@@ -85,10 +91,10 @@ Movement + Navigation
         ↓
 Authoritative Position
         ↓
-Snapshot + Correction
+Snapshot + PositionCorrection
 ```
 
-Sequence 不再放在 Movement actor state。玩家重新連線取得新 Session 後可以重新建立 sequence 空間，不會被舊 actor 狀態污染。
+Sequence 只有 Frame / Envelope 是唯一真相來源，不重複塞進 payload。
 
 ## Protocol / Transport 分層
 
@@ -104,33 +110,71 @@ Astrahold Frame v1
 Transport Adapter
 ```
 
-目前不綁死 UDP、QUIC、TCP，也不綁死 Protobuf、FlatBuffers 或自訂 binary encoding。
+S2 開發期目前使用：
 
-Delivery class 目前分成：
+```text
+ReliableOrdered
+→ TCP
+→ SessionWelcome / Spawn / Despawn / 重要事件
 
-- `ReliableOrdered`：Spawn、Despawn、重要狀態事件
-- `RealtimeSequenced`：Snapshot、PositionCorrection 等最新狀態優先資料
+RealtimeSequenced
+→ UDP
+→ Move / Snapshot / PositionCorrection
+```
+
+JSON v1 只是 Godot Thin Client 的開發橋接 Codec，不是最終商用 wire format。
+
+## S2-B 連線流程
+
+```text
+TCP connect
+    ↓
+SessionID / EntityID
+    ↓
+128-bit Realtime Token
+    ↓
+SessionWelcome (TCP)
+    ↓
+WorldRuntime.EnqueueJoin
+    ↓
+Client 第一個 UDP frame + token
+    ↓
+Server 綁定 UDP endpoint
+    ↓
+Move → Gateway → Runtime
+    ↓
+Snapshot / Correction → UDP
+```
+
+Realtime datagram 初始限制在 1200 bytes，避免默默依賴 IP fragmentation。Realtime outbox 採 latest-state mailbox，舊 snapshot 可以被較新 snapshot 取代；Reliable queue 則不得靜默丟失。
+
+> S2-B 的 TCP 目前沒有 TLS，預設只綁 `127.0.0.1`。這是本機／受控環境開發 Transport，不可直接當成 Internet-facing security boundary。
 
 ## 目前目錄
 
 ```text
 astrahold-server/
 ├── cmd/
-│   └── worldd/             # 固定 Tick 世界程序入口
+│   └── worldd/              # World Loop + TCP/UDP composition root
 ├── internal/
-│   ├── world/              # XYZ + Layer 與 Entity 基礎型別
-│   ├── spatial/            # AOI spatial grid
-│   ├── navigation/         # Navigation / LOS 抽象
-│   ├── movement/           # Server authoritative movement
-│   ├── simulation/         # World mutable state
-│   ├── protocol/           # Astrahold message semantic / Envelope
-│   ├── transport/          # Frame v1 / PayloadCodec 邊界
-│   ├── session/            # Session / Connection / sequence
-│   ├── replication/        # Spawn / Despawn / Snapshot / Correction
-│   └── worldruntime/       # Command Queue / Fixed Tick / orchestration
+│   ├── world/               # XYZ + Layer / Entity 型別
+│   ├── spatial/             # AOI spatial grid
+│   ├── navigation/          # Navigation / LOS 抽象
+│   ├── movement/            # Server-authoritative movement
+│   ├── simulation/          # World mutable state
+│   ├── protocol/            # Message semantic / Envelope
+│   ├── codec/jsonv1/        # S2 開發 Payload Codec
+│   ├── transport/           # Astrahold Frame / Stream helper
+│   ├── gateway/             # Untrusted ingress policy
+│   ├── session/             # Session / sequence / connection
+│   ├── replication/         # Spawn / Despawn / Snapshot / Correction
+│   ├── worldruntime/        # Command Queue / Join / Leave / Fixed Tick
+│   └── netadapter/tcpudp/   # S2-B TCP Reliable + UDP Realtime adapter
 └── docs/
     ├── ARCHITECTURE.md
-    └── S1_RUNTIME.md
+    ├── S1_RUNTIME.md
+    ├── S2_PROTOCOL.md
+    └── S2B_TRANSPORT.md
 ```
 
 ## 里程碑
@@ -143,33 +187,50 @@ astrahold-server/
 - [x] Authoritative Movement
 - [x] Navigation abstraction
 - [x] Protocol semantic DTO
-- [x] 基礎單元測試
 
-### S1 — World Runtime + Realtime Protocol Boundary
+### S1 — World Runtime
 
 - [x] 固定 20 Hz world loop
 - [x] bounded command queue
 - [x] connection/session abstraction
-- [x] Session scoped input sequence
+- [x] Session-scoped input sequence
 - [x] Reliable / Realtime outbound sequence
-- [x] Astrahold packet frame v1
-- [x] 可替換 PayloadCodec 介面
-- [x] spawn/despawn/snapshot replication
-- [x] server tick / position correction
-- [x] non-blocking outbound / backpressure error
-- [x] 單元測試、`go vet`、race detector 驗證
+- [x] Astrahold Frame v1
+- [x] spawn/despawn/snapshot/correction
+- [x] backpressure seam
 
-### S2 — Godot Thin Client
+### S2-A — Protocol / Ingress
 
-- [ ] 選定第一版 Payload Codec
-- [ ] 實作第一個 Transport Adapter
-- [ ] Godot 連線
-- [ ] 進入測試世界
-- [ ] Capsule 玩家
+- [x] Input sequence 單一來源化
+- [x] Gateway / Ingress 白名單
+- [x] JSON v1 開發 Codec
+- [x] Protocol DTO 與 wire struct 分離
+
+### S2-B — Server Transport
+
+- [x] TCP Reliable listener
+- [x] UDP Realtime listener
+- [x] SessionWelcome
+- [x] 128-bit realtime token
+- [x] UDP token → Session routing
+- [x] `EnqueueJoin` / `EnqueueLeave`
+- [x] TCP stream frame reader/writer
+- [x] 1200-byte UDP datagram guard
+- [x] Realtime latest-state mailbox
+- [x] ephemeral-port integration test
+- [x] `worldd` 真實 listener 啟動
+
+### S2-C — Godot Thin Client（下一步）
+
+- [ ] Godot C# Astrahold Frame parser
+- [ ] JSON v1 Codec
+- [ ] TCP SessionWelcome
+- [ ] UDP Realtime bind / movement
+- [ ] Capsule Entity
 - [ ] XYZ movement
-- [ ] 第二個 client 可互相看到
-- [ ] AOI enter/leave
-- [ ] interpolation / reconciliation prototype
+- [ ] 第二個 Client 互相看到
+- [ ] Snapshot Interpolation
+- [ ] Prediction / Reconciliation prototype
 
 ### S3 — Castle Sandbox
 
@@ -180,14 +241,31 @@ astrahold-server/
 - [ ] LOS
 - [ ] 城牆上下同時有人
 
-之後才開始 Combat / Skill / Siege 與大規模 VAT crowd 壓測。
-
 ## 開發
 
 ```bash
 go test ./...
 go vet ./...
 go run ./cmd/worldd
+```
+
+預設監聽：
+
+```text
+TCP 127.0.0.1:7777
+UDP 127.0.0.1:7778
+World 20 Hz
+Snapshot 10 Hz
+```
+
+可調整：
+
+```bash
+go run ./cmd/worldd \
+  -tcp 127.0.0.1:7777 \
+  -udp 127.0.0.1:7778 \
+  -tick-rate 20 \
+  -snapshot-rate 10
 ```
 
 目前核心仍只使用 Go 標準函式庫，先把依賴面與架構責任維持乾淨。
