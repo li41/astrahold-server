@@ -9,6 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/world"
@@ -24,8 +25,7 @@ type Config struct {
 	MaxCommandsPerTick   int
 	SnapshotEveryTicks   uint64
 	AOIOptions           spatial.QueryOptions
-	// CollectMetrics 只在 Load Lab / profiling 時開啟；一般 worldd 不付階段 time.Now() 成本。
-	CollectMetrics bool
+	CollectMetrics       bool
 }
 
 func DefaultConfig() Config {
@@ -40,8 +40,6 @@ func DefaultConfig() Config {
 	}
 }
 
-// JoinRequest 讓 Network/Auth 等外層只提交「加入世界」意圖。
-// 真正的 Entity Spawn 與 Session Registry mutation 仍在 simulation owner goroutine 內完成。
 type JoinRequest struct {
 	Session       *session.Session
 	Entity        world.EntityState
@@ -63,8 +61,6 @@ type DeliveryError struct {
 	Err         error
 }
 
-// StepMetrics 是單一 World Tick 的 profiling 資料。
-// Duration 欄位只有 Config.CollectMetrics=true 時才填值；計數欄位則永遠可用。
 type StepMetrics struct {
 	CommandQueueDepthBefore int
 	CommandQueueDepthAfter  int
@@ -75,12 +71,12 @@ type StepMetrics struct {
 	AOIVisible              int
 	OutboundMessages        int
 
-	SimulationDuration         time.Duration
+	SimulationDuration          time.Duration
 	DynamicReplicationDuration time.Duration
-	AOIDuration                time.Duration
-	ReplicationBuildDuration   time.Duration
-	DeliveryDuration           time.Duration
-	TotalDuration              time.Duration
+	AOIDuration                 time.Duration
+	ReplicationBuildDuration    time.Duration
+	DeliveryDuration            time.Duration
+	TotalDuration               time.Duration
 }
 
 type StepReport struct {
@@ -99,6 +95,7 @@ type Runtime struct {
 	config      Config
 
 	dynamic                DynamicWorld
+	siege                  *siege.Service
 	dynamicRevision        uint64
 	sessionDynamicRevision map[session.ID]uint64
 }
@@ -130,7 +127,6 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		}
 	}
 	if runtime.dynamic != nil {
-		// Revision 1 表示 bake 初始 dynamic state；新 Session 必須先收到完整 snapshot。
 		runtime.dynamicRevision = 1
 	}
 	return runtime
@@ -176,6 +172,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
+		case attackGateCommand:
+			r.applyAttackGate(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
@@ -190,7 +188,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
-	// Dynamic World 是低頻 Reliable state，不能被 SnapshotEveryTicks 節流。
 	if measure {
 		stageStart = time.Now()
 	}
