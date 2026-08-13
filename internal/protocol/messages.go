@@ -8,8 +8,13 @@ const Version uint16 = 1
 type MessageType uint16
 
 const (
-	MessageUnknown            MessageType = 0
-	MessageClientMoveInput    MessageType = 1
+	MessageUnknown         MessageType = 0
+	MessageClientMoveInput MessageType = 1
+
+	// SessionWelcome 是 S2 開發階段的連線 bootstrap 訊息。
+	// RealtimeToken 是 TCP/UDP adapter 的 opaque routing capability；不是正式帳號驗證憑證。
+	MessageSessionWelcome MessageType = 10
+
 	MessageEntitySpawn        MessageType = 100
 	MessageEntityDespawn      MessageType = 101
 	MessageWorldSnapshot      MessageType = 102
@@ -42,10 +47,24 @@ func (e Envelope) MessageType() MessageType {
 
 // ClientMoveInput 只描述移動意圖；input sequence 由外層 Envelope/Frame 提供，避免雙重來源。
 type ClientMoveInput struct {
-	DirectionX, DirectionZ float32
+	DirectionX float32
+	DirectionZ float32
 }
 
 func (ClientMoveInput) Type() MessageType { return MessageClientMoveInput }
+
+// SessionWelcome 透過 Reliable stream 傳送 S2-B 開發 Transport 所需資訊。
+// RealtimeToken 必須視為 opaque，不應寫入 log 或持久化為玩家資料。
+type SessionWelcome struct {
+	SessionID      uint64
+	EntityID       world.EntityID
+	RealtimePort   uint16
+	RealtimeToken  string
+	TickRateHz     uint16
+	SnapshotRateHz uint16
+}
+
+func (SessionWelcome) Type() MessageType { return MessageSessionWelcome }
 
 type EntityTransform struct {
 	EntityID world.EntityID

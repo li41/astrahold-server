@@ -38,6 +38,15 @@ type clientMoveInput struct {
 	DZ float32 `json:"dz"`
 }
 
+type sessionWelcome struct {
+	SessionID      uint64 `json:"session_id"`
+	EntityID       uint64 `json:"entity_id"`
+	RealtimePort   uint16 `json:"realtime_port"`
+	RealtimeToken  string `json:"realtime_token"`
+	TickRateHz     uint16 `json:"tick_rate_hz"`
+	SnapshotRateHz uint16 `json:"snapshot_rate_hz"`
+}
+
 type entitySpawn struct {
 	EntityID  uint64          `json:"entity_id"`
 	Kind      uint8           `json:"kind"`
@@ -70,6 +79,15 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			return nil, ErrUnsupportedMessage
 		}
 		return json.Marshal(clientMoveInput{DX: m.DirectionX, DZ: m.DirectionZ})
+	case protocol.SessionWelcome:
+		return json.Marshal(sessionWelcome{
+			SessionID:      m.SessionID,
+			EntityID:       uint64(m.EntityID),
+			RealtimePort:   m.RealtimePort,
+			RealtimeToken:  m.RealtimeToken,
+			TickRateHz:     m.TickRateHz,
+			SnapshotRateHz: m.SnapshotRateHz,
+		})
 	case protocol.EntitySpawn:
 		return json.Marshal(toEntitySpawn(m))
 	case protocol.EntityDespawn:
@@ -82,7 +100,10 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(out)
 	case protocol.PositionCorrection:
 		return json.Marshal(positionCorrection{
-			Tick: m.Tick, EntityID: uint64(m.EntityID), Position: toPosition(m.Position), Yaw: m.Yaw,
+			Tick:                       m.Tick,
+			EntityID:                   uint64(m.EntityID),
+			Position:                   toPosition(m.Position),
+			Yaw:                        m.Yaw,
 			LastProcessedInputSequence: m.LastProcessedInputSequence,
 		})
 	default:
@@ -98,12 +119,29 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.ClientMoveInput{DirectionX: in.DX, DirectionZ: in.DZ}, nil
+	case protocol.MessageSessionWelcome:
+		var in sessionWelcome
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		return protocol.SessionWelcome{
+			SessionID:      in.SessionID,
+			EntityID:       world.EntityID(in.EntityID),
+			RealtimePort:   in.RealtimePort,
+			RealtimeToken:  in.RealtimeToken,
+			TickRateHz:     in.TickRateHz,
+			SnapshotRateHz: in.SnapshotRateHz,
+		}, nil
 	case protocol.MessageEntitySpawn:
 		var in entitySpawn
 		if err := decodeStrict(data, &in); err != nil {
 			return nil, err
 		}
-		return protocol.EntitySpawn{EntityID: world.EntityID(in.EntityID), Kind: world.EntityKind(in.Kind), Transform: fromEntityTransform(in.Transform)}, nil
+		return protocol.EntitySpawn{
+			EntityID:  world.EntityID(in.EntityID),
+			Kind:      world.EntityKind(in.Kind),
+			Transform: fromEntityTransform(in.Transform),
+		}, nil
 	case protocol.MessageEntityDespawn:
 		var in entityDespawn
 		if err := decodeStrict(data, &in); err != nil {
@@ -126,7 +164,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.PositionCorrection{
-			Tick: in.Tick, EntityID: world.EntityID(in.EntityID), Position: fromPosition(in.Position), Yaw: in.Yaw,
+			Tick:                       in.Tick,
+			EntityID:                   world.EntityID(in.EntityID),
+			Position:                   fromPosition(in.Position),
+			Yaw:                        in.Yaw,
 			LastProcessedInputSequence: in.LastProcessedInputSequence,
 		}, nil
 	default:
@@ -153,15 +194,19 @@ func decodeStrict(data []byte, target any) error {
 func toPosition(p world.Position) position {
 	return position{X: p.X, Y: p.Y, Z: p.Z, Layer: uint16(p.Layer)}
 }
+
 func fromPosition(p position) world.Position {
 	return world.Position{X: p.X, Y: p.Y, Z: p.Z, Layer: world.LayerID(p.Layer)}
 }
+
 func toEntityTransform(t protocol.EntityTransform) entityTransform {
 	return entityTransform{EntityID: uint64(t.EntityID), Tick: t.Tick, Position: toPosition(t.Position), Yaw: t.Yaw}
 }
+
 func fromEntityTransform(t entityTransform) protocol.EntityTransform {
 	return protocol.EntityTransform{EntityID: world.EntityID(t.EntityID), Tick: t.Tick, Position: fromPosition(t.Position), Yaw: t.Yaw}
 }
+
 func toEntitySpawn(s protocol.EntitySpawn) entitySpawn {
 	return entitySpawn{EntityID: uint64(s.EntityID), Kind: uint8(s.Kind), Transform: toEntityTransform(s.Transform)}
 }

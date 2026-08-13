@@ -10,6 +10,7 @@ import (
 var ErrCommandQueueFull = errors.New("worldruntime: command queue full")
 
 type command interface{ name() string }
+
 type registerSessionCommand struct{ session *session.Session }
 
 func (registerSessionCommand) name() string { return "register_session" }
@@ -17,6 +18,14 @@ func (registerSessionCommand) name() string { return "register_session" }
 type unregisterSessionCommand struct{ id session.ID }
 
 func (unregisterSessionCommand) name() string { return "unregister_session" }
+
+type joinCommand struct{ request JoinRequest }
+
+func (joinCommand) name() string { return "join_world" }
+
+type leaveCommand struct{ id session.ID }
+
+func (leaveCommand) name() string { return "leave_world" }
 
 type moveInputCommand struct {
 	sessionID session.ID
@@ -34,6 +43,7 @@ func newCommandQueue(capacity int) *commandQueue {
 	}
 	return &commandQueue{ch: make(chan command, capacity)}
 }
+
 func (q *commandQueue) tryPush(c command) error {
 	select {
 	case q.ch <- c:
@@ -42,6 +52,7 @@ func (q *commandQueue) tryPush(c command) error {
 		return ErrCommandQueueFull
 	}
 }
+
 func (q *commandQueue) drain(max int) []command {
 	if max <= 0 {
 		return nil
