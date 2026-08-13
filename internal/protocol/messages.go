@@ -8,20 +8,21 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v4 新增 Reliable ClientAttackGate，並讓 WorldDynamicState 同步 Gate HP / Destroyed。
-const Version uint16 = 4
+// v5 將 S3-D Gate-specific intent 收斂為 Reliable ClientUseAction；
+// damage/range/cooldown 仍完全由 Server Combat Action Catalog 決定。
+const Version uint16 = 5
 
 // MaxSnapshotEntitiesPerChunk 延續 Protocol v3 的 Realtime snapshot 單一 chunk 上限。
 // compact payload 每個 transform 26 bytes；43 筆加上 14-byte snapshot header、28-byte ASTR frame
-// 與 24-byte ASTU datagram header 後共 1184 bytes，保留在 1200-byte UDP guard 內。
+// 與 24-byte ASTU datagram header後共 1184 bytes，保留在 1200-byte UDP guard 內。
 const MaxSnapshotEntitiesPerChunk = 43
 
 type MessageType uint16
 
 const (
-	MessageUnknown          MessageType = 0
-	MessageClientMoveInput  MessageType = 1
-	MessageClientAttackGate MessageType = 2
+	MessageUnknown         MessageType = 0
+	MessageClientMoveInput MessageType = 1
+	MessageClientUseAction MessageType = 2
 
 	MessageSessionWelcome MessageType = 10
 
@@ -79,13 +80,22 @@ type ClientMoveInput struct {
 
 func (ClientMoveInput) Type() MessageType { return MessageClientMoveInput }
 
-// ClientAttackGate 是 S3-D 的離散 Siege interaction intent。
-// Gate damage、距離、Layer、LOS 與 cooldown 都由 Server 決定，Client 不提供 damage。
-type ClientAttackGate struct {
-	GateID string
+type ActionTargetKind string
+
+const (
+	ActionTargetGate ActionTargetKind = "gate"
+)
+
+// ClientUseAction 只描述玩家的 action intent 與目標識別。
+// Client 不可提供 damage、range、cooldown、命中結果或 destroyed 判定。
+// Action sequence 仍由外層 Envelope.Sequence 提供，與 movement input sequence 分流。
+type ClientUseAction struct {
+	ActionID   string
+	TargetKind ActionTargetKind
+	TargetID   string
 }
 
-func (ClientAttackGate) Type() MessageType { return MessageClientAttackGate }
+func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
 
 // SessionWelcome 先建立 Reliable session。Client 必須驗證 WorldIdentity 後才啟用 realtime UDP。
 type SessionWelcome struct {
