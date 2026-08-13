@@ -6,7 +6,7 @@ Astrahold 的全新權威 MMORPG 伺服器核心。
 
 ## 現階段狀態
 
-目前主線已完成從 World Core、Runtime、Godot Thin Client 對接，到 **S3-C Castle Front Siege Blockout**：
+目前已完成 **S3-C.5 Siege Load Lab**：除了 Godot Thin Client、XYZ + Layer、Gameplay World、Castle Front Siege Blockout 之外，Server 現在也有走真實 TCP/UDP Protocol 的 headless 負載測試工具與可比較的 Tick / AOI / Replication / GC 指標。
 
 ```text
 World Position (XYZ + Layer)
@@ -34,9 +34,11 @@ Gameplay World / Dynamic Blocker
 Ground L0 → Ramp L1 → Wall L2
         ↓
 Castle Front Siege Blockout
+        ↓
+Siege Load Lab
 ```
 
-目前下一個開發節點不是直接把 Server 複雜化成 Cell Actor，而是先進行 **S3-C.5 Siege Load Lab**，用可重現的 500+ headless client 壓測取得 AOI、Replication、GC、Queue 與 Tick latency 數據，再決定哪些高併發最佳化值得正式導入。
+S3-C.5 的第一輪數據已經定位出第一個真正的 scaling blocker：**Full AOI + JSON v1 `WorldSnapshot` 在 24 人全互見時就會超過 1200-byte UDP payload budget**。因此下一階段不是拆 Cell Actor，而是 **S3-C.6 Realtime Replication Foundation**。
 
 ## 與 Myriad Throne 的關係
 
@@ -44,7 +46,7 @@ Castle Front Siege Blockout
 
 舊 Lineage protocol、2D `gx/gy`、舊地圖格式與私服相容包袱不直接搬入。角色、道具、技能、Buff、Party、Guild、持久化等 domain 經驗，之後只在符合 Astrahold 新架構時逐項移植。
 
-詳細規約：
+## 架構文件
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/S1_RUNTIME.md`](docs/S1_RUNTIME.md)
@@ -53,8 +55,9 @@ Castle Front Siege Blockout
 - [`docs/S3_GAMEPLAY_WORLD.md`](docs/S3_GAMEPLAY_WORLD.md)
 - [`docs/S3B_WORLD_HANDSHAKE.md`](docs/S3B_WORLD_HANDSHAKE.md)
 - [`docs/S3C_CASTLE_BLOCKOUT.md`](docs/S3C_CASTLE_BLOCKOUT.md)
+- [`docs/S3C5_SIEGE_LOAD_LAB.md`](docs/S3C5_SIEGE_LOAD_LAB.md)
 
-## 世界座標
+## 世界模型
 
 Astrahold 的權威位置從一開始就是：
 
@@ -84,7 +87,17 @@ Astrahold 維持兩條核心規則：
 
 目前每個 World / Zone 仍採 **單一 simulation owner goroutine**。這是刻意的基線：先換取 deterministic ordering、容易測試與清楚 ownership，避免 Combat、Skill、NPC AI、Siege 一開始就充滿 mutex、cross-cell transaction 與 ordering 問題。
 
-只有在 Siege Load Lab / profiling 證明單一 owner 已成為明確瓶頸後，才逐步平行化 read-only validation、navigation query、AOI fan-out 或 encode；**mutable world ownership 最後才考慮拆成 Cell Actor / Zone Actor。**
+S3-C.5 的 100-client Gate Zerg 實測中，20 Hz Tick 的 p99 約 **9.9ms**，仍遠低於 50ms budget，因此目前沒有證據支持把 mutable world state 拆成 Cell Actor。
+
+若未來單 owner 真正成為瓶頸，演進優先順序仍是：
+
+```text
+① Read-only validation jobs
+② Navigation / LOS batch jobs
+③ AOI / replication build workers
+④ Encode / network fan-out workers
+⑤ 最後才拆 mutable state ownership
+```
 
 ## Server Authoritative Movement
 
@@ -128,7 +141,7 @@ Gameplay World
 
 Client 收到 `SessionWelcome` 後，必須先驗證本地 `gameplay.json` 的 `world_id / revision / SHA-256`，驗證成功才允許啟用 realtime UDP。
 
-目前 `castle-sandbox@s3c-001` 已具備：
+目前 `castle-sandbox@s3c-001`：
 
 ```text
 Layer 0 = Siege Field / Ground / Courtyard
@@ -168,39 +181,108 @@ RealtimeSequenced
 → Move / Snapshot / PositionCorrection
 ```
 
-JSON v1 只是 Godot Thin Client 的開發橋接 Codec，不是最終商用 wire format。
+JSON v1 是 Thin Client / bootstrap 的開發 Codec，不再被視為未來高頻 Crowd Transform 的正式格式。
 
-Realtime datagram 初始限制在 1200 bytes，避免默默依賴 IP fragmentation。Realtime outbox 採 latest-state mailbox，舊 snapshot 可以被較新 snapshot 取代；Reliable queue 則不得靜默遺失。
+Realtime datagram 維持 **1200 bytes** 上限，不為壓測放寬，也不依賴 IP fragmentation。
 
 > 開發 Transport 的 TCP 目前沒有 TLS，預設只綁 `127.0.0.1`。這是本機／受控環境 Transport，不可直接當成 Internet-facing security boundary。
 
+## S3-C.5 Siege Load Lab
+
+Load Lab 使用兩個獨立 process：
+
+```text
+cmd/loadserver
+    │
+    │ 真 TCP / UDP
+    │ Protocol v2 / JSON v1
+    │
+cmd/loadbot
+```
+
+Bot 不繞過 Gateway / Command Queue，而是完整模擬 SessionWelcome、Realtime Token、UDP Move、Snapshot / Correction decode。
+
+Server / Bot 分進程，避免 100～500 個 bot goroutine 的 allocation 污染 Server `runtime.MemStats`。
+
+支援三種 deterministic scenario：
+
+```text
+distributed
+→ 分散玩家；測一般 AOI
+
+gate-zerg
+→ 玩家集中 Main Gate；測 hotspot / fan-out
+
+vertical-siege
+→ L0 攻方 + L1 Ramp + L2 守方；測 Verticality
+```
+
+### 24-client Vertical Siege 基線
+
+GitHub Actions `ubuntu-24.04` / Go 1.26.5：
+
+| 指標 | 結果 |
+|---|---:|
+| Tick p50 | 0.180 ms |
+| Tick p95 | 0.318 ms |
+| Tick p99 | 0.478 ms |
+| Tick max | 0.620 ms |
+| Max command queue | 25 |
+| TotalAlloc / 5s | 18.6 MB |
+| GC / 5s | 5 |
+| `datagram_too_large` | **1,200 / 1,200 snapshot cadence** |
+
+### 100-client Gate Zerg 基線
+
+| 指標 | 結果 |
+|---|---:|
+| Tick average | 3.276 ms |
+| Tick p50 | 0.513 ms |
+| Tick p95 | 8.508 ms |
+| Tick p99 | **9.908 ms** |
+| Tick max | 10.754 ms |
+| Simulation avg / Tick | 0.055 ms |
+| AOI avg / Tick | 1.479 ms |
+| Replication Build avg / Tick | 1.590 ms |
+| Max command queue | 102 / 4096 |
+| Commands / Tick | 100.006 |
+| TotalAlloc / 8s | **340.6 MB** |
+| Mallocs / 8s | **534,920** |
+| GC / 8s | **164** |
+| GC pause total | 33.6 ms |
+| `datagram_too_large` | **8,001** |
+
+這份資料的結論不是「100 人效能很好，所以可以直接宣稱容量」，而是：
+
+- Simulation / single-owner mutation 目前不是主要成本。
+- AOI + per-session Replication Build 已成為主要 World Tick 成本。
+- Full JSON Snapshot 是第一個已證實的 network scaling blocker。
+- Allocation churn 已足以列入近期修正，但先從 replication 資料量／生命週期下手，不盲目全面 `sync.Pool`。
+- Gate Zerg 同 Layer 全互見時 `candidate / visible = 1.0`，因此 Layer-aware bucket 不是解這個 hotspot 的第一優先。
+
+完整方法與數據：[`docs/S3C5_SIEGE_LOAD_LAB.md`](docs/S3C5_SIEGE_LOAD_LAB.md)。
+
 ## 規模化與效能演進原則
 
-Astrahold 的效能架構採 **Measure → Profile → Optimize**，不以「看起來更高效」為理由提前引入高複雜度 concurrency。
+Astrahold 採 **Measure → Profile → Optimize**。
 
-### 1. Hot Path Allocation Budget，而不是盲目 Zero Allocation
-
-主 Tick、AOI、Replication 與 Network encode 的 allocation 必須可量測、可設定預算並持續追蹤。
-
-優化順序：
+### Hot Path Allocation Budget
 
 ```text
 pprof / metrics
         ↓
-找出 allocation hotspot
+定位 allocation hotspot
         ↓
-preallocate / reuse scratch buffers
+減少資料量 / dirty tracking
         ↓
-dirty tracking / incremental update
+preallocate / scratch reuse
         ↓
-必要時才使用 sync.Pool
+必要時才 sync.Pool
 ```
 
-不把 `sync.Pool` 或 zero-allocation 當成所有 package 的架構規定；只有被 profiling 證明是 hot path 的資料結構才值得增加生命週期管理複雜度。
+### Layer-aware Spatial Bucket
 
-### 2. Layer-aware Spatial Bucket
-
-目前 Spatial Grid 已保存 XYZ + Layer 並支援 Layer filter。規模化階段預計演進為：
+規模化階段可演進為：
 
 ```text
 SpatialKey
@@ -209,33 +291,24 @@ SpatialKey
 └── Layer
 ```
 
-同 Layer AOI 可走 fast path；跨 Layer interaction 則由 Portal adjacency、Vertical combat、LOS 與 Siege visibility 明確查詢相關 Layer。
+同 Layer AOI 走 fast path；跨 Layer interaction 由 Portal adjacency、Vertical Combat、LOS 與 Siege visibility 顯式查詢相關 Layer。
 
-不採「不同 Layer 永遠互相不可見」，因為城牆 L2 與城下 L0 本來就可能需要合法 LOS / ranged combat。
+這是候選集最佳化，不是所有攻城 hotspot 的萬靈丹。
 
-### 3. Replication Tier / Network LOD
+### Replication Tier / Network LOD
 
-攻城場景不要求所有 Entity 以相同頻率、相同精度同步。
-
-初步規劃：
+未來攻城不要求所有 Entity 用相同頻率與精度同步：
 
 ```text
 Tier 0 — Self / Target / Boss / Critical Objective
-高頻；完整 Transform / Action / HP / Buff 關鍵狀態
-
 Tier 1 — Near Crowd
-中高頻；Transform / Active Animation / Combat readability
-
 Tier 2 — Mid Crowd
-中低頻；Quantized Transform / 精簡狀態
-
 Tier 3 — Far / Peripheral Crowd
-低頻或事件式；只維持戰場辨識需要的狀態
 ```
 
-實際頻率 **不先寫死 30 / 15 / 10 Hz**，由 Siege Load Lab 與 Godot interpolation / VAT 表現共同決定。
+實際 cadence 不先寫死，由 Load Lab、Godot interpolation 與 VAT 表現共同決定。
 
-理想上 Server Network LOD 與 Client Presentation LOD 對齊：
+Server Network LOD 應盡量和 Client Presentation LOD 對齊：
 
 ```text
 Server Tier 0 → Client Skeletal LOD0
@@ -244,47 +317,36 @@ Server Tier 2 → VAT Crowd
 Server Tier 3 → Low-rate VAT / Impostor
 ```
 
-### 4. AOI ViewList / Dirty Tracking
+### AOI ViewList / Dirty Tracking
 
-目前 replication 基線仍可重建 visible set，因為它最容易驗證。
-
-壓測若證明 AOI diff / allocation 成為主要成本，演進方向為：
+現有 full visible-set rebuild 是 correctness baseline。若 profiling 確認值得，演進為：
 
 ```text
-Spatial Cell enter / leave
+Spatial enter / leave
         ↓
-Session ViewList cache
+Session ViewList
         ↓
 Dirty Entity tracking
         ↓
-只複寫有變化或需要 cadence 更新的狀態
+只複寫必要更新
 ```
 
-先保證 correctness，再用 edge-trigger / cached ViewList 降低每 Tick brute-force 工作量。
+### Shared Serialization
 
-### 5. Shared Serialization 不共享整份 Client Snapshot
-
-多個 Client 的 AOI、Target priority、Known Entity set、Sequence 與 Self Correction 不完全相同，因此不假設「500 個 Client 共用一份 snapshot bytes」。
-
-可共享的單位預計縮小成：
+不假設 500 個 Client 可以共享整份 Snapshot。可共享單位應縮小到：
 
 ```text
 Entity Update Block
-或
-Spatial Cell / Tier Chunk
+或 Spatial Cell / Tier Chunk
         ↓
 serialize once
         ↓
-多個 observer 組合／複用
+多 observer 組合／複用
 ```
 
-這樣可以降低重複 encode 成本，又不破壞 per-client replication semantics。
+### Navigation / LOS Batch API
 
-### 6. Navigation / LOS Batch API 預留
-
-目前 Gameplay Navigator 仍採 Go 內部 Surface / Portal / Blocker 模型；現在不急著導入 Recast/Detour。
-
-如果未來使用 C/C++ Navigation backend，必須避免每個 Entity 每個 query 都跨一次 CGO boundary。介面應能演進為：
+目前仍使用 Go 內部 Surface / Portal / Blocker。若將來導入 Recast/Detour 或其他 C/C++ backend，必須支援：
 
 ```text
 ResolveMoveBatch(...)
@@ -292,81 +354,19 @@ LineOfSightBatch(...)
 PathBatch(...)
 ```
 
-讓同 Tick 的大量導航／LOS 查詢可以批次送入 backend。
-
-### 7. Concurrency 演進順序
-
-若單 World Owner 最後真的成為瓶頸，優先順序為：
-
-```text
-① Read-only validation worker jobs
-② Navigation / LOS batch jobs
-③ AOI / replication build workers
-④ Encode / network fan-out workers
-⑤ 最後才拆 mutable state ownership
-```
-
-`Spatial Cell Actor`、cross-cell deferred event / two-phase commit、lock-free ring buffer 都保留為未來選項，**不是目前基線**。只有 profiling 證明 single-owner mutation 無法達標時才引入。
-
-## S3-C.5 — Siege Load Lab
-
-在 Gate HP / Combat 大量邏輯加入前，先建立可重現的 headless bot 壓測工具。
-
-至少包含三種 Scenario：
-
-```text
-A. Distributed
-500+ 玩家分散世界
-→ 測正常 AOI / replication
-
-B. Gate Zerg
-100 / 250 / 500+ 玩家集中 Main Gate
-→ 測 hotspot / queue / fan-out
-
-C. Vertical Siege
-攻方 L0 + Ramp L1 + 守方 L2
-→ 測 Layer / LOS / AOI / Snapshot
-```
-
-主要指標：
-
-```text
-Tick duration p50 / p95 / p99
-Commands processed / tick
-Command queue utilization
-AOI query time
-Candidate / visible entity counts
-Replication build time
-Snapshot bytes / sec
-Packets / sec
-Allocations / tick
-Heap growth / GC pause
-Reliable queue pressure
-Realtime drop / coalescing
-CPU / RSS memory
-```
-
-這些數據會決定：
-
-- World simulation 是否需要由 20 Hz 提高到 30 Hz 或其他頻率
-- 是否需要 Layer-aware bucket
-- AOI ViewList cache 的優先級
-- Replication Tier 的 cadence
-- JSON v1 何時必須換成 binary codec
-- Snapshot delta / quantization / bit-packing 的必要性
-- 是否需要 `sync.Pool` / scratch buffer reuse
-- 是否值得開始平行化 read-only stage
-- 單 World Owner 是否真的已經成為瓶頸
+避免每 Entity 每 Query 都跨一次 CGO boundary。
 
 ## 目前目錄
 
 ```text
 astrahold-server/
 ├── cmd/
-│   └── worldd/              # World Loop + TCP/UDP composition root
+│   ├── worldd/              # 正常 World Server composition root
+│   ├── loadserver/          # S3-C.5 獨立 Load Server
+│   └── loadbot/             # 真 TCP/UDP Headless Bot
 ├── internal/
 │   ├── world/               # XYZ + Layer / Entity 型別
-│   ├── spatial/             # AOI spatial grid
+│   ├── spatial/             # AOI spatial grid + query stats
 │   ├── navigation/          # Gameplay navigation / LOS / blocker
 │   ├── movement/            # Server-authoritative movement
 │   ├── simulation/          # World mutable state
@@ -376,151 +376,109 @@ astrahold-server/
 │   ├── gateway/             # Untrusted ingress policy
 │   ├── session/             # Session / sequence / connection
 │   ├── replication/         # Spawn / Despawn / Snapshot / Correction
-│   ├── gameplayworld/       # Surface / Portal / Blocker / World Identity
-│   ├── worldruntime/        # Command Queue / Dynamic World / Fixed Tick
+│   ├── worldruntime/        # Command Queue / Fixed Tick / metrics seam
+│   ├── loadlab/             # Scenario / bot / collector / JSON report
 │   └── netadapter/tcpudp/   # TCP Reliable + UDP Realtime adapter
 ├── worlds/
 │   └── castle-sandbox/
-│       └── gameplay.json
 └── docs/
 ```
 
-## 里程碑
+## Roadmap
 
-### S0 — World Core
+### S0 — World Core ✅
 
-- [x] XYZ + Layer
-- [x] Entity 基礎型別
-- [x] Spatial Grid / AOI
-- [x] Authoritative Movement
-- [x] Navigation abstraction
-- [x] Protocol semantic DTO
+- XYZ + Layer
+- Spatial Grid / AOI
+- Authoritative Movement
+- Navigation abstraction
+- Protocol semantic DTO
 
-### S1 — World Runtime
+### S1 — World Runtime ✅
 
-- [x] 固定 20 Hz world loop
-- [x] bounded command queue
-- [x] connection/session abstraction
-- [x] Session-scoped input sequence
-- [x] Reliable / Realtime outbound sequence
-- [x] Astrahold Frame
-- [x] spawn/despawn/snapshot/correction
-- [x] backpressure seam
+- Fixed Tick
+- bounded Command Queue
+- Session / sequence
+- Reliable / Realtime delivery semantics
+- Replication baseline
+- backpressure seam
 
-### S2-A — Protocol / Ingress
+### S2 — Thin Client / Transport ✅
 
-- [x] Input sequence 單一來源化
-- [x] Gateway / Ingress 白名單
-- [x] JSON v1 開發 Codec
-- [x] Protocol DTO 與 wire struct 分離
+- TCP Reliable + UDP Realtime
+- SessionWelcome / Realtime Token
+- Astrahold Frame
+- Godot C# Thin Client
+- Snapshot interpolation / soft reconciliation
+- Runtime E2E probe
 
-### S2-B — Server Transport
+### S3-A ～ S3-C — Gameplay World / Castle Verticality ✅
 
-- [x] TCP Reliable listener
-- [x] UDP Realtime listener
-- [x] SessionWelcome
-- [x] 128-bit realtime token
-- [x] UDP token → Session routing
-- [x] `EnqueueJoin` / `EnqueueLeave`
-- [x] TCP stream frame reader/writer
-- [x] 1200-byte UDP datagram guard
-- [x] Realtime latest-state mailbox
-- [x] ephemeral-port integration test
-- [x] `worldd` 真實 listener 啟動
+- Shared `gameplay.json`
+- World Identity / SHA-256 handshake
+- Surface / Portal / Blocker
+- Dynamic blocker state
+- L0 Ground → L1 Ramp → L2 Wall
+- Castle Front Siege Blockout
 
-### S2-C / S2-D — Godot Thin Client + Runtime E2E
+### S3-C.5 — Siege Load Lab ✅
 
-- [x] Godot C# Astrahold Frame / JSON v1
-- [x] TCP SessionWelcome
-- [x] UDP Realtime activation
-- [x] Capsule Entity
-- [x] Snapshot interpolation
-- [x] Local prediction / soft reconciliation
-- [x] 官方 Godot headless runtime probe
-- [x] TCP Welcome → UDP Move → Snapshot / Correction E2E
+- 真 TCP/UDP Headless Bot
+- Server / Bot 分離進程
+- 24-client Vertical Siege smoke
+- 100-client Gate Zerg baseline
+- Tick p50 / p95 / p99
+- AOI / Queue / Replication metrics
+- allocation / heap / GC metrics
+- GitHub Actions artifact report
+- `workflow_dispatch` 500+ capability
+- 第一個 scaling blocker 已定位
 
-### S3-A — Gameplay World v1
+### S3-C.6 — Realtime Replication Foundation（下一步）
 
-- [x] `gameplay.json` strict schema / validation
-- [x] Surface / Portal / Blocker
-- [x] 多高度 Surface
-- [x] Layer transition
-- [x] Dynamic Gate blocker
-- [x] Server-side LOS
+- [ ] `WorldSnapshot` / `PositionCorrection` 明確 stream / coalescing semantics
+- [ ] MTU-safe realtime payload budget
+- [ ] Compact binary transform payload baseline
+- [ ] 減少 per-session full snapshot allocation
+- [ ] Load Lab regression：24 / 100 人不再 100% `datagram_too_large`
+- [ ] 再決定 delta / quantization / chunk 的下一層形式
 
-### S3-B — World Identity / Dynamic World
+### S3-D — Gate Siege Interaction
 
-- [x] Protocol v2
-- [x] `world_id / revision / gameplay_sha256`
-- [x] World mismatch fail-fast
-- [x] World 驗證成功後才啟用 realtime UDP
-- [x] `WorldDynamicState`
-- [x] blocker revision / Reliable replication
-
-### S3-C — Castle Front Siege Blockout
-
-- [x] Siege Field / Courtyard
-- [x] Main Gate
-- [x] West / East Ramp
-- [x] Front Wall Walk Y=8m
-- [x] L0 → L1 → L2 雙向 traversal
-- [x] Portal topology validation
-- [x] Gate closed/open Movement + LOS tests
-- [x] Client / Server `gameplay.json` byte identity
-
-### S3-C.5 — Siege Load Lab（下一步）
-
-- [ ] Headless bot simulator
-- [ ] 100 / 250 / 500+ concurrent clients
-- [ ] Distributed / Gate Zerg / Vertical Siege scenarios
-- [ ] Tick p50 / p95 / p99 metrics
-- [ ] AOI / Replication / Network metrics
-- [ ] allocation / GC / heap profiling
-- [ ] queue / backpressure metrics
-- [ ] 建立第一份 performance budget
-
-### S3-D — Siege Interaction Prototype
-
-- [ ] Gate Entity / GateID
-- [ ] Gate MaxHP / HP / State
-- [ ] Client → Server Attack Gate command
-- [ ] Server distance / Layer / LOS / cadence validation
-- [ ] Gate HP = 0 → WorldRuntime 關閉 `main-gate` blocker
-- [ ] Reliable Gate state / HP replication
-- [ ] Godot Gate visual / HP bar / destroyed state
-- [ ] 攻方進 Courtyard → Ramp → Wall 的最小攻城 E2E
+- [ ] Gate Entity / HP / State
+- [ ] Attack Gate command
+- [ ] Server 驗距離 / Layer / LOS / cooldown
+- [ ] HP=0 → WorldRuntime 關閉 `main-gate` blocker
+- [ ] Godot Gate HP / destroyed presentation
+- [ ] Ground → Gate → Courtyard → Ramp → Wall 最小攻城 E2E
 
 ### S3-E — Siege Replication Scaling
 
-- [ ] Layer-aware Spatial Bucket
-- [ ] Replication Tier 0 / 1 / 2 / 3
-- [ ] AOI ViewList cache / dirty tracking（依壓測決定）
-- [ ] hot-path preallocation / buffer reuse
-- [ ] shared entity/cell serialization chunks
-- [ ] snapshot quantization / delta / bit-packing（依數據決定）
-- [ ] Batch Navigation / LOS API seam
-- [ ] read-only / fan-out worker profiling prototype
+- [ ] Replication Tier / Network LOD
+- [ ] AOI ViewList / Dirty Tracking
+- [ ] Quantized / Delta updates
+- [ ] Shared Entity / Cell update blocks
+- [ ] Layer-aware Spatial Bucket（有數據需要時）
+- [ ] allocation budget / scratch reuse
 
 ### S4 — Full Siege Mechanics
 
 - [ ] Attacker / Defender
-- [ ] Gate destruction
-- [ ] Siege zones
-- [ ] Throne / Crown objective
+- [ ] Gate / Throne / Crown
 - [ ] Zone occupation
-- [ ] Siege state machine
-- [ ] Objective replication / reconnect state restore
+- [ ] Siege State Machine
+- [ ] Guild objective ownership
 
-### S5 — Full Combat Stress Test
+### S5 — Full Combat Stress
 
-- [ ] 500+ players with combat
-- [ ] Skill / Damage / Buff load
-- [ ] Gate / Objective contention
-- [ ] Packet loss / jitter / reconnect tests
-- [ ] Capacity target 與 production performance budget
-- [ ] 依 profiling 決定是否需要 Cell Actor / deeper parallel mutation
+- [ ] Dedicated environment 500+ clients
+- [ ] Skills / Damage / Buff / VFX event load
+- [ ] 固定硬體下的正式 capacity baseline
+- [ ] p99 / GC / network / CPU / memory regression gates
 
 ## 開發
+
+正常 Server：
 
 ```bash
 go test ./...
@@ -528,7 +486,25 @@ go vet ./...
 go run ./cmd/worldd
 ```
 
-預設監聽：
+Load Lab：
+
+```bash
+# Terminal A
+go run ./cmd/loadserver \
+  -clients 100 \
+  -scenario gate-zerg \
+  -duration 30s
+
+# Terminal B
+go run ./cmd/loadbot \
+  -clients 100 \
+  -scenario gate-zerg \
+  -input-rate 20 \
+  -ramp-up 2s \
+  -duration 33s
+```
+
+正常開發 Server 預設：
 
 ```text
 TCP 127.0.0.1:7777
@@ -537,14 +513,4 @@ World 20 Hz
 Snapshot 10 Hz
 ```
 
-可調整：
-
-```bash
-go run ./cmd/worldd \
-  -tcp 127.0.0.1:7777 \
-  -udp 127.0.0.1:7778 \
-  -tick-rate 20 \
-  -snapshot-rate 10
-```
-
-目前核心仍盡量維持少依賴與清楚 ownership。效能最佳化必須建立在可重現壓測與 profiling 上，而不是提早用複雜度換取尚未證明需要的吞吐量。
+目前核心仍盡量只使用 Go 標準函式庫；效能最佳化必須由 Load Lab / profiling 數據驅動，而不是提前增加不必要的架構複雜度。
