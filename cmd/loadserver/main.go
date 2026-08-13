@@ -67,7 +67,12 @@ func main() {
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
 	runtimeConfig.CollectMetrics = true
-	worldRuntime := worldruntime.New(sim, runtimeConfig, worldruntime.WithDynamicWorld(nav))
+	worldRuntime := worldruntime.New(
+		sim,
+		runtimeConfig,
+		worldruntime.WithDynamicWorld(nav),
+		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
+	)
 	loop, err := worldruntime.NewLoop(worldRuntime, *tickRate)
 	if err != nil {
 		log.Fatal(err)
@@ -97,28 +102,21 @@ func main() {
 	loopDone := make(chan error, 1)
 	go func() {
 		err := loop.RunObserved(ctx, collector.RecordStep)
-		if err != nil {
-			stop()
-		}
+		if err != nil { stop() }
 		loopDone <- err
 	}()
 	serveDone := make(chan error, 1)
 	go func() {
 		err := server.Serve(ctx)
-		if err != nil {
-			stop()
-		}
+		if err != nil { stop() }
 		serveDone <- err
 	}()
 	go collectNetworkErrors(ctx, server.Errors(), collector)
 
-	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz", protocol.Version, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate)
+	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 
 	if err := waitForClients(ctx, server, *clients, *readyTimeout); err != nil {
-		stop()
-		<-serveDone
-		<-loopDone
-		log.Fatal(err)
+		stop(); <-serveDone; <-loopDone; log.Fatal(err)
 	}
 	log.Printf("all clients ready; starting %s measurement window", duration.String())
 	collector.Reset()
@@ -134,10 +132,7 @@ func main() {
 
 	report := collector.Finish(scenario, *clients)
 	if err := loadlab.WriteReport(*reportPath, report); err != nil {
-		stop()
-		<-serveDone
-		<-loopDone
-		log.Fatalf("write report: %v", err)
+		stop(); <-serveDone; <-loopDone; log.Fatalf("write report: %v", err)
 	}
 	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d", *reportPath, report.Ticks, report.TickDuration.P99MS, report.Queue.MaxDepthBefore, report.Errors.DatagramTooLarge)
 
@@ -145,35 +140,22 @@ func main() {
 		graceTimer := time.NewTimer(*shutdownGrace)
 		select {
 		case <-graceTimer.C:
-		case <-ctx.Done():
-			graceTimer.Stop()
+		case <-ctx.Done(): graceTimer.Stop()
 		}
 	}
 
 	stop()
 	serveErr := <-serveDone
 	loopErr := <-loopDone
-	if serveErr != nil {
-		log.Printf("network server stopped with error: %v", serveErr)
-	}
-	if loopErr != nil {
-		log.Printf("world loop stopped with error: %v", loopErr)
-	}
-	if !completed {
-		os.Exit(2)
-	}
+	if serveErr != nil { log.Printf("network server stopped with error: %v", serveErr) }
+	if loopErr != nil { log.Printf("world loop stopped with error: %v", loopErr) }
+	if !completed { os.Exit(2) }
 }
 
 func validateRates(tickRate, snapshotRate int) error {
-	if tickRate <= 0 || snapshotRate <= 0 {
-		return fmt.Errorf("tick-rate and snapshot-rate must be > 0")
-	}
-	if tickRate > 65535 || snapshotRate > 65535 {
-		return fmt.Errorf("tick-rate and snapshot-rate must be <= 65535")
-	}
-	if snapshotRate > tickRate || tickRate%snapshotRate != 0 {
-		return fmt.Errorf("snapshot-rate must divide tick-rate evenly and be <= tick-rate")
-	}
+	if tickRate <= 0 || snapshotRate <= 0 { return fmt.Errorf("tick-rate and snapshot-rate must be > 0") }
+	if tickRate > 65535 || snapshotRate > 65535 { return fmt.Errorf("tick-rate and snapshot-rate must be <= 65535") }
+	if snapshotRate > tickRate || tickRate%snapshotRate != 0 { return fmt.Errorf("snapshot-rate must divide tick-rate evenly and be <= tick-rate") }
 	return nil
 }
 
@@ -183,14 +165,10 @@ func waitForClients(ctx context.Context, server *tcpudp.Server, expected int, ti
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if ready := server.ReadyPeerCount(); ready >= expected {
-			return nil
-		}
+		if ready := server.ReadyPeerCount(); ready >= expected { return nil }
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("loadlab: ready timeout: got=%d want=%d", server.ReadyPeerCount(), expected)
+		case <-ctx.Done(): return ctx.Err()
+		case <-deadline.C: return fmt.Errorf("loadlab: ready timeout: got=%d want=%d", server.ReadyPeerCount(), expected)
 		case <-ticker.C:
 		}
 	}
@@ -199,10 +177,8 @@ func waitForClients(ctx context.Context, server *tcpudp.Server, expected int, ti
 func collectNetworkErrors(ctx context.Context, events <-chan tcpudp.NetworkError, collector *loadlab.ServerCollector) {
 	for {
 		select {
-		case <-ctx.Done():
-			return
-		case event := <-events:
-			collector.RecordNetworkError(event.Operation, event.Err)
+		case <-ctx.Done(): return
+		case event := <-events: collector.RecordNetworkError(event.Operation, event.Err)
 		}
 	}
 }
