@@ -15,7 +15,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 1
+const SchemaVersion uint16 = 2
 
 var (
 	ErrUnsupportedSchema = errors.New("gameplayworld: unsupported schema version")
@@ -81,6 +81,21 @@ type Blocker struct {
 	Enabled        bool          `json:"enabled"`
 }
 
+// GateAttackProfile 是 S3-D vertical slice 在完整 Combat domain 建立前使用的最小攻城互動規格。
+// Client 只送 GateID；damage/range/cooldown 全由 Server 端 Gameplay World 決定。
+type GateAttackProfile struct {
+	Range           float32 `json:"range"`
+	Damage          uint32  `json:"damage"`
+	CooldownSeconds float32 `json:"cooldown_seconds"`
+}
+
+type Gate struct {
+	ID        string            `json:"id"`
+	BlockerID string            `json:"blocker_id"`
+	MaxHP     uint32            `json:"max_hp"`
+	Attack    GateAttackProfile `json:"attack"`
+}
+
 type Definition struct {
 	SchemaVersion uint16        `json:"schema_version"`
 	WorldID       string        `json:"world_id"`
@@ -90,6 +105,7 @@ type Definition struct {
 	Surfaces      []Surface     `json:"surfaces"`
 	Portals       []Portal      `json:"portals"`
 	Blockers      []Blocker     `json:"blockers"`
+	Gates         []Gate        `json:"gates"`
 }
 
 type Loaded struct {
@@ -185,7 +201,7 @@ func Validate(d Definition) error {
 		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
 	}
 
-	blockerIDs := make(map[string]struct{}, len(d.Blockers))
+	blockerIDs := make(map[string]Blocker, len(d.Blockers))
 	for i, blocker := range d.Blockers {
 		if blocker.ID == "" || !validBounds(blocker.Bounds) || !finite(blocker.MinY) || !finite(blocker.MaxY) || blocker.MinY > blocker.MaxY {
 			return fmt.Errorf("%w: blocker[%d]", ErrInvalidDefinition, i)
@@ -201,7 +217,30 @@ func Validate(d Definition) error {
 		if _, exists := blockerIDs[blocker.ID]; exists {
 			return fmt.Errorf("%w: duplicate blocker id %q", ErrInvalidDefinition, blocker.ID)
 		}
-		blockerIDs[blocker.ID] = struct{}{}
+		blockerIDs[blocker.ID] = blocker
+	}
+
+	gateIDs := make(map[string]struct{}, len(d.Gates))
+	claimedBlockers := make(map[string]string, len(d.Gates))
+	for i, gate := range d.Gates {
+		if gate.ID == "" || gate.BlockerID == "" || gate.MaxHP == 0 || !positiveFinite(gate.Attack.Range) || gate.Attack.Damage == 0 || !positiveFinite(gate.Attack.CooldownSeconds) {
+			return fmt.Errorf("%w: gate[%d]", ErrInvalidDefinition, i)
+		}
+		if _, exists := gateIDs[gate.ID]; exists {
+			return fmt.Errorf("%w: duplicate gate id %q", ErrInvalidDefinition, gate.ID)
+		}
+		gateIDs[gate.ID] = struct{}{}
+		blocker, ok := blockerIDs[gate.BlockerID]
+		if !ok {
+			return fmt.Errorf("%w: gate %q blocker missing: %s", ErrInvalidDefinition, gate.ID, gate.BlockerID)
+		}
+		if !blocker.Enabled || !blocker.BlocksMovement {
+			return fmt.Errorf("%w: gate %q blocker must start enabled and block movement", ErrInvalidDefinition, gate.ID)
+		}
+		if owner, exists := claimedBlockers[gate.BlockerID]; exists {
+			return fmt.Errorf("%w: blocker %q claimed by gates %q/%q", ErrInvalidDefinition, gate.BlockerID, owner, gate.ID)
+		}
+		claimedBlockers[gate.BlockerID] = gate.ID
 	}
 	return nil
 }

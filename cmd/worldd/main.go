@@ -26,7 +26,7 @@ func main() {
 		udpAddress   = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
 		tickRate     = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
 		snapshotRate = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World v1 JSON path")
+		worldPath    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World v2 JSON path")
 	)
 	flag.Parse()
 
@@ -48,7 +48,12 @@ func main() {
 
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
-	runtime := worldruntime.New(sim, runtimeConfig, worldruntime.WithDynamicWorld(nav))
+	runtime := worldruntime.New(
+		sim,
+		runtimeConfig,
+		worldruntime.WithDynamicWorld(nav),
+		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
+	)
 	loop, err := worldruntime.NewLoop(runtime, *tickRate)
 	if err != nil {
 		log.Fatal(err)
@@ -80,12 +85,13 @@ func main() {
 	go logNetworkErrors(ctx, server.Errors())
 
 	log.Printf(
-		"Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1",
+		"Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d",
 		protocol.Version,
 		loadedWorld.Definition.WorldID,
 		loadedWorld.Definition.Revision,
 		loadedWorld.SHA256[:12],
 		server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate,
+		len(loadedWorld.Definition.Gates),
 	)
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 

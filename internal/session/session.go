@@ -19,6 +19,7 @@ var (
 	ErrConnectionClosed = errors.New("session: connection closed")
 	ErrBackpressure     = errors.New("session: outbound queue full")
 	ErrStaleInput       = errors.New("session: stale input sequence")
+	ErrStaleAction      = errors.New("session: stale action sequence")
 )
 
 type Connection interface {
@@ -71,13 +72,14 @@ func (c *QueueConnection) Realtime() <-chan protocol.Envelope { return c.realtim
 func (c *QueueConnection) Done() <-chan struct{}              { return c.done }
 
 type Session struct {
-	ID                         ID
-	EntityID                   world.EntityID
-	AOIRadius                  float32
-	connection                 Connection
-	lastProcessedInputSequence uint32
-	nextReliableSequence       uint32
-	nextRealtimeSequence       uint32
+	ID                          ID
+	EntityID                    world.EntityID
+	AOIRadius                   float32
+	connection                  Connection
+	lastProcessedInputSequence  uint32
+	lastProcessedActionSequence uint32
+	nextReliableSequence        uint32
+	nextRealtimeSequence        uint32
 }
 
 func New(id ID, entityID world.EntityID, aoiRadius float32, connection Connection) (*Session, error) {
@@ -97,6 +99,17 @@ func (s *Session) ValidateInputSequence(sequence uint32) error {
 func (s *Session) MarkProcessedInput(sequence uint32) {
 	if sequence > s.lastProcessedInputSequence {
 		s.lastProcessedInputSequence = sequence
+	}
+}
+func (s *Session) ValidateActionSequence(sequence uint32) error {
+	if sequence <= s.lastProcessedActionSequence {
+		return ErrStaleAction
+	}
+	return nil
+}
+func (s *Session) MarkProcessedAction(sequence uint32) {
+	if sequence > s.lastProcessedActionSequence {
+		s.lastProcessedActionSequence = sequence
 	}
 }
 func (s *Session) NextOutboundSequence(delivery protocol.Delivery) uint32 {

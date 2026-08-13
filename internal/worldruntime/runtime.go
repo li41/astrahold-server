@@ -9,6 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/world"
@@ -24,8 +25,7 @@ type Config struct {
 	MaxCommandsPerTick   int
 	SnapshotEveryTicks   uint64
 	AOIOptions           spatial.QueryOptions
-	// CollectMetrics 只在 Load Lab / profiling 時開啟；一般 worldd 不付階段 time.Now() 成本。
-	CollectMetrics bool
+	CollectMetrics       bool
 }
 
 func DefaultConfig() Config {
@@ -40,8 +40,6 @@ func DefaultConfig() Config {
 	}
 }
 
-// JoinRequest 讓 Network/Auth 等外層只提交「加入世界」意圖。
-// 真正的 Entity Spawn 與 Session Registry mutation 仍在 simulation owner goroutine 內完成。
 type JoinRequest struct {
 	Session       *session.Session
 	Entity        world.EntityState
@@ -56,6 +54,14 @@ type CommandError struct {
 	Err       error
 }
 
+// ActionRejection 是預期的 gameplay validation 結果，不代表 Server fault。
+// 例如距離不足、錯 Layer、LOS 被擋或 cooldown 尚未結束。
+type ActionRejection struct {
+	Action    string
+	SessionID session.ID
+	Err       error
+}
+
 type DeliveryError struct {
 	SessionID   session.ID
 	Delivery    protocol.Delivery
@@ -63,8 +69,6 @@ type DeliveryError struct {
 	Err         error
 }
 
-// StepMetrics 是單一 World Tick 的 profiling 資料。
-// Duration 欄位只有 Config.CollectMetrics=true 時才填值；計數欄位則永遠可用。
 type StepMetrics struct {
 	CommandQueueDepthBefore int
 	CommandQueueDepthAfter  int
@@ -75,20 +79,21 @@ type StepMetrics struct {
 	AOIVisible              int
 	OutboundMessages        int
 
-	SimulationDuration         time.Duration
+	SimulationDuration          time.Duration
 	DynamicReplicationDuration time.Duration
-	AOIDuration                time.Duration
-	ReplicationBuildDuration   time.Duration
-	DeliveryDuration           time.Duration
-	TotalDuration              time.Duration
+	AOIDuration                 time.Duration
+	ReplicationBuildDuration    time.Duration
+	DeliveryDuration            time.Duration
+	TotalDuration               time.Duration
 }
 
 type StepReport struct {
-	Tick           uint64
-	CommandErrors  []CommandError
-	TickErrors     []simulation.TickError
-	DeliveryErrors []DeliveryError
-	Metrics        StepMetrics
+	Tick             uint64
+	CommandErrors    []CommandError
+	ActionRejections []ActionRejection
+	TickErrors       []simulation.TickError
+	DeliveryErrors   []DeliveryError
+	Metrics          StepMetrics
 }
 
 type Runtime struct {
@@ -99,55 +104,33 @@ type Runtime struct {
 	config      Config
 
 	dynamic                DynamicWorld
+	siege                  *siege.Service
 	dynamicRevision        uint64
 	sessionDynamicRevision map[session.ID]uint64
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
-	if w == nil {
-		panic("worldruntime: world is required")
-	}
-	if config.CommandQueueCapacity <= 0 {
-		config.CommandQueueCapacity = 4096
-	}
-	if config.MaxCommandsPerTick <= 0 {
-		config.MaxCommandsPerTick = 2048
-	}
-	if config.SnapshotEveryTicks == 0 {
-		config.SnapshotEveryTicks = 1
-	}
+	if w == nil { panic("worldruntime: world is required") }
+	if config.CommandQueueCapacity <= 0 { config.CommandQueueCapacity = 4096 }
+	if config.MaxCommandsPerTick <= 0 { config.MaxCommandsPerTick = 2048 }
+	if config.SnapshotEveryTicks == 0 { config.SnapshotEveryTicks = 1 }
 	runtime := &Runtime{
-		world:                  w,
-		sessions:               session.NewRegistry(),
-		replication:            replication.NewService(),
-		queue:                  newCommandQueue(config.CommandQueueCapacity),
-		config:                 config,
+		world: w,
+		sessions: session.NewRegistry(),
+		replication: replication.NewService(),
+		queue: newCommandQueue(config.CommandQueueCapacity),
+		config: config,
 		sessionDynamicRevision: make(map[session.ID]uint64),
 	}
-	for _, option := range options {
-		if option != nil {
-			option(runtime)
-		}
-	}
-	if runtime.dynamic != nil {
-		// Revision 1 表示 bake 初始 dynamic state；新 Session 必須先收到完整 snapshot。
-		runtime.dynamicRevision = 1
-	}
+	for _, option := range options { if option != nil { option(runtime) } }
+	if runtime.dynamic != nil { runtime.dynamicRevision = 1 }
 	return runtime
 }
 
-func (r *Runtime) EnqueueRegister(s *session.Session) error {
-	return r.queue.tryPush(registerSessionCommand{session: s})
-}
-func (r *Runtime) EnqueueUnregister(id session.ID) error {
-	return r.queue.tryPush(unregisterSessionCommand{id: id})
-}
-func (r *Runtime) EnqueueJoin(request JoinRequest) error {
-	return r.queue.tryPush(joinCommand{request: request})
-}
-func (r *Runtime) EnqueueLeave(id session.ID) error {
-	return r.queue.tryPush(leaveCommand{id: id})
-}
+func (r *Runtime) EnqueueRegister(s *session.Session) error { return r.queue.tryPush(registerSessionCommand{session: s}) }
+func (r *Runtime) EnqueueUnregister(id session.ID) error { return r.queue.tryPush(unregisterSessionCommand{id: id}) }
+func (r *Runtime) EnqueueJoin(request JoinRequest) error { return r.queue.tryPush(joinCommand{request: request}) }
+func (r *Runtime) EnqueueLeave(id session.ID) error { return r.queue.tryPush(leaveCommand{id: id}) }
 func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.ClientMoveInput) error {
 	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
 }
@@ -155,9 +138,7 @@ func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.Cli
 func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	measure := r.config.CollectMetrics
 	var totalStart time.Time
-	if measure {
-		totalStart = time.Now()
-	}
+	if measure { totalStart = time.Now() }
 
 	report := StepReport{Tick: tick}
 	report.Metrics.CommandQueueDepthBefore = r.queue.depth()
@@ -176,28 +157,21 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
+		case attackGateCommand:
+			r.applyAttackGate(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
 	}
 
 	var stageStart time.Time
-	if measure {
-		stageStart = time.Now()
-	}
+	if measure { stageStart = time.Now() }
 	report.TickErrors = r.world.Tick(float32(delta.Seconds()))
-	if measure {
-		report.Metrics.SimulationDuration = time.Since(stageStart)
-	}
+	if measure { report.Metrics.SimulationDuration = time.Since(stageStart) }
 
-	// Dynamic World 是低頻 Reliable state，不能被 SnapshotEveryTicks 節流。
-	if measure {
-		stageStart = time.Now()
-	}
+	if measure { stageStart = time.Now() }
 	r.replicateDynamicState(tick, &report)
-	if measure {
-		report.Metrics.DynamicReplicationDuration = time.Since(stageStart)
-	}
+	if measure { report.Metrics.DynamicReplicationDuration = time.Since(stageStart) }
 
 	if tick%r.config.SnapshotEveryTicks == 0 {
 		sessions := r.sessions.List()
@@ -205,58 +179,40 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		for _, s := range sessions {
 			self, ok := r.world.Entity(s.EntityID)
 			if !ok {
-				report.CommandErrors = append(report.CommandErrors, CommandError{
-					Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound,
-				})
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound})
 				continue
 			}
 
-			if measure {
-				stageStart = time.Now()
-			}
+			if measure { stageStart = time.Now() }
 			visible, queryStats := r.world.QueryAOIWithStats(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
-			if measure {
-				report.Metrics.AOIDuration += time.Since(stageStart)
-			}
+			if measure { report.Metrics.AOIDuration += time.Since(stageStart) }
 			report.Metrics.AOIQueries++
 			report.Metrics.AOICandidates += queryStats.CandidateEntities
 			report.Metrics.AOIVisible += queryStats.MatchedEntities
 
-			if measure {
-				stageStart = time.Now()
-			}
+			if measure { stageStart = time.Now() }
 			batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
-			if measure {
-				report.Metrics.ReplicationBuildDuration += time.Since(stageStart)
-			}
+			if measure { report.Metrics.ReplicationBuildDuration += time.Since(stageStart) }
 			report.Metrics.OutboundMessages += len(batch.Messages)
 
-			if measure {
-				stageStart = time.Now()
-			}
+			if measure { stageStart = time.Now() }
 			for _, out := range batch.Messages {
 				envelope := protocol.Envelope{
-					Delivery:   out.Delivery,
-					Sequence:   s.NextOutboundSequence(out.Delivery),
+					Delivery: out.Delivery,
+					Sequence: s.NextOutboundSequence(out.Delivery),
 					ServerTick: tick,
-					Message:    out.Message,
+					Message: out.Message,
 				}
 				if err := s.Connection().TrySend(envelope); err != nil {
-					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-						SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err,
-					})
+					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err})
 				}
 			}
-			if measure {
-				report.Metrics.DeliveryDuration += time.Since(stageStart)
-			}
+			if measure { report.Metrics.DeliveryDuration += time.Since(stageStart) }
 		}
 	}
 
 	report.Metrics.CommandQueueDepthAfter = r.queue.depth()
-	if measure {
-		report.Metrics.TotalDuration = time.Since(totalStart)
-	}
+	if measure { report.Metrics.TotalDuration = time.Since(totalStart) }
 	return report
 }
 

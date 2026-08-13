@@ -7,7 +7,7 @@ import (
 )
 
 const validWorldJSON = `{
-  "schema_version": 1,
+  "schema_version": 2,
   "world_id": "test-world",
   "revision": "r1",
   "units": "meters",
@@ -18,7 +18,8 @@ const validWorldJSON = `{
     "plane":{"origin_x":0,"origin_z":0,"base_y":0,"slope_x":0,"slope_z":0}
   }],
   "portals": [],
-  "blockers": []
+  "blockers": [],
+  "gates": []
 }`
 
 func TestLoadValidWorld(t *testing.T) {
@@ -52,6 +53,19 @@ func TestValidateRejectsOverlappingSameLayerSurfaces(t *testing.T) {
 	second.ID = "ground-2"
 	second.Bounds.MinX = 0
 	d.Surfaces = append(d.Surfaces, second)
+	if err := Validate(d); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("Validate() error = %v, want ErrInvalidDefinition", err)
+	}
+}
+
+func TestValidateRejectsGateWithMissingBlocker(t *testing.T) {
+	loaded, err := Load(strings.NewReader(validWorldJSON))
+	if err != nil { t.Fatal(err) }
+	d := loaded.Definition
+	d.Gates = []Gate{{
+		ID: "gate", BlockerID: "missing", MaxHP: 100,
+		Attack: GateAttackProfile{Range: 4, Damage: 10, CooldownSeconds: 0.5},
+	}}
 	if err := Validate(d); !errors.Is(err, ErrInvalidDefinition) {
 		t.Fatalf("Validate() error = %v, want ErrInvalidDefinition", err)
 	}
