@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
@@ -29,15 +30,7 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{
-		CommandQueueCapacity: 4096,
-		MaxCommandsPerTick:   2048,
-		SnapshotEveryTicks:   2,
-		AOIOptions: spatial.QueryOptions{
-			SameLayer:      false,
-			MaxHeightDelta: 64,
-		},
-	}
+	return Config{CommandQueueCapacity: 4096, MaxCommandsPerTick: 2048, SnapshotEveryTicks: 2, AOIOptions: spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64}}
 }
 
 type JoinRequest struct {
@@ -54,8 +47,6 @@ type CommandError struct {
 	Err       error
 }
 
-// ActionRejection 是預期的 gameplay validation 結果，不代表 Server fault。
-// 例如距離不足、錯 Layer、LOS 被擋或 cooldown 尚未結束。
 type ActionRejection struct {
 	Action    string
 	SessionID session.ID
@@ -78,7 +69,6 @@ type StepMetrics struct {
 	AOICandidates           int
 	AOIVisible              int
 	OutboundMessages        int
-
 	SimulationDuration          time.Duration
 	DynamicReplicationDuration time.Duration
 	AOIDuration                 time.Duration
@@ -105,6 +95,7 @@ type Runtime struct {
 
 	dynamic                DynamicWorld
 	siege                  *siege.Service
+	combat                 *combat.Service
 	dynamicRevision        uint64
 	sessionDynamicRevision map[session.ID]uint64
 }
@@ -114,14 +105,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	if config.CommandQueueCapacity <= 0 { config.CommandQueueCapacity = 4096 }
 	if config.MaxCommandsPerTick <= 0 { config.MaxCommandsPerTick = 2048 }
 	if config.SnapshotEveryTicks == 0 { config.SnapshotEveryTicks = 1 }
-	runtime := &Runtime{
-		world: w,
-		sessions: session.NewRegistry(),
-		replication: replication.NewService(),
-		queue: newCommandQueue(config.CommandQueueCapacity),
-		config: config,
-		sessionDynamicRevision: make(map[session.ID]uint64),
-	}
+	runtime := &Runtime{world: w, sessions: session.NewRegistry(), replication: replication.NewService(), queue: newCommandQueue(config.CommandQueueCapacity), config: config, sessionDynamicRevision: make(map[session.ID]uint64)}
 	for _, option := range options { if option != nil { option(runtime) } }
 	if runtime.dynamic != nil { runtime.dynamicRevision = 1 }
 	return runtime
@@ -144,7 +128,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	report.Metrics.CommandQueueDepthBefore = r.queue.depth()
 	commands := r.queue.drain(r.config.MaxCommandsPerTick)
 	report.Metrics.CommandsDrained = len(commands)
-
 	for _, cmd := range commands {
 		switch c := cmd.(type) {
 		case registerSessionCommand:
@@ -157,8 +140,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
-		case attackGateCommand:
-			r.applyAttackGate(cmd.name(), c, tick, delta, &report)
+		case useActionCommand:
+			r.applyUseAction(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
@@ -182,7 +165,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound})
 				continue
 			}
-
 			if measure { stageStart = time.Now() }
 			visible, queryStats := r.world.QueryAOIWithStats(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
 			if measure { report.Metrics.AOIDuration += time.Since(stageStart) }
@@ -197,12 +179,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 
 			if measure { stageStart = time.Now() }
 			for _, out := range batch.Messages {
-				envelope := protocol.Envelope{
-					Delivery: out.Delivery,
-					Sequence: s.NextOutboundSequence(out.Delivery),
-					ServerTick: tick,
-					Message: out.Message,
-				}
+				envelope := protocol.Envelope{Delivery: out.Delivery, Sequence: s.NextOutboundSequence(out.Delivery), ServerTick: tick, Message: out.Message}
 				if err := s.Connection().TrySend(envelope); err != nil {
 					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err})
 				}
@@ -217,58 +194,30 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 }
 
 func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *StepReport) {
-	if c.session == nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: session.ErrInvalidSession})
-		return
-	}
-	if _, ok := r.world.Entity(c.session.EntityID); !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: ErrSessionEntityNotFound})
-		return
-	}
-	if err := r.sessions.Add(c.session); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err})
-		return
-	}
+	if c.session == nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: session.ErrInvalidSession}); return }
+	if _, ok := r.world.Entity(c.session.EntityID); !ok { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: ErrSessionEntityNotFound}); return }
+	if err := r.sessions.Add(c.session); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err}); return }
 	r.replication.Register(c.session.ID)
 }
 
 func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, report *StepReport) {
 	s, err := r.sessions.Remove(c.id)
-	if err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
-		return
-	}
+	if err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err}); return }
 	r.replication.Remove(c.id)
 	_ = s.Connection().Close()
 }
 
 func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport) {
-	if request.Session == nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: session.ErrInvalidSession})
-		return
-	}
-	if request.Session.EntityID != request.Entity.ID {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: ErrJoinEntityMismatch})
-		return
-	}
-	if err := r.world.Spawn(request.Entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
-		return
-	}
-	if err := r.sessions.Add(request.Session); err != nil {
-		r.world.Remove(request.Entity.ID)
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
-		return
-	}
+	if request.Session == nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: session.ErrInvalidSession}); return }
+	if request.Session.EntityID != request.Entity.ID { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: ErrJoinEntityMismatch}); return }
+	if err := r.world.Spawn(request.Entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err}); return }
+	if err := r.sessions.Add(request.Session); err != nil { r.world.Remove(request.Entity.ID); report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err}); return }
 	r.replication.Register(request.Session.ID)
 }
 
 func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 	s, err := r.sessions.Remove(id)
-	if err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: id, Err: err})
-		return
-	}
+	if err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: id, Err: err}); return }
 	r.replication.Remove(id)
 	r.world.Remove(s.EntityID)
 	_ = s.Connection().Close()
@@ -276,17 +225,8 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 
 func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport) {
 	s, ok := r.sessions.Get(c.sessionID)
-	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: session.ErrSessionNotFound})
-		return
-	}
-	if err := s.ValidateInputSequence(c.sequence); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
-		return
-	}
-	if err := r.world.SetMoveInput(s.EntityID, movement.Input{Direction: world.Vec3{X: c.input.DirectionX, Z: c.input.DirectionZ}}); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
-		return
-	}
+	if !ok { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: session.ErrSessionNotFound}); return }
+	if err := s.ValidateInputSequence(c.sequence); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err}); return }
+	if err := r.world.SetMoveInput(s.EntityID, movement.Input{Direction: world.Vec3{X: c.input.DirectionX, Z: c.input.DirectionZ}}); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err}); return }
 	s.MarkProcessedInput(c.sequence)
 }
