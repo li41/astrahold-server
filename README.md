@@ -6,7 +6,7 @@ Astrahold 的全新權威 MMORPG Server Core。
 
 ## 現階段狀態
 
-目前主線已推進到 **S3-C.6 Realtime Replication Foundation**。
+目前已完成 **S3-D Gate Siege Interaction**。
 
 ```text
 World Position (XYZ + Layer)
@@ -19,11 +19,11 @@ Bounded Command Queue
         ↓
 Fixed 20 Hz World Loop
         ↓
-Session / Input Sequence
+Session / Input + Action Sequence
         ↓
 Replication
         ↓
-Protocol v3 + World Identity
+Protocol v4 + World Identity
         ↓
 TCP Reliable + UDP Realtime
         ↓
@@ -31,22 +31,20 @@ GameV1 Compact Realtime Codec
         ↓
 MTU-safe Snapshot Chunks
         ↓
-Godot Runtime E2E
-        ↓
-Gameplay World / Dynamic Blocker
+Gameplay World schema v2
         ↓
 Ground L0 → Ramp L1 → Wall L2
         ↓
-Castle Front Siege Blockout
+Gate Siege Domain
         ↓
-Siege Load Lab 24 / 100 Clients
+Attack Intent → HP → Destroyed → Blocker Open
 ```
 
-S3-C.5 已用真實 TCP/UDP Headless Bot 證明第一個 scaling blocker 不是 single World owner，而是 **Full AOI + JSON Snapshot**：24 人全互見時就超過 1200-byte UDP budget。
+S3-C.5 / S3-C.6 已先建立 Siege Load Lab 並修掉第一個明確 scaling blocker：24 人 Full AOI JSON Snapshot 就會超過 1200-byte UDP budget。Protocol v3 將高頻 Move / Snapshot / Correction 改為 compact binary 與 MTU-safe chunks，100-client Gate Zerg 的 `datagram_too_large` 已由 8000 次降為 0，Server 8 秒 allocation 約下降 47%。
 
-S3-C.6 因此升級 Protocol v3，將高頻 Realtime Move / Snapshot / Correction 改為 compact binary，並將 Snapshot 切成 MTU-safe chunks。100-client Gate Zerg 實測已由 `8000` 次 `datagram_too_large` 降為 **0**，同時 Server 8 秒 allocation 約下降 **47%**。
+S3-D 再把第一個真正 Siege gameplay loop 接進同一套權威架構：Client 只送 `ClientAttackGate(gate_id)`，Server 驗證 Layer / Range / LOS / Cooldown，成功才扣 Gate HP；HP=0 時在同一個 world-owner tick 關閉 Gate blocker，並以 Reliable `WorldDynamicState` 同步 HP / Destroyed / blocker state。
 
-下一個 gameplay milestone 是 **S3-D Gate HP / Attack / Destroy**。
+下一個 gameplay 基礎是 **S3-D.1 Combat Action / Damage Foundation**；Replication Tier / dirty / delta 等大規模 fan-out 優化仍留在 S3-E。
 
 ## 與 Myriad Throne 的關係
 
@@ -65,10 +63,11 @@ S3-C.6 因此升級 Protocol v3，將高頻 Realtime Move / Snapshot / Correctio
 - [`docs/S3C_CASTLE_BLOCKOUT.md`](docs/S3C_CASTLE_BLOCKOUT.md)
 - [`docs/S3C5_SIEGE_LOAD_LAB.md`](docs/S3C5_SIEGE_LOAD_LAB.md)
 - [`docs/S3C6_REALTIME_REPLICATION.md`](docs/S3C6_REALTIME_REPLICATION.md)
+- [`docs/S3D_GATE_SIEGE.md`](docs/S3D_GATE_SIEGE.md)
 
 ## 世界模型
 
-Astrahold 的權威位置從一開始就是：
+Astrahold 的權威位置：
 
 ```go
 type Position struct {
@@ -83,9 +82,7 @@ type Position struct {
 - `Y`：高度
 - `Layer`：邏輯樓層／拓樸層
 
-因此可以表達城牆、坡道、樓梯、地下層、橋面與高低差，而不把 3D 世界壓回 2D Grid。
-
-Grid 只作為 Spatial / AOI acceleration structure，不是 gameplay position。
+Grid 只作為 Spatial / AOI acceleration structure，不是 gameplay position。這讓城牆、坡道、樓梯、地下層與重疊表面不必被壓回 2D Grid。
 
 ## Runtime 不變量
 
@@ -98,7 +95,7 @@ Astrahold 維持兩條核心規則：
 
 S3-C.5 / S3-C.6 的 100-client Gate Zerg 中，20Hz Tick p99 約 8～9ms，仍遠低於 50ms budget，因此目前沒有數據支持拆 Cell Actor。
 
-若未來 single owner 成為實際瓶頸，平行化優先序為：
+若未來 single owner 成為實際瓶頸，平行化優先序：
 
 ```text
 ① Read-only validation jobs
@@ -110,7 +107,7 @@ S3-C.5 / S3-C.6 的 100-client Gate Zerg 中，20Hz Tick p99 約 8～9ms，仍�
 
 ## Server Authoritative Movement
 
-Client 只送方向與 Session-scoped input sequence；時間推進由 Server fixed tick 決定。
+Client 只送方向；時間推進與位置裁定由 Server fixed tick 決定。
 
 ```text
 ClientMoveInput
@@ -131,17 +128,35 @@ Authoritative XYZ + Layer
 Snapshot + PositionCorrection
 ```
 
-Input sequence 的唯一來源是 Frame / Envelope，不在 payload 重複保存。
+Movement input sequence 的唯一來源是 Frame / Envelope，不在 payload 重複保存。
+
+## Gameplay Action Sequence
+
+S3-D 起，Movement 與低頻 gameplay action 是不同 semantic stream：
+
+```text
+UDP Move
+→ Session input sequence
+
+TCP Gate Attack
+→ Session action sequence
+```
+
+Gate attack 的 sequence 表示「這個 intent 已處理」，不是「一定成功造成傷害」。即使因距離、Layer、LOS 或 cooldown 被拒絕，同一 action sequence 也不可重播。
 
 ## Gameplay World / Shared Proxy
 
-Server 啟動時 strict load / validate `gameplay.json`：
+Server 啟動時 strict load / validate `gameplay.json`。
+
+目前 `castle-sandbox@s3d-001` 使用 **schema v2**：
 
 ```text
 Gameplay World
 ├── Surface
 ├── Portal
 ├── Blocker
+├── Gate
+│   └── blocker_id
 ├── Agent defaults
 ├── world_id
 ├── revision
@@ -150,7 +165,7 @@ Gameplay World
 
 Client 收到 `SessionWelcome` 後，必須先驗證本地 `gameplay.json` 的 `world_id / revision / SHA-256`，成功後才可啟用 realtime UDP。
 
-目前 `castle-sandbox@s3c-001`：
+目前 Layer：
 
 ```text
 Layer 0 = Siege Field / Ground / Courtyard
@@ -158,11 +173,85 @@ Layer 1 = West / East Ramp
 Layer 2 = Front Wall Walk (Y = 8m)
 ```
 
-Portal 是世界拓樸契約；Gate / Wall 由 dynamic blocker 控制 Movement 與 LOS。
+Portal 是世界拓樸契約；Blocker 是 Navigation / LOS proxy；Gate 是 Siege domain state。Gate 只透過 `blocker_id` 引用 blocker，不把 HP 塞進 Navigation。
 
-未來 World Compiler 由單一 canonical world source 同時輸出 Server Gameplay Proxy 與 Godot 對應資料，避免 Client / Server 各自維護世界規則。
+未來 World Compiler 由單一 canonical world source 同時輸出 Server Gameplay Proxy 與 Godot 對應資料。
 
-## Protocol v3 / Transport
+## S3-D Gate Siege Domain
+
+S3-D prototype `main-gate`：
+
+```text
+Max HP            1000
+Attack range       4.5 m
+Prototype damage   100
+Cooldown           0.5 s
+```
+
+這些數值由 Server Gameplay World 載入。Client 不提供 damage、range、cooldown 或 destroyed 判定。
+
+權威驗證順序：
+
+```text
+ClientAttackGate(gate_id)
+        ↓
+Reliable Gateway
+        ↓
+Bounded Command Queue
+        ↓
+Session action sequence
+        ↓
+Authoritative player Position
+        ↓
+Gate exists / alive
+        ↓
+Layer
+        ↓
+Range to nearest Gate blocker bounds
+        ↓
+Blocker enabled
+        ↓
+Server LOS
+        ↓
+Cooldown
+        ↓
+Server-side damage
+```
+
+普通 LOS 會被關閉的 Gate blocker 擋住；攻擊 Gate 本體時只忽略**目標 Gate blocker 自己**，其他 blocker 仍照常遮蔽。
+
+致命一擊在同一個 world-owner tick 內完成：
+
+```text
+Gate HP → 0
+    ↓
+SetBlockerEnabled(main-gate, false)
+    ↓
+commit Gate HP = 0 / Destroyed
+    ↓
+Dynamic revision++
+    ↓
+Reliable WorldDynamicState
+```
+
+Blocker disable 失敗時不提交 HP=0，避免 Siege state 與 Navigation state 分裂。
+
+### Gameplay rejection != Server fault
+
+以下屬於正常 gameplay rejection：
+
+- unknown Gate
+- Gate 已摧毀
+- Layer 不符
+- 超出距離
+- LOS 被其他 blocker 阻擋
+- cooldown 尚未結束
+
+這些記錄在 `ActionRejections`，不污染 `CommandErrors`。Session / Entity 遺失、Siege 未配置、Gate / blocker state 不一致等才屬 runtime/configuration fault。
+
+完整規約：[`docs/S3D_GATE_SIEGE.md`](docs/S3D_GATE_SIEGE.md)。
+
+## Protocol v4 / Transport
 
 ```text
 Gameplay Message
@@ -178,27 +267,31 @@ Transport Adapter
 
 任何 wire-incompatible contract 變更都必須升 Protocol Version；錯版 Client 在 Frame 邊界直接拒絕。
 
-目前為 **Protocol v3**：
+目前為 **Protocol v4**：
 
 ```text
-ReliableOrdered
-→ TCP
-→ SessionWelcome / Spawn / Despawn / WorldDynamicState / 重要事件
+ReliableOrdered / TCP
+→ SessionWelcome
+→ Spawn / Despawn
+→ WorldDynamicState
+→ ClientAttackGate
+→ 其他低頻重要事件
 → JSON bridge（開發期）
 
-Realtime
-→ UDP
-→ ClientMoveInput / WorldSnapshot / PositionCorrection
+Realtime / UDP
+→ ClientMoveInput
+→ WorldSnapshot
+→ PositionCorrection
 → GameV1 compact binary
 ```
+
+Protocol v4 沒有改動 v3 的 realtime compact payload；它新增 Gate Siege reliable control contract 與 Gate dynamic state。
 
 開發 Transport 的 TCP 尚未使用 TLS，預設只綁 `127.0.0.1`；這不是 Internet-facing security boundary。
 
 ### MTU-safe Snapshot
 
 Realtime datagram 上限維持 **1200 bytes**，不依賴 IP fragmentation。
-
-Protocol v3：
 
 ```text
 Snapshot header            14 bytes
@@ -207,17 +300,9 @@ Max entities / chunk       43
 ASTU + ASTR + payload    1184 bytes max
 ```
 
-100 個可見 Entity 會拆成：
-
-```text
-43 + 43 + 14
-```
-
 Client 只有在同一 `Tick` 的所有 chunks 收齊後，才可提交完整 Snapshot。
 
 ### Realtime semantic streams
-
-Realtime 不再是一個全域 latest-state slot：
 
 ```text
 Realtime Mailbox
@@ -225,9 +310,7 @@ Realtime Mailbox
 └── current WorldSnapshot set
 ```
 
-Correction 可以優先送出，即使它的 `Envelope.Sequence` 大於尚未送出的 Snapshot chunk。因此不同 realtime message type **不能用單一全域 sequence 判 stale**。
-
-Freshness 規則：
+不同 realtime message type 不使用單一全域 sequence 判 stale：
 
 ```text
 Snapshot
@@ -242,35 +325,17 @@ ClientMoveInput ingress
 
 完整 contract：[`docs/S3C6_REALTIME_REPLICATION.md`](docs/S3C6_REALTIME_REPLICATION.md)。
 
-## S3-C.5 / S3-C.6 Siege Load Lab
+## Siege Load Lab
 
-Load Lab 使用兩個獨立 process：
+Load Lab 使用兩個獨立 process，且 Bot 走真實 TCP / UDP / Protocol：
 
 ```text
 cmd/loadserver
     │
-    │ 真 TCP / UDP / Protocol v3
+    │ Astrahold network path
     │
 cmd/loadbot
 ```
-
-Bot 完整走：
-
-```text
-TCP connect
-→ SessionWelcome
-→ World Identity
-→ Realtime Token
-→ UDP Move
-→ Gateway
-→ Command Queue
-→ World Tick
-→ AOI / Replication
-→ UDP Snapshot / Correction
-→ Bot decode / Snapshot assembly
-```
-
-Server 與 Bot 分進程，避免 bot allocation 污染 Server `runtime.MemStats`。
 
 支援：
 
@@ -297,8 +362,6 @@ vertical-siege
 | Completed snapshots | N/A | **1,571** |
 | Bot decode/network error | 0 / 0 | **0 / 0** |
 
-24 人 Tick latency 約持平，但 allocation 約下降 44%，而 Snapshot 已可正常送達。
-
 ### 100-client Gate Zerg：S3-C.5 → S3-C.6
 
 | 指標 | S3-C.5 | S3-C.6 |
@@ -315,13 +378,9 @@ vertical-siege
 | Completed snapshots | 幾乎無 steady-state | **9,970** |
 | Bot decode/network error | 0 / 0 | **0 / 0** |
 
-S3-C.6 已解決 **MTU correctness**，但沒有宣稱 500 人 Full AOI bandwidth 已解決。
+S3-C.6 解決的是 **MTU correctness**，不是 500 人 Full AOI bandwidth。S3-D 的 24 / 100 Load Lab regression 必須繼續維持全綠。
 
-500 人全互見、10Hz、每 transform 26 bytes 時，光 raw transform payload 粗估就約 65MB/s，尚未計入 frame/datagram overhead。因此 S3-E 仍需要 Replication Tier、dirty/delta、cadence 與 shared block reuse。
-
-## Load Lab Regression Gate
-
-24-client 與 100-client CI 現在必須同時滿足：
+### Regression Gate
 
 ```text
 ready_clients == requested_clients
@@ -334,9 +393,7 @@ delivery_errors == 0
 server network_errors == 0
 ```
 
-`internal/codec/**`、`internal/protocol/**`、`internal/replication/**`、Runtime / Transport 等變更都會觸發 Siege Load Lab。
-
-GitHub hosted runner 只用於 regression / scaling curve；正式 capacity 必須在固定硬體與固定 network topology 的 dedicated environment 重跑。
+GitHub hosted runner 用於 regression / scaling curve；正式 capacity 必須在固定硬體與固定 network topology 的 dedicated environment 重跑。
 
 ## 規模化演進原則
 
@@ -356,11 +413,7 @@ preallocate / scratch reuse
 必要時才 sync.Pool
 ```
 
-S3-C.6 已先導入 per-session view set 雙 buffer與避免不必要排序 copy；不把 zero-allocation 當成全專案宗教。
-
 ### Replication Tier / Network LOD
-
-後續攻城不要求所有 Entity 使用相同 cadence / precision：
 
 ```text
 Tier 0 — Self / Target / Boss / Critical Objective
@@ -438,6 +491,7 @@ astrahold-server/
 │   ├── gateway/
 │   ├── session/
 │   ├── replication/
+│   ├── siege/
 │   ├── worldruntime/
 │   ├── loadlab/
 │   └── netadapter/tcpudp/
@@ -484,27 +538,35 @@ astrahold-server/
 - 24-client Vertical Siege
 - 100-client Gate Zerg
 - Tick / AOI / Queue / allocation / GC metrics
-- 第一個 scaling blocker 定位
 
 ### S3-C.6 — Realtime Replication Foundation ✅
 
-- Protocol v3
-- GameV1 compact realtime codec
+- Protocol v3 realtime compact binary
 - 1184-byte MTU-safe Snapshot chunks
 - Snapshot / Correction semantic mailbox
 - Client complete-snapshot assembly contract
-- per-session view set reuse
-- 24 / 100 人 `datagram_too_large = 0`
 - Load Lab regression gate
 
-### S3-D — Gate Siege Interaction（下一步）
+### S3-D — Gate Siege Interaction ✅
 
-- [ ] Gate Entity / HP / State
-- [ ] Attack Gate command
-- [ ] Server 驗距離 / Layer / LOS / cooldown
-- [ ] HP=0 → 關閉 `main-gate` blocker
-- [ ] Godot Gate HP / destroyed presentation
-- [ ] Ground → Gate → Courtyard → Ramp → Wall 最小攻城 E2E
+- Protocol v4
+- Gameplay World schema v2 / Gate definition
+- Gate HP / State
+- Reliable `ClientAttackGate`
+- Server Layer / Range / LOS / cooldown validation
+- HP=0 → `main-gate` blocker disabled
+- Reliable Gate HP / Destroyed dynamic state
+- Godot Gate HP / destroyed debug presentation
+- 24 / 100 Load Lab regression
+
+### S3-D.1 — Combat Action / Damage Foundation（下一步）
+
+- [ ] 共用 Combat Action intent
+- [ ] authoritative action timing / cooldown seam
+- [ ] Damage source / result model
+- [ ] Gate prototype damage 改走共用 Damage pipeline
+- [ ] Character target 與 Siege objective 共用 validation seam
+- [ ] 保留 Gate / Navigation ownership 分離
 
 ### S3-E — Siege Replication Scaling
 
@@ -565,7 +627,8 @@ TCP 127.0.0.1:7777
 UDP 127.0.0.1:7778
 World 20 Hz
 Snapshot 10 Hz
-Protocol v3
+Protocol v4
+Gameplay World castle-sandbox@s3d-001
 ```
 
 目前核心盡量只使用 Go 標準函式庫；效能改動必須由 Load Lab / profiling 數據驅動。
