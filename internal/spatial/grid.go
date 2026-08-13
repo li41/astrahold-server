@@ -28,6 +28,15 @@ type QueryOptions struct {
 	MaxHeightDelta float32
 }
 
+// QueryStats 是 Spatial 查詢的低成本量測結果。
+// CandidateEntities 表示從 bucket 掃到、尚未經 Layer/高度/距離過濾的實體數；
+// MatchedEntities 則是最後進入 AOI 的數量。
+type QueryStats struct {
+	VisitedCells      int
+	CandidateEntities int
+	MatchedEntities   int
+}
+
 // Grid 是以 X/Z 切格的空間索引。
 //
 // Grid 本身不是 thread-safe；目前設計由單一 world simulation goroutine 擁有並修改。
@@ -87,8 +96,15 @@ func (g *Grid) Position(id world.EntityID) (world.Position, bool) {
 
 // QueryRadius 以 X/Z 水平距離查詢附近實體，並可用 Layer/高度差進一步過濾。
 func (g *Grid) QueryRadius(center world.Position, radius float32, options QueryOptions) []world.EntityID {
+	result, _ := g.QueryRadiusWithStats(center, radius, options)
+	return result
+}
+
+// QueryRadiusWithStats 與 QueryRadius 相同，但同時回傳候選量，供 Load Lab / profiling 使用。
+// 它不改變 AOI 語意，也不引入額外一次 spatial scan。
+func (g *Grid) QueryRadiusWithStats(center world.Position, radius float32, options QueryOptions) ([]world.EntityID, QueryStats) {
 	if radius < 0 {
-		return nil
+		return nil, QueryStats{}
 	}
 
 	minX := g.cellCoord(center.X - radius)
@@ -98,9 +114,12 @@ func (g *Grid) QueryRadius(center world.Position, radius float32, options QueryO
 	radiusSq := radius * radius
 
 	result := make([]world.EntityID, 0, 16)
+	stats := QueryStats{}
 	for x := minX; x <= maxX; x++ {
 		for z := minZ; z <= maxZ; z++ {
+			stats.VisitedCells++
 			for id := range g.cells[cellKey{X: x, Z: z}] {
+				stats.CandidateEntities++
 				e := g.entries[id]
 				if options.SameLayer && e.position.Layer != center.Layer {
 					continue
@@ -117,7 +136,8 @@ func (g *Grid) QueryRadius(center world.Position, radius float32, options QueryO
 
 	// 穩定順序方便 snapshot、測試與除錯。
 	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
-	return result
+	stats.MatchedEntities = len(result)
+	return result, stats
 }
 
 func (g *Grid) cellFor(position world.Position) cellKey {
