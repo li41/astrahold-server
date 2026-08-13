@@ -1,4 +1,4 @@
-// Package jsonv1 提供 S2 Godot Thin Client 用的開發橋接 Payload Codec。
+// Package jsonv1 提供 S2/S3 Godot Thin Client 用的開發橋接 Payload Codec。
 // 它是可替換 adapter，不是 Simulation/Runtime 的依賴，也不是最終商用 wire format 承諾。
 package jsonv1
 
@@ -39,12 +39,15 @@ type clientMoveInput struct {
 }
 
 type sessionWelcome struct {
-	SessionID      uint64 `json:"session_id"`
-	EntityID       uint64 `json:"entity_id"`
-	RealtimePort   uint16 `json:"realtime_port"`
-	RealtimeToken  string `json:"realtime_token"`
-	TickRateHz     uint16 `json:"tick_rate_hz"`
-	SnapshotRateHz uint16 `json:"snapshot_rate_hz"`
+	SessionID       uint64 `json:"session_id"`
+	EntityID        uint64 `json:"entity_id"`
+	RealtimePort    uint16 `json:"realtime_port"`
+	RealtimeToken   string `json:"realtime_token"`
+	TickRateHz      uint16 `json:"tick_rate_hz"`
+	SnapshotRateHz  uint16 `json:"snapshot_rate_hz"`
+	WorldID         string `json:"world_id"`
+	WorldRevision   string `json:"world_revision"`
+	GameplaySHA256  string `json:"gameplay_sha256"`
 }
 
 type entitySpawn struct {
@@ -70,6 +73,16 @@ type positionCorrection struct {
 	LastProcessedInputSequence uint32   `json:"last_processed_input_sequence"`
 }
 
+type worldBlockerState struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+}
+
+type worldDynamicState struct {
+	Revision uint64              `json:"revision"`
+	Blockers []worldBlockerState `json:"blockers"`
+}
+
 func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	switch m := message.(type) {
 	case protocol.ClientMoveInput:
@@ -87,6 +100,9 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			RealtimeToken:  m.RealtimeToken,
 			TickRateHz:     m.TickRateHz,
 			SnapshotRateHz: m.SnapshotRateHz,
+			WorldID:        m.World.WorldID,
+			WorldRevision:  m.World.Revision,
+			GameplaySHA256: m.World.GameplaySHA256,
 		})
 	case protocol.EntitySpawn:
 		return json.Marshal(toEntitySpawn(m))
@@ -100,12 +116,15 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(out)
 	case protocol.PositionCorrection:
 		return json.Marshal(positionCorrection{
-			Tick:                       m.Tick,
-			EntityID:                   uint64(m.EntityID),
-			Position:                   toPosition(m.Position),
-			Yaw:                        m.Yaw,
+			Tick: m.Tick, EntityID: uint64(m.EntityID), Position: toPosition(m.Position), Yaw: m.Yaw,
 			LastProcessedInputSequence: m.LastProcessedInputSequence,
 		})
+	case protocol.WorldDynamicState:
+		out := worldDynamicState{Revision: m.Revision, Blockers: make([]worldBlockerState, len(m.Blockers))}
+		for i, blocker := range m.Blockers {
+			out.Blockers[i] = worldBlockerState{ID: blocker.ID, Enabled: blocker.Enabled}
+		}
+		return json.Marshal(out)
 	default:
 		return nil, ErrUnsupportedMessage
 	}
@@ -125,23 +144,16 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.SessionWelcome{
-			SessionID:      in.SessionID,
-			EntityID:       world.EntityID(in.EntityID),
-			RealtimePort:   in.RealtimePort,
-			RealtimeToken:  in.RealtimeToken,
-			TickRateHz:     in.TickRateHz,
-			SnapshotRateHz: in.SnapshotRateHz,
+			SessionID: in.SessionID, EntityID: world.EntityID(in.EntityID), RealtimePort: in.RealtimePort,
+			RealtimeToken: in.RealtimeToken, TickRateHz: in.TickRateHz, SnapshotRateHz: in.SnapshotRateHz,
+			World: protocol.WorldIdentity{WorldID: in.WorldID, Revision: in.WorldRevision, GameplaySHA256: in.GameplaySHA256},
 		}, nil
 	case protocol.MessageEntitySpawn:
 		var in entitySpawn
 		if err := decodeStrict(data, &in); err != nil {
 			return nil, err
 		}
-		return protocol.EntitySpawn{
-			EntityID:  world.EntityID(in.EntityID),
-			Kind:      world.EntityKind(in.Kind),
-			Transform: fromEntityTransform(in.Transform),
-		}, nil
+		return protocol.EntitySpawn{EntityID: world.EntityID(in.EntityID), Kind: world.EntityKind(in.Kind), Transform: fromEntityTransform(in.Transform)}, nil
 	case protocol.MessageEntityDespawn:
 		var in entityDespawn
 		if err := decodeStrict(data, &in); err != nil {
@@ -163,13 +175,17 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		if err := decodeStrict(data, &in); err != nil {
 			return nil, err
 		}
-		return protocol.PositionCorrection{
-			Tick:                       in.Tick,
-			EntityID:                   world.EntityID(in.EntityID),
-			Position:                   fromPosition(in.Position),
-			Yaw:                        in.Yaw,
-			LastProcessedInputSequence: in.LastProcessedInputSequence,
-		}, nil
+		return protocol.PositionCorrection{Tick: in.Tick, EntityID: world.EntityID(in.EntityID), Position: fromPosition(in.Position), Yaw: in.Yaw, LastProcessedInputSequence: in.LastProcessedInputSequence}, nil
+	case protocol.MessageWorldDynamicState:
+		var in worldDynamicState
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		blockers := make([]protocol.WorldBlockerState, len(in.Blockers))
+		for i, blocker := range in.Blockers {
+			blockers[i] = protocol.WorldBlockerState{ID: blocker.ID, Enabled: blocker.Enabled}
+		}
+		return protocol.WorldDynamicState{Revision: in.Revision, Blockers: blockers}, nil
 	default:
 		return nil, ErrUnsupportedMessage
 	}
@@ -194,19 +210,15 @@ func decodeStrict(data []byte, target any) error {
 func toPosition(p world.Position) position {
 	return position{X: p.X, Y: p.Y, Z: p.Z, Layer: uint16(p.Layer)}
 }
-
 func fromPosition(p position) world.Position {
 	return world.Position{X: p.X, Y: p.Y, Z: p.Z, Layer: world.LayerID(p.Layer)}
 }
-
 func toEntityTransform(t protocol.EntityTransform) entityTransform {
 	return entityTransform{EntityID: uint64(t.EntityID), Tick: t.Tick, Position: toPosition(t.Position), Yaw: t.Yaw}
 }
-
 func fromEntityTransform(t entityTransform) protocol.EntityTransform {
 	return protocol.EntityTransform{EntityID: world.EntityID(t.EntityID), Tick: t.Tick, Position: fromPosition(t.Position), Yaw: t.Yaw}
 }
-
 func toEntitySpawn(s protocol.EntitySpawn) entitySpawn {
 	return entitySpawn{EntityID: uint64(s.EntityID), Kind: uint8(s.Kind), Transform: toEntityTransform(s.Transform)}
 }

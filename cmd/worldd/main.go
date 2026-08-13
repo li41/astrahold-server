@@ -14,6 +14,7 @@ import (
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/worldruntime"
@@ -47,7 +48,7 @@ func main() {
 
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
-	runtime := worldruntime.New(sim, runtimeConfig)
+	runtime := worldruntime.New(sim, runtimeConfig, worldruntime.WithDynamicWorld(nav))
 	loop, err := worldruntime.NewLoop(runtime, *tickRate)
 	if err != nil {
 		log.Fatal(err)
@@ -58,6 +59,11 @@ func main() {
 	networkConfig.UDPAddress = *udpAddress
 	networkConfig.TickRateHz = uint16(*tickRate)
 	networkConfig.SnapshotRateHz = uint16(*snapshotRate)
+	networkConfig.WorldIdentity = protocol.WorldIdentity{
+		WorldID:        loadedWorld.Definition.WorldID,
+		Revision:       loadedWorld.Definition.Revision,
+		GameplaySHA256: loadedWorld.SHA256,
+	}
 	server := tcpudp.NewServer(networkConfig, runtime, jsonv1.Codec{})
 	if err := server.Open(); err != nil {
 		log.Fatal(err)
@@ -74,7 +80,8 @@ func main() {
 	go logNetworkErrors(ctx, server.Errors())
 
 	log.Printf(
-		"Astrahold worldd S3-A ready: world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=jsonv1",
+		"Astrahold worldd S3-B ready: protocol=%d world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=jsonv1",
+		protocol.Version,
 		loadedWorld.Definition.WorldID,
 		loadedWorld.Definition.Revision,
 		loadedWorld.SHA256[:12],

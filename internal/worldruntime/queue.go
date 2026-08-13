@@ -12,19 +12,15 @@ var ErrCommandQueueFull = errors.New("worldruntime: command queue full")
 type command interface{ name() string }
 
 type registerSessionCommand struct{ session *session.Session }
-
 func (registerSessionCommand) name() string { return "register_session" }
 
 type unregisterSessionCommand struct{ id session.ID }
-
 func (unregisterSessionCommand) name() string { return "unregister_session" }
 
 type joinCommand struct{ request JoinRequest }
-
 func (joinCommand) name() string { return "join_world" }
 
 type leaveCommand struct{ id session.ID }
-
 func (leaveCommand) name() string { return "leave_world" }
 
 type moveInputCommand struct {
@@ -32,8 +28,13 @@ type moveInputCommand struct {
 	sequence  uint32
 	input     protocol.ClientMoveInput
 }
-
 func (moveInputCommand) name() string { return "move_input" }
+
+type setBlockerCommand struct {
+	id      string
+	enabled bool
+}
+func (setBlockerCommand) name() string { return "set_blocker" }
 
 type commandQueue struct{ ch chan command }
 

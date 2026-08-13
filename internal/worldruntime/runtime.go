@@ -74,9 +74,13 @@ type Runtime struct {
 	replication *replication.Service
 	queue       *commandQueue
 	config      Config
+
+	dynamic                DynamicWorld
+	dynamicRevision        uint64
+	sessionDynamicRevision map[session.ID]uint64
 }
 
-func New(w *simulation.World, config Config) *Runtime {
+func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	if w == nil {
 		panic("worldruntime: world is required")
 	}
@@ -89,33 +93,38 @@ func New(w *simulation.World, config Config) *Runtime {
 	if config.SnapshotEveryTicks == 0 {
 		config.SnapshotEveryTicks = 1
 	}
-	return &Runtime{
-		world:       w,
-		sessions:    session.NewRegistry(),
-		replication: replication.NewService(),
-		queue:       newCommandQueue(config.CommandQueueCapacity),
-		config:      config,
+	runtime := &Runtime{
+		world:                  w,
+		sessions:               session.NewRegistry(),
+		replication:            replication.NewService(),
+		queue:                  newCommandQueue(config.CommandQueueCapacity),
+		config:                 config,
+		sessionDynamicRevision: make(map[session.ID]uint64),
 	}
+	for _, option := range options {
+		if option != nil {
+			option(runtime)
+		}
+	}
+	if runtime.dynamic != nil {
+		// Revision 1 表示 bake 初始 dynamic state；新 Session 必須先收到完整 snapshot。
+		runtime.dynamicRevision = 1
+	}
+	return runtime
 }
 
-// EnqueueRegister / EnqueueUnregister 保留給測試與未來內部管理流程。
-// 一般玩家連線應優先使用 EnqueueJoin / EnqueueLeave，避免 Network goroutine 直接 Spawn/Remove Entity。
 func (r *Runtime) EnqueueRegister(s *session.Session) error {
 	return r.queue.tryPush(registerSessionCommand{session: s})
 }
-
 func (r *Runtime) EnqueueUnregister(id session.ID) error {
 	return r.queue.tryPush(unregisterSessionCommand{id: id})
 }
-
 func (r *Runtime) EnqueueJoin(request JoinRequest) error {
 	return r.queue.tryPush(joinCommand{request: request})
 }
-
 func (r *Runtime) EnqueueLeave(id session.ID) error {
 	return r.queue.tryPush(leaveCommand{id: id})
 }
-
 func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.ClientMoveInput) error {
 	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
 }
@@ -135,10 +144,16 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
+		case setBlockerCommand:
+			r.applySetBlocker(cmd.name(), c, &report)
 		}
 	}
 
 	report.TickErrors = r.world.Tick(float32(delta.Seconds()))
+
+	// Dynamic World 是低頻 Reliable state，不能被 SnapshotEveryTicks 節流。
+	r.replicateDynamicState(tick, &report)
+
 	if tick%r.config.SnapshotEveryTicks != 0 {
 		return report
 	}
@@ -147,34 +162,23 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		self, ok := r.world.Entity(s.EntityID)
 		if !ok {
 			report.CommandErrors = append(report.CommandErrors, CommandError{
-				Command:   "replicate",
-				SessionID: s.ID,
-				Err:       ErrSessionEntityNotFound,
+				Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound,
 			})
 			continue
 		}
 
 		visible := r.world.QueryAOI(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
-		batch := r.replication.Build(
-			s.ID,
-			s.EntityID,
-			s.LastProcessedInputSequence(),
-			tick,
-			visible,
-		)
+		batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
 		for _, out := range batch.Messages {
 			envelope := protocol.Envelope{
-				Delivery:   out.Delivery,
-				Sequence:   s.NextOutboundSequence(out.Delivery),
+				Delivery: out.Delivery,
+				Sequence: s.NextOutboundSequence(out.Delivery),
 				ServerTick: tick,
-				Message:    out.Message,
+				Message: out.Message,
 			}
 			if err := s.Connection().TrySend(envelope); err != nil {
 				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-					SessionID:   s.ID,
-					Delivery:    out.Delivery,
-					MessageType: out.Message.Type(),
-					Err:         err,
+					SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err,
 				})
 			}
 		}
@@ -214,11 +218,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	if request.Session.EntityID != request.Entity.ID {
-		report.CommandErrors = append(report.CommandErrors, CommandError{
-			Command:   name,
-			SessionID: request.Session.ID,
-			Err:       ErrJoinEntityMismatch,
-		})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: ErrJoinEntityMismatch})
 		return
 	}
 	if err := r.world.Spawn(request.Entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
@@ -226,7 +226,6 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	if err := r.sessions.Add(request.Session); err != nil {
-		// Join 必須是原子的：Session 加入失敗時回滾剛 Spawn 的 Entity。
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
@@ -255,9 +254,7 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
 		return
 	}
-	if err := r.world.SetMoveInput(s.EntityID, movement.Input{
-		Direction: world.Vec3{X: c.input.DirectionX, Z: c.input.DirectionZ},
-	}); err != nil {
+	if err := r.world.SetMoveInput(s.EntityID, movement.Input{Direction: world.Vec3{X: c.input.DirectionX, Z: c.input.DirectionZ}}); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
 		return
 	}

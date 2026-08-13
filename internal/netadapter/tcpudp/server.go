@@ -20,11 +20,12 @@ import (
 )
 
 var (
-	ErrNotOpen            = errors.New("tcpudp: server is not open")
-	ErrAlreadyOpen        = errors.New("tcpudp: server already open")
-	ErrInvalidPlayerSpec  = errors.New("tcpudp: invalid player bootstrap spec")
-	ErrTCPChannelMismatch = errors.New("tcpudp: realtime message received on TCP")
-	ErrUDPChannelMismatch = errors.New("tcpudp: reliable message received on UDP")
+	ErrNotOpen             = errors.New("tcpudp: server is not open")
+	ErrAlreadyOpen         = errors.New("tcpudp: server already open")
+	ErrInvalidPlayerSpec   = errors.New("tcpudp: invalid player bootstrap spec")
+	ErrInvalidWorldIdentity = errors.New("tcpudp: invalid world identity")
+	ErrTCPChannelMismatch  = errors.New("tcpudp: realtime message received on TCP")
+	ErrUDPChannelMismatch  = errors.New("tcpudp: reliable message received on UDP")
 )
 
 type RuntimeSink interface {
@@ -50,6 +51,7 @@ type Config struct {
 	SnapshotRateHz        uint16
 	ReliableQueueCapacity int
 	PlayerFactory         PlayerFactory
+	WorldIdentity         protocol.WorldIdentity
 }
 
 func DefaultConfig() Config {
@@ -127,7 +129,6 @@ func NewServer(config Config, runtime RuntimeSink, codec transport.PayloadCodec)
 }
 
 func defaultPlayerFactory(_ session.ID, entityID world.EntityID) PlayerSpec {
-	// S2 開發角色刻意簡單。正式角色資料會由 Auth/Character Domain 注入。
 	index := float32((uint64(entityID) - 1) % 8)
 	return PlayerSpec{
 		Entity: world.EntityState{
@@ -145,6 +146,9 @@ func defaultPlayerFactory(_ session.ID, entityID world.EntityID) PlayerSpec {
 func (s *Server) Open() error {
 	if s.tcp != nil || s.udp != nil {
 		return ErrAlreadyOpen
+	}
+	if !s.config.WorldIdentity.Valid() {
+		return ErrInvalidWorldIdentity
 	}
 	tcp, err := net.Listen("tcp", s.config.TCPAddress)
 	if err != nil {
@@ -275,6 +279,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 			RealtimeToken:  token.String(),
 			TickRateHz:     s.config.TickRateHz,
 			SnapshotRateHz: s.config.SnapshotRateHz,
+			World:          s.config.WorldIdentity,
 		},
 	}
 	if err := transport.WriteEnvelope(raw, welcome, s.codec); err != nil {
