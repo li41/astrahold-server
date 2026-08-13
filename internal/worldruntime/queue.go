@@ -69,3 +69,5 @@ func (q *commandQueue) drain(max int) []command {
 	}
 	return out
 }
+
+func (q *commandQueue) depth() int { return len(q.ch) }
