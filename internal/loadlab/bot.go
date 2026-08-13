@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/li41/astrahold-server/internal/codec/jsonv1"
+	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/transport"
@@ -27,27 +27,29 @@ type BotConfig struct {
 }
 
 type BotReport struct {
-	SchemaVersion     int             `json:"schema_version"`
-	Scenario          Scenario        `json:"scenario"`
-	RequestedClients  int             `json:"requested_clients"`
-	ConnectedClients  uint64          `json:"connected_clients"`
-	ReadyClients      uint64          `json:"ready_clients"`
-	FailedConnections uint64          `json:"failed_connections"`
-	DurationSeconds   float64         `json:"duration_seconds"`
-	ConnectionLatency DurationSummary `json:"connection_latency"`
-	MovesSent         uint64          `json:"moves_sent"`
-	UDPBytesSent      uint64          `json:"udp_bytes_sent"`
-	UDPBytesReceived  uint64          `json:"udp_bytes_received"`
-	TCPBytesReceived  uint64          `json:"tcp_bytes_received"`
-	ReliableMessages  uint64          `json:"reliable_messages"`
-	RealtimeMessages  uint64          `json:"realtime_messages"`
-	Snapshots         uint64          `json:"snapshots"`
-	Corrections       uint64          `json:"corrections"`
-	Spawns            uint64          `json:"spawns"`
-	Despawns          uint64          `json:"despawns"`
-	DynamicStates     uint64          `json:"dynamic_states"`
-	DecodeErrors      uint64          `json:"decode_errors"`
-	NetworkErrors     uint64          `json:"network_errors"`
+	SchemaVersion            int             `json:"schema_version"`
+	Scenario                 Scenario        `json:"scenario"`
+	RequestedClients         int             `json:"requested_clients"`
+	ConnectedClients         uint64          `json:"connected_clients"`
+	ReadyClients             uint64          `json:"ready_clients"`
+	FailedConnections        uint64          `json:"failed_connections"`
+	DurationSeconds          float64         `json:"duration_seconds"`
+	ConnectionLatency        DurationSummary `json:"connection_latency"`
+	MovesSent                uint64          `json:"moves_sent"`
+	UDPBytesSent             uint64          `json:"udp_bytes_sent"`
+	UDPBytesReceived         uint64          `json:"udp_bytes_received"`
+	TCPBytesReceived         uint64          `json:"tcp_bytes_received"`
+	ReliableMessages         uint64          `json:"reliable_messages"`
+	RealtimeMessages         uint64          `json:"realtime_messages"`
+	Snapshots                uint64          `json:"snapshots"`
+	CompletedSnapshots       uint64          `json:"completed_snapshots"`
+	IncompleteSnapshotResets uint64          `json:"incomplete_snapshot_resets"`
+	Corrections              uint64          `json:"corrections"`
+	Spawns                   uint64          `json:"spawns"`
+	Despawns                 uint64          `json:"despawns"`
+	DynamicStates            uint64          `json:"dynamic_states"`
+	DecodeErrors             uint64          `json:"decode_errors"`
+	NetworkErrors            uint64          `json:"network_errors"`
 }
 
 type botCollector struct {
@@ -61,6 +63,8 @@ type botCollector struct {
 	reliable          atomic.Uint64
 	realtime          atomic.Uint64
 	snapshots         atomic.Uint64
+	completedSnapshots atomic.Uint64
+	incompleteSnapshotResets atomic.Uint64
 	corrections       atomic.Uint64
 	spawns            atomic.Uint64
 	despawns          atomic.Uint64
@@ -112,27 +116,29 @@ func RunBots(ctx context.Context, config BotConfig) (BotReport, error) {
 	collector.latencyMu.Unlock()
 
 	return BotReport{
-		SchemaVersion:     ReportSchemaVersion,
-		Scenario:          config.Scenario,
-		RequestedClients:  config.Clients,
-		ConnectedClients:  collector.connected.Load(),
-		ReadyClients:      collector.ready.Load(),
-		FailedConnections: collector.failedConnections.Load(),
-		DurationSeconds:   time.Since(started).Seconds(),
-		ConnectionLatency: summarizeDurations(latencies),
-		MovesSent:         collector.moves.Load(),
-		UDPBytesSent:      collector.udpSent.Load(),
-		UDPBytesReceived:  collector.udpReceived.Load(),
-		TCPBytesReceived:  collector.tcpReceived.Load(),
-		ReliableMessages:  collector.reliable.Load(),
-		RealtimeMessages:  collector.realtime.Load(),
-		Snapshots:         collector.snapshots.Load(),
-		Corrections:       collector.corrections.Load(),
-		Spawns:            collector.spawns.Load(),
-		Despawns:          collector.despawns.Load(),
-		DynamicStates:     collector.dynamicStates.Load(),
-		DecodeErrors:      collector.decodeErrors.Load(),
-		NetworkErrors:     collector.networkErrors.Load(),
+		SchemaVersion:            ReportSchemaVersion,
+		Scenario:                 config.Scenario,
+		RequestedClients:         config.Clients,
+		ConnectedClients:         collector.connected.Load(),
+		ReadyClients:             collector.ready.Load(),
+		FailedConnections:        collector.failedConnections.Load(),
+		DurationSeconds:          time.Since(started).Seconds(),
+		ConnectionLatency:        summarizeDurations(latencies),
+		MovesSent:                collector.moves.Load(),
+		UDPBytesSent:             collector.udpSent.Load(),
+		UDPBytesReceived:         collector.udpReceived.Load(),
+		TCPBytesReceived:         collector.tcpReceived.Load(),
+		ReliableMessages:         collector.reliable.Load(),
+		RealtimeMessages:         collector.realtime.Load(),
+		Snapshots:                collector.snapshots.Load(),
+		CompletedSnapshots:       collector.completedSnapshots.Load(),
+		IncompleteSnapshotResets: collector.incompleteSnapshotResets.Load(),
+		Corrections:              collector.corrections.Load(),
+		Spawns:                   collector.spawns.Load(),
+		Despawns:                 collector.despawns.Load(),
+		DynamicStates:            collector.dynamicStates.Load(),
+		DecodeErrors:             collector.decodeErrors.Load(),
+		NetworkErrors:            collector.networkErrors.Load(),
 	}, nil
 }
 
@@ -157,7 +163,7 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 	collector.latencies = append(collector.latencies, time.Since(dialStarted))
 	collector.latencyMu.Unlock()
 
-	codec := jsonv1.Codec{}
+	codec := gamev1.Codec{}
 	welcomeEnvelope, err := transport.ReadEnvelope(counted, codec)
 	if err != nil {
 		return err
@@ -263,12 +269,13 @@ func reliableReadLoop(ctx context.Context, cancel context.CancelFunc, conn net.C
 			return
 		}
 		collector.reliable.Add(1)
-		countMessage(envelope.Message, collector)
+		countNonSnapshotMessage(envelope.Message, collector)
 	}
 }
 
 func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Token, codec transport.PayloadCodec, collector *botCollector) {
 	buffer := make([]byte, tcpudp.MaxDatagramSize)
+	assembler := snapshotAssembly{}
 	for {
 		n, err := udp.Read(buffer)
 		if err != nil {
@@ -284,14 +291,23 @@ func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Tok
 			continue
 		}
 		collector.realtime.Add(1)
-		countMessage(envelope.Message, collector)
+		if snapshot, ok := envelope.Message.(protocol.WorldSnapshot); ok {
+			collector.snapshots.Add(1)
+			complete, reset := assembler.Accept(snapshot)
+			if reset {
+				collector.incompleteSnapshotResets.Add(1)
+			}
+			if complete {
+				collector.completedSnapshots.Add(1)
+			}
+			continue
+		}
+		countNonSnapshotMessage(envelope.Message, collector)
 	}
 }
 
-func countMessage(message protocol.Message, collector *botCollector) {
+func countNonSnapshotMessage(message protocol.Message, collector *botCollector) {
 	switch message.(type) {
-	case protocol.WorldSnapshot:
-		collector.snapshots.Add(1)
 	case protocol.PositionCorrection:
 		collector.corrections.Add(1)
 	case protocol.EntitySpawn:
@@ -301,6 +317,43 @@ func countMessage(message protocol.Message, collector *botCollector) {
 	case protocol.WorldDynamicState:
 		collector.dynamicStates.Add(1)
 	}
+}
+
+type snapshotAssembly struct {
+	tick             uint64
+	chunkCount       uint16
+	received         []bool
+	receivedCount    int
+	lastCompleteTick uint64
+}
+
+func (a *snapshotAssembly) Accept(snapshot protocol.WorldSnapshot) (complete bool, resetIncomplete bool) {
+	if !snapshot.ValidChunk() || snapshot.Tick <= a.lastCompleteTick {
+		return false, false
+	}
+	if a.tick != snapshot.Tick {
+		resetIncomplete = a.tick != 0 && a.receivedCount < int(a.chunkCount)
+		a.tick = snapshot.Tick
+		a.chunkCount = snapshot.ChunkCount
+		a.received = make([]bool, int(snapshot.ChunkCount))
+		a.receivedCount = 0
+	}
+	if snapshot.ChunkCount != a.chunkCount || int(snapshot.ChunkIndex) >= len(a.received) {
+		return false, resetIncomplete
+	}
+	if !a.received[snapshot.ChunkIndex] {
+		a.received[snapshot.ChunkIndex] = true
+		a.receivedCount++
+	}
+	if a.receivedCount != int(a.chunkCount) {
+		return false, resetIncomplete
+	}
+	a.lastCompleteTick = a.tick
+	a.tick = 0
+	a.chunkCount = 0
+	a.received = nil
+	a.receivedCount = 0
+	return true, resetIncomplete
 }
 
 type countingConn struct {
