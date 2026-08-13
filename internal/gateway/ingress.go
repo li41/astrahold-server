@@ -18,8 +18,8 @@ type MoveCommandSink interface {
 	EnqueueMove(session.ID, uint32, protocol.ClientMoveInput) error
 }
 
-type GateAttackCommandSink interface {
-	EnqueueAttackGate(session.ID, uint32, string) error
+type CombatActionCommandSink interface {
+	EnqueueCombatAction(session.ID, uint32, protocol.ClientCombatAction) error
 }
 
 type Ingress struct {
@@ -53,31 +53,31 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 			return ErrInvalidClientDelivery
 		}
 		return g.sink.EnqueueMove(sessionID, envelope.Sequence, *message)
-	case protocol.ClientAttackGate:
+	case protocol.ClientCombatAction:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
 		}
-		if message.GateID == "" {
+		if !message.Valid() {
 			return ErrInvalidClientEnvelope
 		}
-		return g.enqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
-	case *protocol.ClientAttackGate:
-		if message == nil || message.GateID == "" {
+		return g.enqueueCombatAction(sessionID, envelope.Sequence, message)
+	case *protocol.ClientCombatAction:
+		if message == nil || !message.Valid() {
 			return ErrInvalidClientEnvelope
 		}
 		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
 		}
-		return g.enqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
+		return g.enqueueCombatAction(sessionID, envelope.Sequence, *message)
 	default:
 		return ErrUnsupportedClientMessage
 	}
 }
 
-func (g *Ingress) enqueueAttackGate(sessionID session.ID, sequence uint32, gateID string) error {
-	sink, ok := g.sink.(GateAttackCommandSink)
+func (g *Ingress) enqueueCombatAction(sessionID session.ID, sequence uint32, action protocol.ClientCombatAction) error {
+	sink, ok := g.sink.(CombatActionCommandSink)
 	if !ok {
 		return ErrUnsupportedClientMessage
 	}
-	return sink.EnqueueAttackGate(sessionID, sequence, gateID)
+	return sink.EnqueueCombatAction(sessionID, sequence, action)
 }
