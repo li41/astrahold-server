@@ -1,43 +1,35 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
-	"github.com/li41/astrahold-server/internal/world"
+	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
+const worldTickRateHz = 20
+
 func main() {
-	nav := navigation.Plane{
-		MinX: -512, MaxX: 512,
-		MinZ: -512, MaxZ: 512,
-		Height: 0,
-		Layer:  0,
-	}
+	nav := navigation.Plane{MinX: -512, MaxX: 512, MinZ: -512, MaxZ: 512, Height: 0, Layer: 0}
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
-
-	player := world.EntityState{
-		ID:   1,
-		Kind: world.EntityPlayer,
-		Transform: world.Transform{
-			Position: world.Position{X: 0, Y: 0, Z: 0, Layer: 0},
-		},
-	}
-	if err := sim.Spawn(player, 6, 0.35, 0.5); err != nil {
+	cfg := worldruntime.DefaultConfig()
+	runtime := worldruntime.New(sim, cfg)
+	loop, err := worldruntime.NewLoop(runtime, worldTickRateHz)
+	if err != nil {
 		log.Fatal(err)
 	}
-	if err := sim.SetMoveInput(1, movement.Input{Sequence: 1, Direction: world.Vec3{X: 1}}); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	log.Printf("Astrahold worldd ready: tick_rate=%dHz snapshot_every=%d_ticks", worldTickRateHz, cfg.SnapshotEveryTicks)
+	if err := loop.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
-	if errs := sim.Tick(0.05); len(errs) != 0 {
-		log.Fatalf("world tick failed: %v", errs)
-	}
-
-	entity, _ := sim.Entity(1)
-	log.Printf("Astrahold world core ready: entities=%d player=(%.2f, %.2f, %.2f)",
-		len(sim.Snapshot()), entity.Transform.Position.X, entity.Transform.Position.Y, entity.Transform.Position.Z)
 }
