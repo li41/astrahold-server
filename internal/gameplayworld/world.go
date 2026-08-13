@@ -181,6 +181,9 @@ func Validate(d Definition) error {
 		}
 		portalIDs[portal.ID] = struct{}{}
 	}
+	if err := ValidatePortalGeometry(d); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
+	}
 
 	blockerIDs := make(map[string]struct{}, len(d.Blockers))
 	for i, blocker := range d.Blockers {

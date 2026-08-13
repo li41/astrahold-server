@@ -60,18 +60,26 @@ func (n *GameplayNavigator) ResolveMove(from world.Position, displacement world.
 	// Portal 優先於同 layer surface。只有從 portal 外部進入／穿越 trigger 才轉層，
 	// 避免 bidirectional portal 在 trigger 內每 tick 來回切 layer。
 	if targetLayer, ok := n.portalTarget(from.Layer, from.X, from.Z, toX, toZ); ok {
-		targetSurface, found := n.surfaceAt(targetLayer, toX, toZ)
-		if !found {
+		sourceSurface, sourceFound := n.surfaceAt(from.Layer, toX, toZ)
+		if !sourceFound {
+			return from, ErrBlocked
+		}
+		targetSurface, targetFound := n.surfaceAt(targetLayer, toX, toZ)
+		if !targetFound {
 			return from, ErrBlocked
 		}
 		if n.movementBlocked(targetLayer, from.X, from.Z, toX, toZ, agent.Radius) {
 			return from, ErrBlocked
 		}
-		next := world.Position{X: toX, Y: targetSurface.Plane.HeightAt(toX, toZ), Z: toZ, Layer: targetLayer}
-		if !stepAllowed(from.Y, next.Y, agent.MaxStepHeight) {
+
+		// Portal 的 step contract 比較同一個 X/Z 接點兩個 surface 的高度，而不是 from.Y。
+		// 如此角色在同一 tick 先沿斜坡移動再跨 portal，不會把「坡度位移 + 跨層 step」誤算成一個大台階。
+		sourceY := sourceSurface.Plane.HeightAt(toX, toZ)
+		targetY := targetSurface.Plane.HeightAt(toX, toZ)
+		if !stepAllowed(sourceY, targetY, agent.MaxStepHeight) {
 			return from, ErrBlocked
 		}
-		return next, nil
+		return world.Position{X: toX, Y: targetY, Z: toZ, Layer: targetLayer}, nil
 	}
 
 	targetSurface, ok := n.surfaceAt(from.Layer, toX, toZ)
