@@ -33,6 +33,7 @@ func main() {
 		scenarioText = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
 		duration     = flag.Duration("duration", 60*time.Second, "Measurement window after all clients are ready")
 		readyTimeout = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
+		shutdownGrace = flag.Duration("shutdown-grace", 2*time.Second, "Keep listeners alive after report so bots can close cleanly")
 		reportPath   = flag.String("report", "artifacts/loadlab-server.json", "Server JSON report path")
 	)
 	flag.Parse()
@@ -40,8 +41,8 @@ func main() {
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
 		log.Fatal(err)
 	}
-	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 {
-		log.Fatal("clients, duration and ready-timeout must be > 0")
+	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 || *shutdownGrace < 0 {
+		log.Fatal("clients, duration and ready-timeout must be > 0; shutdown-grace must be >= 0")
 	}
 	scenario, err := loadlab.ParseScenario(*scenarioText)
 	if err != nil {
@@ -128,9 +129,7 @@ func main() {
 	case <-measurementTimer.C:
 		completed = true
 	case <-ctx.Done():
-		if !measurementTimer.Stop() {
-			<-measurementTimer.C
-		}
+		measurementTimer.Stop()
 	}
 
 	report := collector.Finish(scenario, *clients)
@@ -141,6 +140,15 @@ func main() {
 		log.Fatalf("write report: %v", err)
 	}
 	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d", *reportPath, report.Ticks, report.TickDuration.P99MS, report.Queue.MaxDepthBefore, report.Errors.DatagramTooLarge)
+
+	if completed && *shutdownGrace > 0 {
+		graceTimer := time.NewTimer(*shutdownGrace)
+		select {
+		case <-graceTimer.C:
+		case <-ctx.Done():
+			graceTimer.Stop()
+		}
+	}
 
 	stop()
 	serveErr := <-serveDone
