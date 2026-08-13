@@ -1,0 +1,186 @@
+package tcpudp
+
+import (
+	"context"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/li41/astrahold-server/internal/codec/jsonv1"
+	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/transport"
+	"github.com/li41/astrahold-server/internal/worldruntime"
+)
+
+type moveCall struct {
+	id    session.ID
+	seq   uint32
+	input protocol.ClientMoveInput
+}
+
+type fakeRuntime struct {
+	joins  chan worldruntime.JoinRequest
+	leaves chan session.ID
+	moves  chan moveCall
+}
+
+func newFakeRuntime() *fakeRuntime {
+	return &fakeRuntime{
+		joins:  make(chan worldruntime.JoinRequest, 4),
+		leaves: make(chan session.ID, 4),
+		moves:  make(chan moveCall, 4),
+	}
+}
+
+func (f *fakeRuntime) EnqueueJoin(r worldruntime.JoinRequest) error {
+	f.joins <- r
+	return nil
+}
+
+func (f *fakeRuntime) EnqueueLeave(id session.ID) error {
+	f.leaves <- id
+	return nil
+}
+
+func (f *fakeRuntime) EnqueueMove(id session.ID, seq uint32, in protocol.ClientMoveInput) error {
+	f.moves <- moveCall{id: id, seq: seq, input: in}
+	return nil
+}
+
+func TestTCPUDPHandshakeAndRouting(t *testing.T) {
+	runtime := newFakeRuntime()
+	cfg := DefaultConfig()
+	cfg.TCPAddress = "127.0.0.1:0"
+	cfg.UDPAddress = "127.0.0.1:0"
+	server := NewServer(cfg, runtime, jsonv1.Codec{})
+	if err := server.Open(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(ctx) }()
+
+	tcpConn, err := net.Dial("tcp", server.TCPAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcpConn.Close()
+
+	welcomeEnvelope, err := transport.ReadEnvelope(tcpConn, jsonv1.Codec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	welcome, ok := welcomeEnvelope.Message.(protocol.SessionWelcome)
+	if !ok {
+		t.Fatalf("unexpected welcome: %#v", welcomeEnvelope.Message)
+	}
+	if welcome.SessionID == 0 || welcome.EntityID == 0 || welcome.RealtimePort == 0 || len(welcome.RealtimeToken) != 32 {
+		t.Fatalf("invalid welcome: %#v", welcome)
+	}
+
+	var join worldruntime.JoinRequest
+	select {
+	case join = <-runtime.joins:
+	case <-time.After(time.Second):
+		t.Fatal("join not enqueued")
+	}
+	if uint64(join.Session.ID) != welcome.SessionID || join.Entity.ID != welcome.EntityID {
+		t.Fatalf("join/welcome mismatch")
+	}
+
+	// Reliable outbound 應走既有 TCP stream。
+	if err := join.Session.Connection().TrySend(protocol.Envelope{
+		Delivery: protocol.DeliveryReliableOrdered,
+		Sequence: 1,
+		Message:  protocol.EntityDespawn{EntityID: 999},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reliable, err := transport.ReadEnvelope(tcpConn, jsonv1.Codec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reliable.Delivery != protocol.DeliveryReliableOrdered || reliable.Sequence != 1 {
+		t.Fatalf("reliable route mismatch: %#v", reliable)
+	}
+
+	token, err := ParseToken(welcome.RealtimeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpConn, err := net.DialUDP("udp", nil, server.UDPAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpConn.Close()
+
+	moveEnvelope := protocol.Envelope{
+		Delivery: protocol.DeliveryRealtimeSequenced,
+		Sequence: 3,
+		Message:  protocol.ClientMoveInput{DirectionX: 1},
+	}
+	packet, err := EncodeDatagram(token, moveEnvelope, jsonv1.Codec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := udpConn.Write(packet); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case move := <-runtime.moves:
+		if uint64(move.id) != welcome.SessionID || move.seq != 3 || move.input.DirectionX != 1 {
+			t.Fatalf("move mismatch: %#v", move)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("move not routed")
+	}
+
+	// 第一個合法 UDP packet 綁定 endpoint 後，Realtime outbound 走 UDP。
+	correction := protocol.Envelope{
+		Delivery:   protocol.DeliveryRealtimeSequenced,
+		Sequence:   4,
+		ServerTick: 10,
+		Message:    protocol.PositionCorrection{Tick: 10, EntityID: welcome.EntityID},
+	}
+	if err := join.Session.Connection().TrySend(correction); err != nil {
+		t.Fatal(err)
+	}
+	if err := udpConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, MaxDatagramSize)
+	n, err := udpConn.Read(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotToken, got, err := DecodeDatagram(buffer[:n], jsonv1.Codec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotToken != token || got.Sequence != 4 || got.ServerTick != 10 {
+		t.Fatalf("realtime route mismatch")
+	}
+
+	_ = tcpConn.Close()
+	select {
+	case id := <-runtime.leaves:
+		if uint64(id) != welcome.SessionID {
+			t.Fatalf("leave mismatch")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("leave not enqueued")
+	}
+
+	cancel()
+	_ = server.Close()
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatalf("serve error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serve did not stop")
+	}
+}
