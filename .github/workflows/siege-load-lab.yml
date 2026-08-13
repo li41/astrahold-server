@@ -5,6 +5,9 @@ on:
     paths:
       - 'cmd/loadbot/**'
       - 'cmd/loadserver/**'
+      - 'internal/codec/**'
+      - 'internal/protocol/**'
+      - 'internal/replication/**'
       - 'internal/loadlab/**'
       - 'internal/spatial/**'
       - 'internal/simulation/**'
@@ -96,7 +99,8 @@ jobs:
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
-          jq -e '.ticks > 0' artifacts/server.json >/dev/null
+          jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
+          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload smoke reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -156,7 +160,8 @@ jobs:
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
-          jq -e '.ticks > 0' artifacts/server.json >/dev/null
+          jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
+          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload 100-client baseline
         if: always()
         uses: actions/upload-artifact@v4
@@ -224,6 +229,8 @@ jobs:
           cat artifacts/bots.json || true
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
+          jq -e '.ready_clients == .requested_clients and .decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
+          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload load reports
         if: always()
         uses: actions/upload-artifact@v4
