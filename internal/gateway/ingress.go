@@ -14,18 +14,21 @@ var (
 	ErrUnsupportedClientMessage = errors.New("gateway: unsupported client message")
 )
 
-type CommandSink interface {
+type MoveCommandSink interface {
 	EnqueueMove(session.ID, uint32, protocol.ClientMoveInput) error
+}
+
+type GateAttackCommandSink interface {
 	EnqueueAttackGate(session.ID, uint32, string) error
 }
 
 type Ingress struct {
-	sink CommandSink
+	sink MoveCommandSink
 }
 
-func NewIngress(sink CommandSink) *Ingress {
+func NewIngress(sink MoveCommandSink) *Ingress {
 	if sink == nil {
-		panic("gateway: command sink is required")
+		panic("gateway: move command sink is required")
 	}
 	return &Ingress{sink: sink}
 }
@@ -51,10 +54,13 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		}
 		return g.sink.EnqueueMove(sessionID, envelope.Sequence, *message)
 	case protocol.ClientAttackGate:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered || message.GateID == "" {
+		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
 		}
-		return g.sink.EnqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
+		if message.GateID == "" {
+			return ErrInvalidClientEnvelope
+		}
+		return g.enqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
 	case *protocol.ClientAttackGate:
 		if message == nil || message.GateID == "" {
 			return ErrInvalidClientEnvelope
@@ -62,8 +68,16 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
 		}
-		return g.sink.EnqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
+		return g.enqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
 	default:
 		return ErrUnsupportedClientMessage
 	}
+}
+
+func (g *Ingress) enqueueAttackGate(sessionID session.ID, sequence uint32, gateID string) error {
+	sink, ok := g.sink.(GateAttackCommandSink)
+	if !ok {
+		return ErrUnsupportedClientMessage
+	}
+	return sink.EnqueueAttackGate(sessionID, sequence, gateID)
 }
