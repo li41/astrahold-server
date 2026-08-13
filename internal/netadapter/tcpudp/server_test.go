@@ -21,19 +21,34 @@ type moveCall struct {
 	input protocol.ClientMoveInput
 }
 
+type gateCall struct {
+	id     session.ID
+	seq    uint32
+	gateID string
+}
+
 type fakeRuntime struct {
 	joins  chan worldruntime.JoinRequest
 	leaves chan session.ID
 	moves  chan moveCall
+	gates  chan gateCall
 }
 
 func newFakeRuntime() *fakeRuntime {
-	return &fakeRuntime{joins: make(chan worldruntime.JoinRequest, 4), leaves: make(chan session.ID, 4), moves: make(chan moveCall, 4)}
+	return &fakeRuntime{
+		joins: make(chan worldruntime.JoinRequest, 4),
+		leaves: make(chan session.ID, 4),
+		moves: make(chan moveCall, 4),
+		gates: make(chan gateCall, 4),
+	}
 }
 func (f *fakeRuntime) EnqueueJoin(r worldruntime.JoinRequest) error { f.joins <- r; return nil }
 func (f *fakeRuntime) EnqueueLeave(id session.ID) error { f.leaves <- id; return nil }
 func (f *fakeRuntime) EnqueueMove(id session.ID, seq uint32, in protocol.ClientMoveInput) error {
 	f.moves <- moveCall{id: id, seq: seq, input: in}; return nil
+}
+func (f *fakeRuntime) EnqueueAttackGate(id session.ID, seq uint32, gateID string) error {
+	f.gates <- gateCall{id: id, seq: seq, gateID: gateID}; return nil
 }
 
 func TestOpenRejectsMissingWorldIdentity(t *testing.T) {
@@ -51,7 +66,7 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.TCPAddress = "127.0.0.1:0"
 	cfg.UDPAddress = "127.0.0.1:0"
-	cfg.WorldIdentity = protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3a-001", GameplaySHA256: testGameplaySHA}
+	cfg.WorldIdentity = protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: testGameplaySHA}
 	codec := gamev1.Codec{}
 	server := NewServer(cfg, runtime, codec)
 	if err := server.Open(); err != nil { t.Fatal(err) }
@@ -83,6 +98,17 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	reliable, err := transport.ReadEnvelope(tcpConn, codec)
 	if err != nil { t.Fatal(err) }
 	if reliable.Delivery != protocol.DeliveryReliableOrdered || reliable.Sequence != 1 { t.Fatalf("reliable route mismatch: %#v", reliable) }
+
+	attack := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: 7, Message: protocol.ClientAttackGate{GateID: "main-gate"}}
+	if err := transport.WriteEnvelope(tcpConn, attack, codec); err != nil { t.Fatal(err) }
+	select {
+	case call := <-runtime.gates:
+		if uint64(call.id) != welcome.SessionID || call.seq != 7 || call.gateID != "main-gate" {
+			t.Fatalf("gate route mismatch: %#v", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("gate attack not routed")
+	}
 
 	token, err := ParseToken(welcome.RealtimeToken)
 	if err != nil { t.Fatal(err) }
