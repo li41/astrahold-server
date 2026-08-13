@@ -41,7 +41,7 @@ func (r *Runtime) applyAttackGate(name string, command attackGateCommand, tick u
 		return
 	}
 	// Sequence 表示已處理的 action intent，而不是「成功造成 damage」。
-	// 即使 gameplay validation 拒絕，也不能允許同一可靠 action 被重播。
+	// 即使 gameplay validation 拒絕，也不能允許同一 reliable action 被重播。
 	s.MarkProcessedAction(command.sequence)
 
 	entity, ok := r.world.Entity(s.EntityID)
@@ -50,8 +50,21 @@ func (r *Runtime) applyAttackGate(name string, command attackGateCommand, tick u
 		return
 	}
 	if _, err := r.siege.Attack(s.EntityID, entity.Transform.Position, command.gateID, tick, delta, r.dynamic); err != nil {
+		if isExpectedGateRejection(err) {
+			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: err})
+			return
+		}
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
 	r.bumpDynamicRevision()
+}
+
+func isExpectedGateRejection(err error) bool {
+	return errors.Is(err, siege.ErrUnknownGate) ||
+		errors.Is(err, siege.ErrGateDestroyed) ||
+		errors.Is(err, siege.ErrGateWrongLayer) ||
+		errors.Is(err, siege.ErrGateOutOfRange) ||
+		errors.Is(err, siege.ErrGateNoLineOfSight) ||
+		errors.Is(err, siege.ErrGateAttackCooldown)
 }
