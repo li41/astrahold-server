@@ -6,7 +6,7 @@ Astrahold 的全新權威 MMORPG 伺服器核心。
 
 ## 現階段目標
 
-第一階段只打世界模擬的地基，不急著搬帳號、商店、倉庫、任務或舊資料：
+目前已完成 S0 世界核心與 S1 即時世界 Runtime 基線：
 
 ```text
 World Position (XYZ + Layer)
@@ -15,11 +15,17 @@ Spatial / AOI
         ↓
 Authoritative Movement
         ↓
-Navigation abstraction
+Bounded Command Queue
         ↓
-Astrahold Protocol semantics
+Fixed 20 Hz World Loop
         ↓
-Godot 最小 Client 驗證
+Session / Sequence
+        ↓
+Replication
+        ↓
+Protocol Envelope / Frame
+        ↓
+Godot Thin Client
 ```
 
 ## 與 Myriad Throne 的關係
@@ -28,7 +34,10 @@ Godot 最小 Client 驗證
 
 我們會逐項評估真正值得保留的 domain 邏輯，例如角色、道具、技能、Buff、Party、Guild、持久化與資料驅動經驗；舊 Lineage protocol、2D 地圖座標、舊地圖格式與私服相容包袱不直接搬入。
 
-詳細原則見 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+詳細原則見：
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/S1_RUNTIME.md`](docs/S1_RUNTIME.md)
 
 ## 世界座標
 
@@ -49,73 +58,84 @@ type Position struct {
 
 因此未來可以正確表達城牆、樓梯、地下層、橋面與高低差，而不必把 3D 世界硬壓回 2D Grid。
 
-## Spatial / AOI
+## S1 Runtime 核心原則
 
-Grid 仍然存在，但只用來做高速空間索引：
+Astrahold 現在明確維持兩條不變量：
 
-```text
-真實 XYZ Position
-        ↓
-32m Spatial Cell
-        ↓
-候選 Entity
-        ↓
-實際 radius / height / layer 過濾
-```
+1. Network、DB、GM、管理介面不得直接修改 World mutable state，只能透過 Command Queue。
+2. World Tick 不得直接做 blocking socket I/O，只能把 outbound message 丟到非阻塞 Connection / Outbox。
 
-**Grid ≠ 世界座標。**
+這樣可以讓每個 World/Zone 維持單一 simulation owner，避免未來 Combat、Skill、NPC AI、Siege 到處加 mutex。
 
 ## Server Authoritative Movement
 
-Client 只送移動意圖：方向與 input sequence；時間推進完全由 server clock / fixed tick 決定。
+Client 只送方向與 **Session scoped input sequence**；時間推進完全由 Server fixed tick 決定。
 
-Server 自己決定：
+```text
+ClientMoveInput
+(direction + sequence)
+        ↓
+Session sequence validation
+        ↓
+Command Queue
+        ↓
+Server 20 Hz Tick
+        ↓
+Movement + Navigation
+        ↓
+Authoritative Position
+        ↓
+Snapshot + Correction
+```
 
-- 移動速度
-- 固定 tick 的時間推進
-- 碰撞
-- 導航
-- 高度
-- Layer transition
-- 最終權威 Position
+Sequence 不再放在 Movement actor state。玩家重新連線取得新 Session 後可以重新建立 sequence 空間，不會被舊 actor 狀態污染。
 
-這也是日後 client prediction、interpolation 與 reconciliation 的基礎。
+## Protocol / Transport 分層
+
+```text
+Gameplay Message
+        ↓
+protocol.Envelope
+        ↓
+PayloadCodec
+        ↓
+Astrahold Frame v1
+        ↓
+Transport Adapter
+```
+
+目前不綁死 UDP、QUIC、TCP，也不綁死 Protobuf、FlatBuffers 或自訂 binary encoding。
+
+Delivery class 目前分成：
+
+- `ReliableOrdered`：Spawn、Despawn、重要狀態事件
+- `RealtimeSequenced`：Snapshot、PositionCorrection 等最新狀態優先資料
 
 ## 目前目錄
 
 ```text
 astrahold-server/
 ├── cmd/
-│   └── worldd/            # 世界程序入口（目前只有 bootstrap）
+│   └── worldd/             # 固定 Tick 世界程序入口
 ├── internal/
-│   ├── world/             # XYZ + Layer 與 Entity 基礎型別
-│   ├── spatial/           # AOI spatial grid
-│   ├── navigation/        # Navigation/LOS 抽象與測試平面
-│   ├── movement/          # Server authoritative movement
-│   ├── simulation/        # World state 組合層
-│   └── protocol/          # Astrahold protocol 語意 DTO
+│   ├── world/              # XYZ + Layer 與 Entity 基礎型別
+│   ├── spatial/            # AOI spatial grid
+│   ├── navigation/         # Navigation / LOS 抽象
+│   ├── movement/           # Server authoritative movement
+│   ├── simulation/         # World mutable state
+│   ├── protocol/           # Astrahold message semantic / Envelope
+│   ├── transport/          # Frame v1 / PayloadCodec 邊界
+│   ├── session/            # Session / Connection / sequence
+│   ├── replication/        # Spawn / Despawn / Snapshot / Correction
+│   └── worldruntime/       # Command Queue / Fixed Tick / orchestration
 └── docs/
-    └── ARCHITECTURE.md
+    ├── ARCHITECTURE.md
+    └── S1_RUNTIME.md
 ```
 
-## 第一版刻意沒有的東西
+## 里程碑
 
-- Lineage 3.80C protocol
-- 舊加密／opcode
-- 2D map `.txt/.s32`
-- PostgreSQL
-- Lua
-- Login server
-- Inventory / Item / Skill
-- NPC AI
-- Guild / Party
-- Siege 規則
-
-不是因為這些不重要，而是我們要先確定 **World → Movement → AOI → 新 Client** 的地基正確，再把上層 domain 一個一個接回來。
-
-## 下一個里程碑
-
-### S0 — World Core（目前）
+### S0 — World Core
 
 - [x] XYZ + Layer
 - [x] Entity 基礎型別
@@ -125,18 +145,25 @@ astrahold-server/
 - [x] Protocol semantic DTO
 - [x] 基礎單元測試
 
-### S1 — World Loop + Realtime Transport
+### S1 — World Runtime + Realtime Protocol Boundary
 
-- [ ] 固定 tick world loop
-- [ ] command queue
-- [ ] connection/session abstraction
-- [ ] Astrahold packet framing
-- [ ] spawn/despawn/snapshot replication
-- [ ] sequence / server tick / correction
+- [x] 固定 20 Hz world loop
+- [x] bounded command queue
+- [x] connection/session abstraction
+- [x] Session scoped input sequence
+- [x] Reliable / Realtime outbound sequence
+- [x] Astrahold packet frame v1
+- [x] 可替換 PayloadCodec 介面
+- [x] spawn/despawn/snapshot replication
+- [x] server tick / position correction
+- [x] non-blocking outbound / backpressure error
+- [x] 單元測試、`go vet`、race detector 驗證
 
 ### S2 — Godot Thin Client
 
-- [ ] 連線
+- [ ] 選定第一版 Payload Codec
+- [ ] 實作第一個 Transport Adapter
+- [ ] Godot 連線
 - [ ] 進入測試世界
 - [ ] Capsule 玩家
 - [ ] XYZ movement
@@ -159,7 +186,8 @@ astrahold-server/
 
 ```bash
 go test ./...
+go vet ./...
 go run ./cmd/worldd
 ```
 
-目前核心只使用 Go 標準函式庫，先保持依賴面最小。
+目前核心仍只使用 Go 標準函式庫，先把依賴面與架構責任維持乾淨。
