@@ -15,7 +15,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 2
+const SchemaVersion uint16 = 3
 
 var (
 	ErrUnsupportedSchema = errors.New("gameplayworld: unsupported schema version")
@@ -81,19 +81,12 @@ type Blocker struct {
 	Enabled        bool          `json:"enabled"`
 }
 
-// GateAttackProfile 是 S3-D vertical slice 在完整 Combat domain 建立前使用的最小攻城互動規格。
-// Client 只送 GateID；damage/range/cooldown 全由 Server 端 Gameplay World 決定。
-type GateAttackProfile struct {
-	Range           float32 `json:"range"`
-	Damage          uint32  `json:"damage"`
-	CooldownSeconds float32 `json:"cooldown_seconds"`
-}
-
+// Gate 只描述 Siege objective 與 Gameplay Proxy blocker 的關係。
+// Action range / damage / cooldown 從 S3-D.1 起由獨立 Combat Action Catalog 管理。
 type Gate struct {
-	ID        string            `json:"id"`
-	BlockerID string            `json:"blocker_id"`
-	MaxHP     uint32            `json:"max_hp"`
-	Attack    GateAttackProfile `json:"attack"`
+	ID        string `json:"id"`
+	BlockerID string `json:"blocker_id"`
+	MaxHP     uint32 `json:"max_hp"`
 }
 
 type Definition struct {
@@ -223,7 +216,7 @@ func Validate(d Definition) error {
 	gateIDs := make(map[string]struct{}, len(d.Gates))
 	claimedBlockers := make(map[string]string, len(d.Gates))
 	for i, gate := range d.Gates {
-		if gate.ID == "" || gate.BlockerID == "" || gate.MaxHP == 0 || !positiveFinite(gate.Attack.Range) || gate.Attack.Damage == 0 || !positiveFinite(gate.Attack.CooldownSeconds) {
+		if gate.ID == "" || gate.BlockerID == "" || gate.MaxHP == 0 {
 			return fmt.Errorf("%w: gate[%d]", ErrInvalidDefinition, i)
 		}
 		if _, exists := gateIDs[gate.ID]; exists {
