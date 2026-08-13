@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "revision": "s3d1-001",
+  "actions": [
+    {
+      "id": "basic-attack",
+      "targets": ["gate"],
+      "range": 4.5,
+      "base_damage": 100,
+      "damage_type": "physical",
+      "cooldown_seconds": 0.5
+    }
+  ]
+}
