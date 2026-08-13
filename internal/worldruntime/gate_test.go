@@ -8,7 +8,6 @@ import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
-	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
