@@ -30,6 +30,13 @@ type moveInputCommand struct {
 }
 func (moveInputCommand) name() string { return "move_input" }
 
+type attackGateCommand struct {
+	sessionID session.ID
+	sequence  uint32
+	gateID    string
+}
+func (attackGateCommand) name() string { return "attack_gate" }
+
 type setBlockerCommand struct {
 	id      string
 	enabled bool
