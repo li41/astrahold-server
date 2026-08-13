@@ -24,6 +24,8 @@ type Config struct {
 	MaxCommandsPerTick   int
 	SnapshotEveryTicks   uint64
 	AOIOptions           spatial.QueryOptions
+	// CollectMetrics 只在 Load Lab / profiling 時開啟；一般 worldd 不付階段 time.Now() 成本。
+	CollectMetrics bool
 }
 
 func DefaultConfig() Config {
@@ -61,11 +63,32 @@ type DeliveryError struct {
 	Err         error
 }
 
+// StepMetrics 是單一 World Tick 的 profiling 資料。
+// Duration 欄位只有 Config.CollectMetrics=true 時才填值；計數欄位則永遠可用。
+type StepMetrics struct {
+	CommandQueueDepthBefore int
+	CommandQueueDepthAfter  int
+	CommandsDrained         int
+	SessionsReplicated      int
+	AOIQueries              int
+	AOICandidates           int
+	AOIVisible              int
+	OutboundMessages        int
+
+	SimulationDuration         time.Duration
+	DynamicReplicationDuration time.Duration
+	AOIDuration                time.Duration
+	ReplicationBuildDuration   time.Duration
+	DeliveryDuration           time.Duration
+	TotalDuration              time.Duration
+}
+
 type StepReport struct {
 	Tick           uint64
 	CommandErrors  []CommandError
 	TickErrors     []simulation.TickError
 	DeliveryErrors []DeliveryError
+	Metrics        StepMetrics
 }
 
 type Runtime struct {
@@ -130,9 +153,18 @@ func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.Cli
 }
 
 func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
-	report := StepReport{Tick: tick}
+	measure := r.config.CollectMetrics
+	var totalStart time.Time
+	if measure {
+		totalStart = time.Now()
+	}
 
-	for _, cmd := range r.queue.drain(r.config.MaxCommandsPerTick) {
+	report := StepReport{Tick: tick}
+	report.Metrics.CommandQueueDepthBefore = r.queue.depth()
+	commands := r.queue.drain(r.config.MaxCommandsPerTick)
+	report.Metrics.CommandsDrained = len(commands)
+
+	for _, cmd := range commands {
 		switch c := cmd.(type) {
 		case registerSessionCommand:
 			r.applyRegister(cmd.name(), c, &report)
@@ -149,39 +181,81 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		}
 	}
 
+	var stageStart time.Time
+	if measure {
+		stageStart = time.Now()
+	}
 	report.TickErrors = r.world.Tick(float32(delta.Seconds()))
-
-	// Dynamic World 是低頻 Reliable state，不能被 SnapshotEveryTicks 節流。
-	r.replicateDynamicState(tick, &report)
-
-	if tick%r.config.SnapshotEveryTicks != 0 {
-		return report
+	if measure {
+		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
-	for _, s := range r.sessions.List() {
-		self, ok := r.world.Entity(s.EntityID)
-		if !ok {
-			report.CommandErrors = append(report.CommandErrors, CommandError{
-				Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound,
-			})
-			continue
-		}
+	// Dynamic World 是低頻 Reliable state，不能被 SnapshotEveryTicks 節流。
+	if measure {
+		stageStart = time.Now()
+	}
+	r.replicateDynamicState(tick, &report)
+	if measure {
+		report.Metrics.DynamicReplicationDuration = time.Since(stageStart)
+	}
 
-		visible := r.world.QueryAOI(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
-		batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
-		for _, out := range batch.Messages {
-			envelope := protocol.Envelope{
-				Delivery: out.Delivery,
-				Sequence: s.NextOutboundSequence(out.Delivery),
-				ServerTick: tick,
-				Message: out.Message,
-			}
-			if err := s.Connection().TrySend(envelope); err != nil {
-				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-					SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err,
+	if tick%r.config.SnapshotEveryTicks == 0 {
+		sessions := r.sessions.List()
+		report.Metrics.SessionsReplicated = len(sessions)
+		for _, s := range sessions {
+			self, ok := r.world.Entity(s.EntityID)
+			if !ok {
+				report.CommandErrors = append(report.CommandErrors, CommandError{
+					Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound,
 				})
+				continue
+			}
+
+			if measure {
+				stageStart = time.Now()
+			}
+			visible, queryStats := r.world.QueryAOIWithStats(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
+			if measure {
+				report.Metrics.AOIDuration += time.Since(stageStart)
+			}
+			report.Metrics.AOIQueries++
+			report.Metrics.AOICandidates += queryStats.CandidateEntities
+			report.Metrics.AOIVisible += queryStats.MatchedEntities
+
+			if measure {
+				stageStart = time.Now()
+			}
+			batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
+			if measure {
+				report.Metrics.ReplicationBuildDuration += time.Since(stageStart)
+			}
+			report.Metrics.OutboundMessages += len(batch.Messages)
+
+			if measure {
+				stageStart = time.Now()
+			}
+			for _, out := range batch.Messages {
+				envelope := protocol.Envelope{
+					Delivery:   out.Delivery,
+					Sequence:   s.NextOutboundSequence(out.Delivery),
+					ServerTick: tick,
+					Message:    out.Message,
+				}
+				if err := s.Connection().TrySend(envelope); err != nil {
+					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
+						SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err,
+					})
+				}
+			}
+			if measure {
+				report.Metrics.DeliveryDuration += time.Since(stageStart)
 			}
 		}
+	}
+
+	report.Metrics.CommandQueueDepthAfter = r.queue.depth()
+	if measure {
+		report.Metrics.TotalDuration = time.Since(totalStart)
 	}
 	return report
 }
