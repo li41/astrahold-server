@@ -3,7 +3,6 @@ package loadlab
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -15,39 +14,40 @@ import (
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/transport"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 type BotConfig struct {
-	TCPAddress    string
-	Clients       int
-	Scenario      Scenario
-	InputRateHz   int
-	RampUp        time.Duration
+	TCPAddress     string
+	Clients        int
+	Scenario       Scenario
+	InputRateHz    int
+	RampUp         time.Duration
 	ConnectTimeout time.Duration
 }
 
 type BotReport struct {
-	SchemaVersion      int             `json:"schema_version"`
-	Scenario           Scenario        `json:"scenario"`
-	RequestedClients   int             `json:"requested_clients"`
-	ConnectedClients   uint64          `json:"connected_clients"`
-	ReadyClients       uint64          `json:"ready_clients"`
-	FailedConnections  uint64          `json:"failed_connections"`
-	DurationSeconds    float64         `json:"duration_seconds"`
-	ConnectionLatency  DurationSummary `json:"connection_latency"`
-	MovesSent          uint64          `json:"moves_sent"`
-	UDPBytesSent       uint64          `json:"udp_bytes_sent"`
-	UDPBytesReceived   uint64          `json:"udp_bytes_received"`
-	TCPBytesReceived   uint64          `json:"tcp_bytes_received"`
-	ReliableMessages   uint64          `json:"reliable_messages"`
-	RealtimeMessages   uint64          `json:"realtime_messages"`
-	Snapshots          uint64          `json:"snapshots"`
-	Corrections        uint64          `json:"corrections"`
-	Spawns             uint64          `json:"spawns"`
-	Despawns           uint64          `json:"despawns"`
-	DynamicStates      uint64          `json:"dynamic_states"`
-	DecodeErrors       uint64          `json:"decode_errors"`
-	NetworkErrors      uint64          `json:"network_errors"`
+	SchemaVersion     int             `json:"schema_version"`
+	Scenario          Scenario        `json:"scenario"`
+	RequestedClients  int             `json:"requested_clients"`
+	ConnectedClients  uint64          `json:"connected_clients"`
+	ReadyClients      uint64          `json:"ready_clients"`
+	FailedConnections uint64          `json:"failed_connections"`
+	DurationSeconds   float64         `json:"duration_seconds"`
+	ConnectionLatency DurationSummary `json:"connection_latency"`
+	MovesSent         uint64          `json:"moves_sent"`
+	UDPBytesSent      uint64          `json:"udp_bytes_sent"`
+	UDPBytesReceived  uint64          `json:"udp_bytes_received"`
+	TCPBytesReceived  uint64          `json:"tcp_bytes_received"`
+	ReliableMessages  uint64          `json:"reliable_messages"`
+	RealtimeMessages  uint64          `json:"realtime_messages"`
+	Snapshots         uint64          `json:"snapshots"`
+	Corrections       uint64          `json:"corrections"`
+	Spawns            uint64          `json:"spawns"`
+	Despawns          uint64          `json:"despawns"`
+	DynamicStates     uint64          `json:"dynamic_states"`
+	DecodeErrors      uint64          `json:"decode_errors"`
+	NetworkErrors     uint64          `json:"network_errors"`
 }
 
 type botCollector struct {
@@ -195,7 +195,7 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 	}()
 	go func() {
 		defer readers.Done()
-		udpReadLoop(botCtx, cancel, udp, token, codec, collector)
+		udpReadLoop(botCtx, udp, token, codec, collector)
 	}()
 	defer func() {
 		cancel()
@@ -232,8 +232,8 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 	}
 }
 
-func sendMove(udp *net.UDPConn, token tcpudp.Token, codec transport.PayloadCodec, scenario Scenario, entityID uint64, sequence uint32, elapsed time.Duration, collector *botCollector) error {
-	dx, dz := MovementDirection(scenario, worldEntityID(entityID), elapsed)
+func sendMove(udp *net.UDPConn, token tcpudp.Token, codec transport.PayloadCodec, scenario Scenario, entityID world.EntityID, sequence uint32, elapsed time.Duration, collector *botCollector) error {
+	dx, dz := MovementDirection(scenario, entityID, elapsed)
 	envelope := protocol.Envelope{
 		Delivery: protocol.DeliveryRealtimeSequenced,
 		Sequence: sequence,
@@ -267,7 +267,7 @@ func reliableReadLoop(ctx context.Context, cancel context.CancelFunc, conn net.C
 	}
 }
 
-func udpReadLoop(ctx context.Context, cancel context.CancelFunc, udp *net.UDPConn, expectedToken tcpudp.Token, codec transport.PayloadCodec, collector *botCollector) {
+func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Token, codec transport.PayloadCodec, collector *botCollector) {
 	buffer := make([]byte, tcpudp.MaxDatagramSize)
 	for {
 		n, err := udp.Read(buffer)
@@ -315,12 +315,3 @@ func (c *countingConn) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
-
-// worldEntityID 避免 loadlab 的 wire runner 把 protocol EntityID 當成一般索引使用。
-func worldEntityID(value uint64) protocolEntityID {
-	return protocolEntityID(value)
-}
-
-type protocolEntityID = world.EntityID
-
-var _ = fmt.Sprintf
