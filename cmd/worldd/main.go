@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/li41/astrahold-server/internal/codec/jsonv1"
+	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
@@ -64,7 +64,7 @@ func main() {
 		Revision:       loadedWorld.Definition.Revision,
 		GameplaySHA256: loadedWorld.SHA256,
 	}
-	server := tcpudp.NewServer(networkConfig, runtime, jsonv1.Codec{})
+	server := tcpudp.NewServer(networkConfig, runtime, gamev1.Codec{})
 	if err := server.Open(); err != nil {
 		log.Fatal(err)
 	}
@@ -80,14 +80,14 @@ func main() {
 	go logNetworkErrors(ctx, server.Errors())
 
 	log.Printf(
-		"Astrahold worldd S3-B ready: protocol=%d world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=jsonv1",
+		"Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1",
 		protocol.Version,
 		loadedWorld.Definition.WorldID,
 		loadedWorld.Definition.Revision,
 		loadedWorld.SHA256[:12],
 		server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate,
 	)
-	log.Printf("S2-B transport is for local/controlled development; do not expose it directly to the Internet")
+	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 
 	if err := server.Serve(ctx); err != nil {
 		stop()

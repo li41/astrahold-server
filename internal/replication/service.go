@@ -13,57 +13,124 @@ type Outbound struct {
 	Delivery protocol.Delivery
 	Message  protocol.Message
 }
+
 type Batch struct{ Messages []Outbound }
-type Service struct {
-	known map[session.ID]map[world.EntityID]struct{}
+
+type viewState struct {
+	known    map[world.EntityID]struct{}
+	scratch  map[world.EntityID]struct{}
+	departed []world.EntityID
 }
 
-func NewService() *Service { return &Service{known: make(map[session.ID]map[world.EntityID]struct{})} }
+type Service struct {
+	views map[session.ID]*viewState
+}
+
+func NewService() *Service { return &Service{views: make(map[session.ID]*viewState)} }
+
 func (s *Service) Register(id session.ID) {
-	if _, ok := s.known[id]; !ok {
-		s.known[id] = make(map[world.EntityID]struct{})
+	if _, ok := s.views[id]; ok {
+		return
+	}
+	s.views[id] = &viewState{
+		known:   make(map[world.EntityID]struct{}),
+		scratch: make(map[world.EntityID]struct{}),
 	}
 }
-func (s *Service) Remove(id session.ID) { delete(s.known, id) }
+
+func (s *Service) Remove(id session.ID) { delete(s.views, id) }
 
 func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, tick uint64, visible []world.EntityState) Batch {
-	previous := s.known[sessionID]
-	if previous == nil {
-		previous = make(map[world.EntityID]struct{})
+	state := s.views[sessionID]
+	if state == nil {
+		state = &viewState{known: make(map[world.EntityID]struct{}), scratch: make(map[world.EntityID]struct{})}
+		s.views[sessionID] = state
 	}
-	ordered := append([]world.EntityState(nil), visible...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
-	current := make(map[world.EntityID]struct{}, len(ordered))
-	batch := Batch{}
-	transforms := make([]protocol.EntityTransform, 0, len(ordered))
-	var self *world.EntityState
+
+	// Spatial.QueryRadius 已保證 EntityID 穩定排序。Replication 仍保留 defensive fallback，
+	// 讓單元測試或未來其他 caller 傳入非排序資料時不改變可靠事件順序。
+	ordered := visible
+	if !sort.SliceIsSorted(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID }) {
+		ordered = append([]world.EntityState(nil), visible...)
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+	}
+
+	clear(state.scratch)
+	batch := Batch{Messages: make([]Outbound, 0, len(ordered)+4)}
+	transforms := make([]protocol.EntityTransform, len(ordered))
+	var selfTransform protocol.EntityTransform
+	hasSelf := false
+
 	for i := range ordered {
 		e := ordered[i]
-		current[e.ID] = struct{}{}
-		tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
-		transforms = append(transforms, tr)
-		if _, ok := previous[e.ID]; !ok {
-			batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryReliableOrdered, Message: protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr}})
+		state.scratch[e.ID] = struct{}{}
+		tr := protocol.EntityTransform{
+			EntityID: e.ID,
+			Tick:     tick,
+			Position: e.Transform.Position,
+			Yaw:      e.Transform.Yaw,
+		}
+		transforms[i] = tr
+		if _, ok := state.known[e.ID]; !ok {
+			batch.Messages = append(batch.Messages, Outbound{
+				Delivery: protocol.DeliveryReliableOrdered,
+				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
+			})
 		}
 		if e.ID == selfID {
-			copy := e
-			self = &copy
+			selfTransform = tr
+			hasSelf = true
 		}
 	}
-	departed := make([]world.EntityID, 0)
-	for id := range previous {
-		if _, ok := current[id]; !ok {
-			departed = append(departed, id)
+
+	state.departed = state.departed[:0]
+	for id := range state.known {
+		if _, ok := state.scratch[id]; !ok {
+			state.departed = append(state.departed, id)
 		}
 	}
-	sort.Slice(departed, func(i, j int) bool { return departed[i] < departed[j] })
-	for _, id := range departed {
-		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryReliableOrdered, Message: protocol.EntityDespawn{EntityID: id}})
+	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
+	for _, id := range state.departed {
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Message:  protocol.EntityDespawn{EntityID: id},
+		})
 	}
-	batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryRealtimeSequenced, Message: protocol.WorldSnapshot{Tick: tick, Entities: transforms}})
-	if self != nil {
-		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryRealtimeSequenced, Message: protocol.PositionCorrection{Tick: tick, EntityID: self.ID, Position: self.Transform.Position, Yaw: self.Transform.Yaw, LastProcessedInputSequence: lastProcessedInput}})
+
+	chunkCount := (len(transforms) + protocol.MaxSnapshotEntitiesPerChunk - 1) / protocol.MaxSnapshotEntitiesPerChunk
+	if chunkCount == 0 {
+		chunkCount = 1
 	}
-	s.known[sessionID] = current
+	for chunk := 0; chunk < chunkCount; chunk++ {
+		start := chunk * protocol.MaxSnapshotEntitiesPerChunk
+		end := start + protocol.MaxSnapshotEntitiesPerChunk
+		if end > len(transforms) {
+			end = len(transforms)
+		}
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryRealtimeSequenced,
+			Message: protocol.WorldSnapshot{
+				Tick:       tick,
+				ChunkIndex: uint16(chunk),
+				ChunkCount: uint16(chunkCount),
+				Entities:   transforms[start:end],
+			},
+		})
+	}
+
+	if hasSelf {
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryRealtimeSequenced,
+			Message: protocol.PositionCorrection{
+				Tick:                       tick,
+				EntityID:                   selfTransform.EntityID,
+				Position:                   selfTransform.Position,
+				Yaw:                        selfTransform.Yaw,
+				LastProcessedInputSequence: lastProcessedInput,
+			},
+		})
+	}
+
+	state.known, state.scratch = state.scratch, state.known
 	return batch
 }

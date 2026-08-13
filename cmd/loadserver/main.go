@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/li41/astrahold-server/internal/codec/jsonv1"
+	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/loadlab"
 	"github.com/li41/astrahold-server/internal/movement"
@@ -24,17 +24,17 @@ import (
 
 func main() {
 	var (
-		tcpAddress   = flag.String("tcp", "127.0.0.1:17777", "Reliable TCP listen address")
-		udpAddress   = flag.String("udp", "127.0.0.1:17778", "Realtime UDP listen address")
-		tickRate     = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
-		snapshotRate = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
-		clients      = flag.Int("clients", 500, "Expected ready clients before measurement starts")
-		scenarioText = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
-		duration     = flag.Duration("duration", 60*time.Second, "Measurement window after all clients are ready")
-		readyTimeout = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
+		tcpAddress    = flag.String("tcp", "127.0.0.1:17777", "Reliable TCP listen address")
+		udpAddress    = flag.String("udp", "127.0.0.1:17778", "Realtime UDP listen address")
+		tickRate      = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
+		snapshotRate  = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath     = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
+		clients       = flag.Int("clients", 500, "Expected ready clients before measurement starts")
+		scenarioText  = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
+		duration      = flag.Duration("duration", 60*time.Second, "Measurement window after all clients are ready")
+		readyTimeout  = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
 		shutdownGrace = flag.Duration("shutdown-grace", 2*time.Second, "Keep listeners alive after report so bots can close cleanly")
-		reportPath   = flag.String("report", "artifacts/loadlab-server.json", "Server JSON report path")
+		reportPath    = flag.String("report", "artifacts/loadlab-server.json", "Server JSON report path")
 	)
 	flag.Parse()
 
@@ -84,7 +84,7 @@ func main() {
 		Revision:       loadedWorld.Definition.Revision,
 		GameplaySHA256: loadedWorld.SHA256,
 	}
-	server := tcpudp.NewServer(networkConfig, worldRuntime, jsonv1.Codec{})
+	server := tcpudp.NewServer(networkConfig, worldRuntime, gamev1.Codec{})
 	if err := server.Open(); err != nil {
 		log.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func main() {
 	}()
 	go collectNetworkErrors(ctx, server.Errors(), collector)
 
-	log.Printf("Siege Load Server ready: scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz", scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate)
+	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz", protocol.Version, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate)
 
 	if err := waitForClients(ctx, server, *clients, *readyTimeout); err != nil {
 		stop()

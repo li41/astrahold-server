@@ -18,9 +18,9 @@ type clientConnection struct {
 	token Token
 	codec transport.PayloadCodec
 
-	reliable  chan protocol.Envelope
-	realtime  chan protocol.Envelope
-	done      chan struct{}
+	reliable chan protocol.Envelope
+	realtime *realtimeMailbox
+	done     chan struct{}
 	closeOnce sync.Once
 
 	remoteMu   sync.RWMutex
@@ -38,7 +38,7 @@ func newClientConnection(tcp net.Conn, udp *net.UDPConn, token Token, codec tran
 		token:      token,
 		codec:      codec,
 		reliable:   make(chan protocol.Envelope, reliableCapacity),
-		realtime:   make(chan protocol.Envelope, 1),
+		realtime:   newRealtimeMailbox(),
 		done:       make(chan struct{}),
 		bindNotify: make(chan struct{}, 1),
 	}
@@ -62,24 +62,7 @@ func (c *clientConnection) TrySend(envelope protocol.Envelope) error {
 			return session.ErrBackpressure
 		}
 	case protocol.DeliveryRealtimeSequenced:
-		// Realtime 是 latest-state mailbox。舊 snapshot/correction 可以被較新的狀態取代。
-		select {
-		case c.realtime <- envelope:
-			return nil
-		default:
-		}
-		select {
-		case <-c.realtime:
-		default:
-		}
-		select {
-		case c.realtime <- envelope:
-			return nil
-		case <-c.done:
-			return session.ErrConnectionClosed
-		default:
-			return session.ErrBackpressure
-		}
+		return c.realtime.Put(envelope)
 	default:
 		return session.ErrInvalidSession
 	}
@@ -137,44 +120,35 @@ func (c *clientConnection) runReliableWriter() error {
 }
 
 func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
-	var pending *protocol.Envelope
 	for {
-		if pending == nil {
-			select {
-			case <-c.done:
-				return nil
-			case envelope := <-c.realtime:
-				pending = &envelope
-			}
-		}
-
 		addr := c.realtimeAddr()
 		if addr == nil {
+			// 尚未收到第一個 UDP input 時不從 mailbox 取資料；
+			// producer 可以持續 coalesce，綁定完成後只送最新 correction / snapshot set。
 			select {
 			case <-c.done:
 				return nil
-			case envelope := <-c.realtime:
-				pending = &envelope
 			case <-c.bindNotify:
+				continue
 			}
-			continue
 		}
 
-		packet, err := EncodeDatagram(c.token, *pending, c.codec)
+		envelope, ok := c.realtime.Next(c.done)
+		if !ok {
+			return nil
+		}
+		packet, err := EncodeDatagram(c.token, envelope, c.codec)
 		if err != nil {
 			if onDrop != nil {
 				onDrop(err)
 			}
-			pending = nil
 			continue
 		}
 		if _, err := c.udp.WriteToUDP(packet, addr); err != nil {
 			if onDrop != nil {
 				onDrop(err)
 			}
-			pending = nil
 			continue
 		}
-		pending = nil
 	}
 }

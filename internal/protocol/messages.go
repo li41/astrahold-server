@@ -8,8 +8,13 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v2 新增 World Identity 與 WorldDynamicState；舊 v1 Client 應在 Frame 層直接拒絕。
-const Version uint16 = 2
+// v3 將 Realtime movement / snapshot / correction 改為 compact binary，並讓 WorldSnapshot 支援 MTU-safe chunk。
+const Version uint16 = 3
+
+// MaxSnapshotEntitiesPerChunk 是 Protocol v3 Realtime snapshot 的單一 chunk 上限。
+// compact payload 每個 transform 26 bytes；43 筆加上 14-byte snapshot header、28-byte ASTR frame
+// 與 24-byte ASTU datagram header 後共 1184 bytes，保留在 1200-byte UDP guard 內。
+const MaxSnapshotEntitiesPerChunk = 43
 
 type MessageType uint16
 
@@ -105,12 +110,21 @@ type EntityDespawn struct{ EntityID world.EntityID }
 
 func (EntityDespawn) Type() MessageType { return MessageEntityDespawn }
 
+// WorldSnapshot 是同一個 authoritative tick 的一個 Realtime transform chunk。
+// Client 必須收齊 ChunkCount 個 chunk 後才把該 tick 提交給 interpolation buffer；
+// 不完整的舊 tick 可以直接丟棄，不可把半張 snapshot 套用到畫面。
 type WorldSnapshot struct {
-	Tick     uint64
-	Entities []EntityTransform
+	Tick       uint64
+	ChunkIndex uint16
+	ChunkCount uint16
+	Entities   []EntityTransform
 }
 
 func (WorldSnapshot) Type() MessageType { return MessageWorldSnapshot }
+
+func (s WorldSnapshot) ValidChunk() bool {
+	return s.ChunkCount > 0 && s.ChunkIndex < s.ChunkCount && len(s.Entities) <= MaxSnapshotEntitiesPerChunk
+}
 
 type PositionCorrection struct {
 	Tick                       uint64
