@@ -1,0 +1,14 @@
+# Go
+/bin/
+/coverage.out
+*.test
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local runtime
+.env
+/tmp/
