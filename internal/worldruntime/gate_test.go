@@ -60,7 +60,7 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 
 	if err := rt.EnqueueAttackGate(1, 1, "main-gate"); err != nil { t.Fatal(err) }
 	first := rt.Step(2, 50*time.Millisecond)
-	if len(first.CommandErrors) != 0 { t.Fatalf("first errors=%#v", first.CommandErrors) }
+	if len(first.CommandErrors) != 0 || len(first.ActionRejections) != 0 { t.Fatalf("first report=%#v", first) }
 	state2 := nextDynamicState(t, conn)
 	if state2.Revision != 2 || state2.Gates[0].HP != 100 || state2.Gates[0].Destroyed || !state2.Blockers[0].Enabled {
 		t.Fatalf("after first attack=%#v", state2)
@@ -68,13 +68,13 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 
 	if err := rt.EnqueueAttackGate(1, 2, "main-gate"); err != nil { t.Fatal(err) }
 	cooldown := rt.Step(3, 50*time.Millisecond)
-	if len(cooldown.CommandErrors) != 1 || !errors.Is(cooldown.CommandErrors[0].Err, siege.ErrGateAttackCooldown) {
-		t.Fatalf("cooldown errors=%#v", cooldown.CommandErrors)
+	if len(cooldown.CommandErrors) != 0 || len(cooldown.ActionRejections) != 1 || !errors.Is(cooldown.ActionRejections[0].Err, siege.ErrGateAttackCooldown) {
+		t.Fatalf("cooldown report=%#v", cooldown)
 	}
 
 	if err := rt.EnqueueAttackGate(1, 3, "main-gate"); err != nil { t.Fatal(err) }
 	destroy := rt.Step(12, 50*time.Millisecond)
-	if len(destroy.CommandErrors) != 0 { t.Fatalf("destroy errors=%#v", destroy.CommandErrors) }
+	if len(destroy.CommandErrors) != 0 || len(destroy.ActionRejections) != 0 { t.Fatalf("destroy report=%#v", destroy) }
 	state3 := nextDynamicState(t, conn)
 	if state3.Revision != 3 || state3.Gates[0].HP != 0 || !state3.Gates[0].Destroyed || state3.Blockers[0].Enabled {
 		t.Fatalf("destroyed state=%#v", state3)
