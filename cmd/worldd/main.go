@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/li41/astrahold-server/internal/codec/jsonv1"
+	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
@@ -24,6 +25,7 @@ func main() {
 		udpAddress   = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
 		tickRate     = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
 		snapshotRate = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World v1 JSON path")
 	)
 	flag.Parse()
 
@@ -31,12 +33,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	nav := navigation.Plane{
-		MinX: -512, MaxX: 512,
-		MinZ: -512, MaxZ: 512,
-		Height: 0,
-		Layer:  0,
+	loadedWorld, err := gameplayworld.LoadFile(*worldPath)
+	if err != nil {
+		log.Fatalf("load gameplay world %q: %v", *worldPath, err)
 	}
+	nav, err := navigation.NewGameplayNavigator(loadedWorld.Definition)
+	if err != nil {
+		log.Fatalf("build gameplay navigator: %v", err)
+	}
+
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
 
@@ -69,7 +74,10 @@ func main() {
 	go logNetworkErrors(ctx, server.Errors())
 
 	log.Printf(
-		"Astrahold worldd S2-B ready: tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=jsonv1",
+		"Astrahold worldd S3-A ready: world=%s revision=%s gameplay_sha256=%s tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=jsonv1",
+		loadedWorld.Definition.WorldID,
+		loadedWorld.Definition.Revision,
+		loadedWorld.SHA256[:12],
 		server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate,
 	)
 	log.Printf("S2-B transport is for local/controlled development; do not expose it directly to the Internet")

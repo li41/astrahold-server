@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "world_id": "castle-sandbox",
+  "revision": "s3a-001",
+  "units": "meters",
+  "agent": {
+    "radius": 0.35,
+    "height": 1.8,
+    "max_step_height": 0.5
+  },
+  "surfaces": [
+    {
+      "id": "ground",
+      "layer": 0,
+      "bounds": { "min_x": -40, "max_x": 40, "min_z": -50, "max_z": 20 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "west-stair",
+      "layer": 1,
+      "bounds": { "min_x": -27, "max_x": -23, "min_z": 0, "max_z": 8 },
+      "plane": { "origin_x": -25, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 1 }
+    },
+    {
+      "id": "wall-walk",
+      "layer": 2,
+      "bounds": { "min_x": -30, "max_x": 30, "min_z": 7.2, "max_z": 12 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+    }
+  ],
+  "portals": [
+    {
+      "id": "ground-to-west-stair",
+      "from_layer": 0,
+      "to_layer": 1,
+      "bounds": { "min_x": -27, "max_x": -23, "min_z": 0, "max_z": 0.8 },
+      "bidirectional": true
+    },
+    {
+      "id": "west-stair-to-wall",
+      "from_layer": 1,
+      "to_layer": 2,
+      "bounds": { "min_x": -27, "max_x": -23, "min_z": 7.2, "max_z": 8 },
+      "bidirectional": true
+    }
+  ],
+  "blockers": [
+    {
+      "id": "main-gate",
+      "layer": 0,
+      "bounds": { "min_x": -3, "max_x": 3, "min_z": 9.5, "max_z": 10.5 },
+      "min_y": 0,
+      "max_y": 6,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "front-wall-left",
+      "layer": 0,
+      "bounds": { "min_x": -30, "max_x": -3, "min_z": 9.5, "max_z": 10.5 },
+      "min_y": 0,
+      "max_y": 10,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "front-wall-right",
+      "layer": 0,
+      "bounds": { "min_x": 3, "max_x": 30, "min_z": 9.5, "max_z": 10.5 },
+      "min_y": 0,
+      "max_y": 10,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    }
+  ]
+}
