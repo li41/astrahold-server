@@ -69,6 +69,7 @@ jobs:
             -clients 24 \
             -scenario vertical-siege \
             -duration 5s \
+            -shutdown-grace 2s \
             -ready-timeout 20s \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
@@ -82,7 +83,7 @@ jobs:
             -scenario vertical-siege \
             -input-rate 20 \
             -ramp-up 1s \
-            -duration 15s \
+            -duration 7s \
             -report artifacts/bots.json \
             > artifacts/bots.log 2>&1
           BOT_STATUS=$?
@@ -128,6 +129,7 @@ jobs:
             -clients 100 \
             -scenario gate-zerg \
             -duration 8s \
+            -shutdown-grace 2s \
             -ready-timeout 30s \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
@@ -141,7 +143,7 @@ jobs:
             -scenario gate-zerg \
             -input-rate 20 \
             -ramp-up 2s \
-            -duration 20s \
+            -duration 11s \
             -report artifacts/bots.json \
             > artifacts/bots.log 2>&1
           BOT_STATUS=$?
@@ -187,7 +189,7 @@ jobs:
         run: |
           set -u
           mkdir -p artifacts
-          BOT_TIMEOUT=$((DURATION_SECONDS + 90))
+          BOT_TIMEOUT=$((DURATION_SECONDS + 11))
           /tmp/astrahold-loadserver \
             -tcp 127.0.0.1:17777 \
             -udp 127.0.0.1:17778 \
@@ -196,6 +198,7 @@ jobs:
             -tick-rate "$TICK_RATE" \
             -snapshot-rate "$SNAPSHOT_RATE" \
             -duration "${DURATION_SECONDS}s" \
+            -shutdown-grace 2s \
             -ready-timeout 60s \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
