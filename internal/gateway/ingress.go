@@ -14,18 +14,18 @@ var (
 	ErrUnsupportedClientMessage = errors.New("gateway: unsupported client message")
 )
 
-// MoveCommandSink 讓 ingress 只依賴 application command seam，不直接依賴 simulation.World。
-type MoveCommandSink interface {
+type CommandSink interface {
 	EnqueueMove(session.ID, uint32, protocol.ClientMoveInput) error
+	EnqueueAttackGate(session.ID, uint32, string) error
 }
 
 type Ingress struct {
-	sink MoveCommandSink
+	sink CommandSink
 }
 
-func NewIngress(sink MoveCommandSink) *Ingress {
+func NewIngress(sink CommandSink) *Ingress {
 	if sink == nil {
-		panic("gateway: move command sink is required")
+		panic("gateway: command sink is required")
 	}
 	return &Ingress{sink: sink}
 }
@@ -50,6 +50,19 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 			return ErrInvalidClientDelivery
 		}
 		return g.sink.EnqueueMove(sessionID, envelope.Sequence, *message)
+	case protocol.ClientAttackGate:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered || message.GateID == "" {
+			return ErrInvalidClientDelivery
+		}
+		return g.sink.EnqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
+	case *protocol.ClientAttackGate:
+		if message == nil || message.GateID == "" {
+			return ErrInvalidClientEnvelope
+		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered {
+			return ErrInvalidClientDelivery
+		}
+		return g.sink.EnqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
 	default:
 		return ErrUnsupportedClientMessage
 	}
