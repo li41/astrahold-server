@@ -3,6 +3,7 @@ package loadlab
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	goruntime "runtime"
 	"sort"
 	"sync"
@@ -32,19 +33,19 @@ type StageSummary struct {
 }
 
 type QueueSummary struct {
-	MaxDepthBefore        int     `json:"max_depth_before"`
-	MaxDepthAfter         int     `json:"max_depth_after"`
-	CommandsTotal         uint64  `json:"commands_total"`
+	MaxDepthBefore         int     `json:"max_depth_before"`
+	MaxDepthAfter          int     `json:"max_depth_after"`
+	CommandsTotal          uint64  `json:"commands_total"`
 	CommandsAveragePerTick float64 `json:"commands_average_per_tick"`
 }
 
 type AOISummary struct {
-	Queries             uint64  `json:"queries"`
-	Candidates          uint64  `json:"candidates"`
-	Visible             uint64  `json:"visible"`
-	CandidatesPerQuery  float64 `json:"candidates_per_query"`
-	VisiblePerQuery     float64 `json:"visible_per_query"`
-	CandidateToVisible  float64 `json:"candidate_to_visible_ratio"`
+	Queries            uint64  `json:"queries"`
+	Candidates         uint64  `json:"candidates"`
+	Visible            uint64  `json:"visible"`
+	CandidatesPerQuery float64 `json:"candidates_per_query"`
+	VisiblePerQuery    float64 `json:"visible_per_query"`
+	CandidateToVisible float64 `json:"candidate_to_visible_ratio"`
 }
 
 type ReplicationSummary struct {
@@ -54,13 +55,13 @@ type ReplicationSummary struct {
 }
 
 type ErrorSummary struct {
-	CommandErrors       uint64            `json:"command_errors"`
-	BlockedMoves        uint64            `json:"blocked_moves"`
-	UnexpectedTickErrors uint64           `json:"unexpected_tick_errors"`
-	DeliveryErrors      uint64            `json:"delivery_errors"`
-	NetworkErrors       uint64            `json:"network_errors"`
-	DatagramTooLarge    uint64            `json:"datagram_too_large"`
-	NetworkByOperation  map[string]uint64 `json:"network_by_operation,omitempty"`
+	CommandErrors        uint64            `json:"command_errors"`
+	BlockedMoves         uint64            `json:"blocked_moves"`
+	UnexpectedTickErrors uint64            `json:"unexpected_tick_errors"`
+	DeliveryErrors       uint64            `json:"delivery_errors"`
+	NetworkErrors        uint64            `json:"network_errors"`
+	DatagramTooLarge     uint64            `json:"datagram_too_large"`
+	NetworkByOperation   map[string]uint64 `json:"network_by_operation,omitempty"`
 }
 
 type MemorySummary struct {
@@ -74,20 +75,20 @@ type MemorySummary struct {
 }
 
 type ServerReport struct {
-	SchemaVersion     int                `json:"schema_version"`
-	Scenario          Scenario           `json:"scenario"`
-	ExpectedClients   int                `json:"expected_clients"`
-	TickRateHz        int                `json:"tick_rate_hz"`
-	SnapshotRateHz    int                `json:"snapshot_rate_hz"`
-	MeasurementSeconds float64           `json:"measurement_seconds"`
-	Ticks             uint64             `json:"ticks"`
-	TickDuration      DurationSummary    `json:"tick_duration"`
-	Stages            StageSummary       `json:"stages"`
-	Queue             QueueSummary       `json:"queue"`
-	AOI               AOISummary         `json:"aoi"`
-	Replication       ReplicationSummary `json:"replication"`
-	Errors            ErrorSummary       `json:"errors"`
-	Memory            MemorySummary      `json:"memory"`
+	SchemaVersion      int                `json:"schema_version"`
+	Scenario           Scenario           `json:"scenario"`
+	ExpectedClients    int                `json:"expected_clients"`
+	TickRateHz         int                `json:"tick_rate_hz"`
+	SnapshotRateHz     int                `json:"snapshot_rate_hz"`
+	MeasurementSeconds float64            `json:"measurement_seconds"`
+	Ticks              uint64             `json:"ticks"`
+	TickDuration       DurationSummary    `json:"tick_duration"`
+	Stages             StageSummary       `json:"stages"`
+	Queue              QueueSummary       `json:"queue"`
+	AOI                AOISummary         `json:"aoi"`
+	Replication        ReplicationSummary `json:"replication"`
+	Errors             ErrorSummary       `json:"errors"`
+	Memory             MemorySummary      `json:"memory"`
 }
 
 type ServerCollector struct {
@@ -131,17 +132,44 @@ func NewServerCollector(tickRateHz, snapshotRateHz int) *ServerCollector {
 }
 
 // Reset 在所有預期 Client ready 後開始新的量測 window。
+// 不可用整個 struct assignment reset，因為 mu 可能正處於 locked 狀態。
 func (c *ServerCollector) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	*c = ServerCollector{
-		tickRateHz:         c.tickRateHz,
-		snapshotRate:       c.snapshotRate,
-		active:             true,
-		started:            time.Now(),
-		tickDurations:      make([]time.Duration, 0, c.tickRateHz*120),
-		networkByOperation: make(map[string]uint64),
+
+	c.active = true
+	c.started = time.Now()
+	c.startMem = goruntime.MemStats{}
+	capacity := c.tickRateHz * 120
+	if capacity < 1 {
+		capacity = 1
 	}
+	if cap(c.tickDurations) < capacity {
+		c.tickDurations = make([]time.Duration, 0, capacity)
+	} else {
+		c.tickDurations = c.tickDurations[:0]
+	}
+	c.ticks = 0
+	c.simulationDuration = 0
+	c.dynamicReplicationDuration = 0
+	c.aoiDuration = 0
+	c.replicationBuildDuration = 0
+	c.deliveryDuration = 0
+	c.maxQueueBefore = 0
+	c.maxQueueAfter = 0
+	c.commands = 0
+	c.aoiQueries = 0
+	c.aoiCandidates = 0
+	c.aoiVisible = 0
+	c.sessions = 0
+	c.messages = 0
+	c.commandErrors = 0
+	c.blockedMoves = 0
+	c.unexpectedTickErrors = 0
+	c.deliveryErrors = 0
+	c.networkErrors = 0
+	c.datagramTooLarge = 0
+	c.networkByOperation = make(map[string]uint64)
 	goruntime.ReadMemStats(&c.startMem)
 }
 
@@ -201,10 +229,13 @@ func (c *ServerCollector) RecordNetworkError(operation string, err error) {
 func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerReport {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	wasActive := c.active
+	c.active = false
+
 	var endMem goruntime.MemStats
 	goruntime.ReadMemStats(&endMem)
 	duration := time.Since(c.started)
-	if !c.active || c.started.IsZero() {
+	if !wasActive || c.started.IsZero() {
 		duration = 0
 	}
 
@@ -217,7 +248,6 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 	if seconds <= 0 {
 		seconds = 1
 	}
-
 	queries := float64(c.aoiQueries)
 	if queries == 0 {
 		queries = 1
@@ -233,14 +263,14 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 	}
 
 	return ServerReport{
-		SchemaVersion:       ReportSchemaVersion,
-		Scenario:            scenario,
-		ExpectedClients:     expectedClients,
-		TickRateHz:          c.tickRateHz,
-		SnapshotRateHz:      c.snapshotRate,
-		MeasurementSeconds:  duration.Seconds(),
-		Ticks:               ticks,
-		TickDuration:        summarizeDurations(c.tickDurations),
+		SchemaVersion:      ReportSchemaVersion,
+		Scenario:           scenario,
+		ExpectedClients:    expectedClients,
+		TickRateHz:         c.tickRateHz,
+		SnapshotRateHz:     c.snapshotRate,
+		MeasurementSeconds: duration.Seconds(),
+		Ticks:              ticks,
+		TickDuration:       summarizeDurations(c.tickDurations),
 		Stages: StageSummary{
 			SimulationAverageMS:         durationMS(c.simulationDuration) / tickFloat,
 			DynamicReplicationAverageMS: durationMS(c.dynamicReplicationDuration) / tickFloat,
@@ -311,7 +341,7 @@ func percentile(values []time.Duration, p float64) time.Duration {
 	if len(values) == 0 {
 		return 0
 	}
-	index := int(mathCeil(p*float64(len(values)))) - 1
+	index := int(math.Ceil(p*float64(len(values)))) - 1
 	if index < 0 {
 		index = 0
 	}
@@ -319,14 +349,6 @@ func percentile(values []time.Duration, p float64) time.Duration {
 		index = len(values) - 1
 	}
 	return values[index]
-}
-
-func mathCeil(value float64) float64 {
-	integer := float64(int64(value))
-	if value > integer {
-		return integer + 1
-	}
-	return integer
 }
 
 func durationMS(value time.Duration) float64 { return float64(value) / float64(time.Millisecond) }
