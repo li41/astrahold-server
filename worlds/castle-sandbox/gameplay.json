@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "world_id": "castle-sandbox",
-  "revision": "s3c-001",
+  "revision": "s3d-001",
   "units": "meters",
   "agent": {
     "radius": 0.35,
@@ -124,6 +124,18 @@
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
+    }
+  ],
+  "gates": [
+    {
+      "id": "main-gate",
+      "blocker_id": "main-gate",
+      "max_hp": 1000,
+      "attack": {
+        "range": 4.5,
+        "damage": 100,
+        "cooldown_seconds": 0.5
+      }
     }
   ]
 }
