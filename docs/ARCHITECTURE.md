@@ -4,26 +4,7 @@
 
 Astrahold Server 是全新專案。`myriad-throne-server` 只作為既有功能與資料模型的參考來源，不作為新專案的架構母體。
 
-### 不直接沿用
-
-- Lineage 3.80C 封包與加密相容層
-- 2D `gx/gy` 作為唯一世界座標
-- `.txt/.s32` 舊地圖格式
-- 舊 client 相容處理
-- 為私服資料格式而存在的 adapter
-- 為舊遊戲規則硬編碼的特殊案例
-
-### 可以逐項評估移植
-
-- 帳號／角色的 domain 行為
-- 道具、裝備、背包概念
-- Buff / Skill 的資料驅動設計
-- Party / Guild / Chat 的 domain 邏輯
-- PostgreSQL migration 經驗
-- Lua 是否仍適合作為內容腳本層
-- 舊專案已驗證過的交易一致性與持久化概念
-
-任何移植都必須先改成 Astrahold 的介面與資料模型，不直接複製舊 package tree。
+任何舊系統的移植都必須先符合 Astrahold 的世界模型、runtime 邊界與 protocol 語意，不能把 Lineage 私服的 package tree 或相容層原樣搬回來。
 
 ## 世界模型
 
@@ -37,70 +18,142 @@ Position
 └── LayerID
 ```
 
-`LayerID` 是邏輯拓樸，不是單純的高度。它讓城牆、橋面、地下層等在 X/Z 重疊時仍可以明確區分。
+`LayerID` 是邏輯拓樸，不是單純高度。城牆、橋面、地下層等即使 X/Z 重疊，仍可被正確區分。
 
-## Grid 的新角色
+## Grid 的角色
 
-Grid 不再代表玩家站在哪一格，而只作為 Spatial/AOI acceleration structure：
-
-```text
-Entity 真實位置 XYZ
-        ↓
-Spatial Grid 32m x 32m（可調）
-        ↓
-快速取得候選 Entity
-        ↓
-以實際距離 / Layer / 高度差精確過濾
-```
-
-未來可替換為其他 spatial partition，而不改 gameplay position。
-
-## 移動模型
-
-Client 不提交最終座標，也不提供權威 delta time，只提交移動意圖：
+Grid 只作為 Spatial/AOI acceleration structure，不是 gameplay position：
 
 ```text
-Client input
-(direction, sequence)
-        ↓
-Server fixed tick + speed / state
-        ↓
-Navigator.ResolveMove
-        ↓
-Authoritative Position
-        ↓
-AOI / snapshot / correction
+Entity XYZ + Layer
+      ↓
+Spatial Grid
+      ↓
+候選 Entity
+      ↓
+距離 / Height / Layer 過濾
 ```
 
-這是之後 prediction / reconciliation 的基礎。
+日後可更換 spatial partition，而不改 Entity Position 語意。
+
+## 移動責任
+
+Client 不提交最終座標，也不提供權威 delta time，只提交方向等操作意圖。
+
+```text
+ClientMoveInput
+(direction + session-scoped sequence)
+      ↓
+Session sequence validation
+      ↓
+Command Queue
+      ↓
+Server fixed tick
+      ↓
+Movement + Navigator
+      ↓
+Authoritative XYZ + Layer
+```
+
+**Sequence 屬於 Session/Protocol 層，不屬於 Movement。** 玩家重新連線取得新 Session 後可以從新的 input sequence 空間開始，不會被舊 actor state 污染。
+
+## Concurrency 不變量
+
+Astrahold 第一階段採每個 World/Zone 一個 simulation owner goroutine 的模型。
+
+必須維持兩條規則：
+
+1. Network、DB、GM、管理 API 不得直接修改 World mutable state，只能 enqueue command。
+2. World tick 不得直接做 blocking socket I/O，只能把 outbound envelope 送到非阻塞 connection/outbox。
+
+因此核心 Entity、Spatial、Movement 不需要四處加 mutex。若未來壓測證明單 Zone 需要切 shard/job system，再在外層演進。
+
+## S1 Runtime 資料流
+
+```text
+Network Reader / Future Transport Adapter
+              ↓
+        Session Boundary
+              ↓
+      Bounded Command Queue
+              ↓
+        World Runtime
+    ┌─────────┴─────────┐
+    ↓                   ↓
+Command apply       Fixed 20 Hz Tick
+                        ↓
+                   Simulation
+                        ↓
+                AOI / Replication
+                        ↓
+              Protocol Envelope
+                        ↓
+            Non-blocking Outbox
+                        ↓
+              Network Writer
+```
+
+Command Queue 與 Outbox 都必須 bounded。壓力不能靠無限配置記憶體吸收；Queue full / outbound backpressure 必須成為可觀測錯誤，日後接 metrics 與 disconnect/drop policy。
+
+## Protocol 分層
+
+```text
+Gameplay Message DTO
+        ↓
+protocol.Envelope
+(type / delivery / sequence / server tick)
+        ↓
+PayloadCodec
+(Protobuf / FlatBuffers / custom binary 可替換)
+        ↓
+Astrahold Frame
+        ↓
+Transport Adapter
+(UDP / QUIC / TCP 等，尚未綁死)
+```
+
+`internal/protocol` 不知道 socket；`internal/transport` 不知道 gameplay rule；World/Simulation 不知道 serialization。
+
+### Delivery class
+
+- `ReliableOrdered`：spawn、despawn、重要狀態切換等不能任意遺失的事件。
+- `RealtimeSequenced`：snapshot、position correction 等「最新狀態優先」的即時資料。
+
+跨 channel 不保證到達順序，因此 Client 必須允許 snapshot 比 spawn 先到。Snapshot 不負責建立未知 Entity；spawn 本身攜帶初始 transform。EntityID 在同一 server lifetime 應避免快速重用，防止舊 realtime packet 誤套到新實體。
+
+## Packet Frame v1
+
+固定 header 28 bytes：
+
+```text
+0   uint32  Magic = ASTR
+4   uint16  Protocol Version
+6   uint16  Header Size
+8   uint16  Message Type
+10  uint8   Delivery Class
+11  uint8   Flags
+12  uint32  Sequence
+16  uint64  Server Tick
+24  uint32  Payload Length
+28  bytes   Payload
+```
+
+Frame 有最大 payload 限制；decoder 必須檢查 magic、version、header size 與 payload length，避免把不可信網路資料直接帶進 gameplay layer。
+
+## Replication
+
+S1 採明確且容易驗證的基線：
+
+- AOI 進入：Reliable `EntitySpawn`
+- AOI 離開：Reliable `EntityDespawn`
+- 週期狀態：Realtime `WorldSnapshot`
+- 本機玩家修正：Realtime `PositionCorrection`
+- Correction 攜帶 `LastProcessedInputSequence`，供 Godot Client reconciliation
+
+初版可先使用 full AOI snapshot。等 S2/S3 有實際玩家數與頻寬數據後，再加入 delta compression、bit packing、priority/dirty masks；不要在沒有測量前把 replication 做成難維護的位元魔法。
 
 ## Navigation
 
-目前只有 `navigation.Plane` 作為核心測試替身。
+`navigation.Plane` 只是測試替身。正式 World Compiler 需要輸出 server gameplay proxy/navigation data，至少支援可走表面、高度/坡度、Layer transition、Gate blocker、LOS、path query 與 siege topology。
 
-正式版本預計由 World Compiler 產出 server gameplay proxy / navigation data，導航層至少要能處理：
-
-- 可走表面
-- 高度與坡度
-- 樓梯／坡道 transition
-- Layer transition
-- 動態 Gate blocker
-- LOS
-- path query
-- siege objective topology
-
-不要求伺服器執行完整剛體物理。
-
-## Concurrency 原則
-
-第一版假設每個 World/Zone 由單一 simulation goroutine 擁有 mutable gameplay state。
-
-網路、DB、管理介面等透過 queue/message 與 simulation 溝通，避免在最核心的 Entity/Spatial state 上到處加 mutex。
-
-等到有壓測數據後，再決定是否進一步拆 zone、shard 或 job system。
-
-## Protocol 原則
-
-Astrahold 不以 Lineage protocol 為新 client 的長期協定。
-
-`internal/protocol` 目前只定義 message semantic DTO；wire format 暫不拍板。之後應以實際需求比較 binary encoding、schema evolution、頻寬與 CPU 成本，再決定 Protobuf / FlatBuffers / 自訂 binary 等方案。
+伺服器不需要完整剛體物理，但所有會影響 gameplay 結果的導航、碰撞與 LOS 必須由 Server 可重現地判定。
