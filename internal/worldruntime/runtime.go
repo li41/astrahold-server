@@ -74,8 +74,8 @@ func (r *Runtime) EnqueueRegister(s *session.Session) error {
 func (r *Runtime) EnqueueUnregister(id session.ID) error {
 	return r.queue.tryPush(unregisterSessionCommand{id: id})
 }
-func (r *Runtime) EnqueueMove(id session.ID, input protocol.ClientMoveInput) error {
-	return r.queue.tryPush(moveInputCommand{sessionID: id, input: input})
+func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.ClientMoveInput) error {
+	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
 }
 
 func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
@@ -110,7 +110,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), SessionID: c.sessionID, Err: session.ErrSessionNotFound})
 				continue
 			}
-			if err := s.ValidateInputSequence(c.input.Sequence); err != nil {
+			if err := s.ValidateInputSequence(c.sequence); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), SessionID: c.sessionID, Err: err})
 				continue
 			}
@@ -119,7 +119,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), SessionID: c.sessionID, Err: err})
 				continue
 			}
-			s.MarkProcessedInput(c.input.Sequence)
+			s.MarkProcessedInput(c.sequence)
 		}
 	}
 	report.TickErrors = r.world.Tick(float32(delta.Seconds()))

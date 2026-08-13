@@ -20,6 +20,7 @@ func (unregisterSessionCommand) name() string { return "unregister_session" }
 
 type moveInputCommand struct {
 	sessionID session.ID
+	sequence  uint32
 	input     protocol.ClientMoveInput
 }
 

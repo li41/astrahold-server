@@ -33,7 +33,7 @@ func makeRuntime(t *testing.T) (*Runtime, *simulation.World, *session.QueueConne
 	if err := rt.EnqueueRegister(s); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.EnqueueMove(1, protocol.ClientMoveInput{Sequence: 1, DirectionX: 1}); err != nil {
+	if err := rt.EnqueueMove(1, 1, protocol.ClientMoveInput{DirectionX: 1}); err != nil {
 		t.Fatal(err)
 	}
 	return rt, sim, conn
@@ -98,7 +98,7 @@ func TestStaleMoveSequenceIsRejectedPerSession(t *testing.T) {
 	if len(first.CommandErrors) != 0 {
 		t.Fatalf("unexpected initial errors: %#v", first.CommandErrors)
 	}
-	if err := rt.EnqueueMove(1, protocol.ClientMoveInput{Sequence: 1, DirectionX: -1}); err != nil {
+	if err := rt.EnqueueMove(1, 1, protocol.ClientMoveInput{DirectionX: -1}); err != nil {
 		t.Fatal(err)
 	}
 	second := rt.Step(2, 50*time.Millisecond)

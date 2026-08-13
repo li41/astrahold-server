@@ -40,8 +40,8 @@ func (e Envelope) MessageType() MessageType {
 	return e.Message.Type()
 }
 
+// ClientMoveInput 只描述移動意圖；input sequence 由外層 Envelope/Frame 提供，避免雙重來源。
 type ClientMoveInput struct {
-	Sequence               uint32
 	DirectionX, DirectionZ float32
 }
 
