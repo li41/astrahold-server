@@ -18,8 +18,8 @@ type MoveCommandSink interface {
 	EnqueueMove(session.ID, uint32, protocol.ClientMoveInput) error
 }
 
-type GateAttackCommandSink interface {
-	EnqueueAttackGate(session.ID, uint32, string) error
+type ActionCommandSink interface {
+	EnqueueUseAction(session.ID, uint32, protocol.ClientUseAction) error
 }
 
 type Ingress struct {
@@ -53,31 +53,35 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 			return ErrInvalidClientDelivery
 		}
 		return g.sink.EnqueueMove(sessionID, envelope.Sequence, *message)
-	case protocol.ClientAttackGate:
+	case protocol.ClientUseAction:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
 		}
-		if message.GateID == "" {
+		if !validAction(message) {
 			return ErrInvalidClientEnvelope
 		}
-		return g.enqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
-	case *protocol.ClientAttackGate:
-		if message == nil || message.GateID == "" {
+		return g.enqueueUseAction(sessionID, envelope.Sequence, message)
+	case *protocol.ClientUseAction:
+		if message == nil || !validAction(*message) {
 			return ErrInvalidClientEnvelope
 		}
 		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
 		}
-		return g.enqueueAttackGate(sessionID, envelope.Sequence, message.GateID)
+		return g.enqueueUseAction(sessionID, envelope.Sequence, *message)
 	default:
 		return ErrUnsupportedClientMessage
 	}
 }
 
-func (g *Ingress) enqueueAttackGate(sessionID session.ID, sequence uint32, gateID string) error {
-	sink, ok := g.sink.(GateAttackCommandSink)
+func validAction(action protocol.ClientUseAction) bool {
+	return action.ActionID != "" && action.TargetKind != "" && action.TargetID != ""
+}
+
+func (g *Ingress) enqueueUseAction(sessionID session.ID, sequence uint32, action protocol.ClientUseAction) error {
+	sink, ok := g.sink.(ActionCommandSink)
 	if !ok {
 		return ErrUnsupportedClientMessage
 	}
-	return sink.EnqueueAttackGate(sessionID, sequence, gateID)
+	return sink.EnqueueUseAction(sessionID, sequence, action)
 }
