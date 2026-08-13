@@ -30,12 +30,12 @@ type moveInputCommand struct {
 }
 func (moveInputCommand) name() string { return "move_input" }
 
-type attackGateCommand struct {
+type useActionCommand struct {
 	sessionID session.ID
 	sequence  uint32
-	gateID    string
+	action    protocol.ClientUseAction
 }
-func (attackGateCommand) name() string { return "attack_gate" }
+func (useActionCommand) name() string { return "use_action" }
 
 type setBlockerCommand struct {
 	id      string
