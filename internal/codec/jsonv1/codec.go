@@ -37,8 +37,10 @@ type clientMoveInput struct {
 	DZ float32 `json:"dz"`
 }
 
-type clientAttackGate struct {
-	GateID string `json:"gate_id"`
+type clientUseAction struct {
+	ActionID   string `json:"action_id"`
+	TargetKind string `json:"target_kind"`
+	TargetID   string `json:"target_id"`
 }
 
 type sessionWelcome struct {
@@ -101,11 +103,11 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case *protocol.ClientMoveInput:
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientMoveInput{DX: m.DirectionX, DZ: m.DirectionZ})
-	case protocol.ClientAttackGate:
-		return json.Marshal(clientAttackGate{GateID: m.GateID})
-	case *protocol.ClientAttackGate:
+	case protocol.ClientUseAction:
+		return json.Marshal(clientUseAction{ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID})
+	case *protocol.ClientUseAction:
 		if m == nil { return nil, ErrUnsupportedMessage }
-		return json.Marshal(clientAttackGate{GateID: m.GateID})
+		return json.Marshal(clientUseAction{ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID})
 	case protocol.SessionWelcome:
 		return json.Marshal(sessionWelcome{
 			SessionID: m.SessionID, EntityID: uint64(m.EntityID), RealtimePort: m.RealtimePort,
@@ -138,10 +140,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in clientMoveInput
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
 		return protocol.ClientMoveInput{DirectionX: in.DX, DirectionZ: in.DZ}, nil
-	case protocol.MessageClientAttackGate:
-		var in clientAttackGate
+	case protocol.MessageClientUseAction:
+		var in clientUseAction
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
-		return protocol.ClientAttackGate{GateID: in.GateID}, nil
+		return protocol.ClientUseAction{ActionID: in.ActionID, TargetKind: protocol.ActionTargetKind(in.TargetKind), TargetID: in.TargetID}, nil
 	case protocol.MessageSessionWelcome:
 		var in sessionWelcome
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
