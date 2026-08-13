@@ -56,9 +56,7 @@ ServerCollector.Reset()
 JSON report
 ```
 
-這避免 TLS/Session 以外的 bootstrap、Entity Spawn 與連線 ramp-up 混入 steady-state Tick latency。
-
-連線建立延遲則由 Bot report 另外保存。
+這避免 Session bootstrap、Entity Spawn 與連線 ramp-up 混入 steady-state Tick latency。連線建立延遲則由 Bot report 另外保存。
 
 ## 場景
 
@@ -126,7 +124,7 @@ max
 - Replication Build
 - Delivery / Outbox enqueue
 
-注意：這些是單一 owner thread 內的 application-stage duration，不含 kernel socket writer goroutine 真正 flush 到 NIC 的時間。
+注意：這些是單一 owner thread 內的 application-stage duration，不含 network writer goroutine 真正 encode / flush socket 的完整成本。
 
 ### Queue / AOI
 
@@ -189,7 +187,7 @@ ErrDatagramTooLarge
 
 必須記錄在報表，不可為了讓壓測數字漂亮而提高 MTU 或依賴 IP fragmentation。
 
-這是 S3-E 是否需要 binary codec、delta / chunk、quantization 與 Replication Tier 的直接輸入資料。
+這是 compact binary、delta / chunk、quantization 與 Replication Tier 是否需要提前的直接輸入資料。
 
 ## 第一份成功基線：24-client Vertical Siege
 
@@ -237,7 +235,7 @@ visible/query           24
 candidate/visible       1.0
 ```
 
-此小型 vertical 場景中 64m AOI 幾乎讓 24 人全互見，因此還看不出 Layer-aware bucket 的收益；需要 Gate Zerg / larger-world baseline 再判斷。
+此小型 vertical 場景中 64m AOI 幾乎讓 24 人全互見，因此還看不出 Layer-aware bucket 的收益。
 
 ### Queue / allocation
 
@@ -251,7 +249,7 @@ GC                      5
 GC pause total          0.805 ms
 ```
 
-目前 allocation 很明顯存在，但 24 人的 GC pause 仍很低；應先看 100/500 scaling，而不是立刻把所有資料結構換成 `sync.Pool`。
+目前 allocation 很明顯存在，但 24 人的 GC pause 仍很低；不能因此直接把所有資料結構換成 `sync.Pool`。
 
 ### 第一個真正的 scaling blocker：Full JSON Snapshot
 
@@ -273,18 +271,151 @@ Corrections     1,331
 
 37 個 Snapshot 主要出現在 ramp-up / 尚未全員加入、payload 還較小的階段。steady-state 24 人 Snapshot 已無法送出。
 
-這不是調高 UDP MTU 的理由；它直接證明 S3-E 的第一優先應是重新設計 Realtime replication payload。
+這不是調高 UDP MTU 的理由；它直接證明正式攻城 Realtime replication 不能繼續使用 full JSON snapshot。
 
-## 目前得到的優化順序
+## 第二份基線：100-client Gate Zerg
 
-在更大基線完成前，已可先鎖定：
+環境同樣為 GitHub Actions hosted `ubuntu-24.04` runner、Go 1.26.5。
 
-1. **Snapshot transport / encoding 是第一個已證實的 scaling blocker。**
-2. 不能把 `WorldSnapshot` 與 self `PositionCorrection` 當成沒有優先級差異的單一 realtime latest-state mailbox；兩者需要明確 coalescing / stream semantics。
-3. Full JSON Snapshot 只適合作為早期 Thin Client bridge，不適合作為攻城 steady-state 格式。
-4. 優先評估 compact binary transform block、delta / dirty mask、quantization 與 Replication Tier。
-5. 目前沒有證據需要 Cell Actor / lock-free ring buffer。
-6. allocation optimization 必須等待 100 / 500 scaling data 再決定 hot path。
+```text
+Clients             100
+Scenario            gate-zerg
+Tick                20 Hz
+Snapshot            10 Hz
+Measurement         8 sec
+Ticks               160
+```
+
+### Tick
+
+```text
+average     3.276 ms
+p50         0.513 ms
+p95         8.508 ms
+p99         9.908 ms
+max        10.754 ms
+```
+
+20 Hz 的每 Tick budget 是 50ms；即使在 100 人集中 Main Gate、全互見的 hotspot 下，p99 仍約 9.9ms。**目前數據再次證明 single World owner 還有明顯餘裕。**
+
+p50 與 p95 / p99 的落差主要來自 Snapshot 每 2 Tick 才做一次；因此不能只看平均 Tick latency。
+
+### Stage average / Tick
+
+```text
+Simulation              0.055 ms
+Dynamic replication     0.026 ms
+AOI                     1.479 ms
+Replication Build       1.590 ms
+Delivery                0.070 ms
+```
+
+Simulation 本身非常便宜，時間主要已轉移到 **AOI + Replication Build**。而 Stage timing 尚未包含 realtime writer goroutine 的完整 JSON encode / socket flush，所以不能把 3.276ms 當成整台 Server 的完整 CPU 成本。
+
+### AOI / hotspot
+
+```text
+queries                  8,000
+candidates             800,000
+visible                800,000
+candidates/query           100
+visible/query              100
+candidate/visible          1.0
+```
+
+Gate Zerg 本來就是全員集中且 64m 內全互見，因此 `candidate/visible = 1.0` 是合理結果。**Layer-aware Spatial Bucket 對這種同 Layer hotspot 幾乎不會解決核心成本**；真正要降的是 per-observer full replication 與更新頻率。
+
+### Queue
+
+```text
+max depth before       102
+max depth after         20
+commands total      16,001
+commands/tick        100.006
+```
+
+Queue 沒有逼近目前 4096 capacity，也沒有 command error，說明 100 人 × 20Hz input 尚未形成 ingress backpressure。
+
+### Allocation / GC
+
+```text
+TotalAlloc          340,556,968 bytes / 8 sec
+Mallocs                 534,920 / 8 sec
+GC                           164 / 8 sec
+GC pause total            33.611 ms
+```
+
+換算約：
+
+```text
+Allocation rate        ≈ 42.6 MB/sec
+Malloc rate            ≈ 66.9k/sec
+GC frequency           ≈ 20.5/sec
+```
+
+GC pause 總量目前仍沒有把 Tick p99 推近 50ms budget，但 **164 次 GC / 8 秒已足以把 allocation reduction 提升為近期工作**。
+
+這不代表要立刻到處加入 `sync.Pool`。目前最可疑的 hot path 已相當明確：
+
+```text
+per-session AOI snapshot
+→ visible slice
+→ known/current map
+→ transform slice
+→ JSON encode buffer
+```
+
+應先在 Realtime replication redesign 時一起減少資料量與配置，再用下一輪 Load Lab 比較。
+
+### Snapshot
+
+正式 measurement：
+
+```text
+ErrDatagramTooLarge      8,001
+udp_write errors         8,001
+```
+
+100 sessions × 10Hz × 8 秒理論上有約 8,000 個 full snapshot delivery cadence；數據顯示 steady-state full JSON snapshots 幾乎全部超過 UDP guard。
+
+Bot 完整 run 收到：
+
+```text
+Snapshots       15
+Corrections  9,047
+```
+
+15 個 Snapshot 只存在於 ramp-up 的較小 AOI 時期；100 人 steady-state 沒有可用 full snapshot。
+
+## 壓測後的架構結論
+
+目前數據足以排除幾個錯誤優化方向，也足以決定第一個真正的 scaling 修正：
+
+1. **現在不拆 Cell Actor。** 100 人 Gate Zerg p99 約 9.9ms，single-owner mutation 尚未接近 50ms budget。
+2. **現在不把 Layer-aware Spatial Bucket 當第一優先。** Gate Zerg 是同 Layer hotspot，candidate/visible 本來就是 1.0；改 bucket 也不會解決 100×100 replication。
+3. **第一優先是 Realtime Replication Foundation。** Full JSON Snapshot 在 24 人就已超過 1200 bytes。
+4. `WorldSnapshot` 與 self `PositionCorrection` 需要分離明確的 coalescing / priority semantics，不能長期共用一個沒有 message class 的 latest-state mailbox。
+5. JSON v1 可以繼續服務 bootstrap / debug，但高頻 Transform replication 應演進為 compact binary payload。
+6. Replication 應朝 delta / dirty state、quantized transforms、Tier / cadence、可組合 update block 演進，而不是提高 UDP MTU。
+7. allocation 已是近期可量測的第二優先；先消除 full per-session snapshot churn，再視 pprof 決定 scratch reuse / pool。
+8. 500 人 full baseline 現在沒有必要拿已知 100% 爆 MTU 的 wire path 硬跑出一個漂亮數字。先修已證實 blocker，再做 500+ 才有工程意義。
+
+因此 roadmap 新增一個小型階段：
+
+```text
+S3-C.5  Siege Load Lab
+        ↓
+S3-C.6  Realtime Replication Foundation
+        ├─ Snapshot / Correction stream semantics
+        ├─ Compact transform payload baseline
+        ├─ MTU-safe chunk / budget rule
+        ├─ Allocation reduction
+        └─ Load Lab regression
+        ↓
+S3-D    Gate HP / Attack / Destroy
+```
+
+S3-C.6 不會提前做完整 S3-E 的所有 Network LOD；只修正已由量測證實、會阻止攻城測試的底層問題。
 
 ## CI 與正式容量的界線
 
@@ -316,8 +447,10 @@ GitHub hosted runner 的 CPU、VM noisy-neighbor、loopback network 與 producti
 - [x] AOI candidate / visible metrics
 - [x] allocation / heap / GC metrics
 - [x] Server / Bot JSON report
-- [x] 24-client CI smoke
+- [x] 24-client Vertical Siege CI smoke
+- [x] 100-client Gate Zerg baseline
 - [x] `workflow_dispatch` 500+ capability
-- [ ] 100-client Gate Zerg 基線記錄
-- [ ] 修正第一個已證實的 Snapshot scaling blocker（S3-E 工作，不在本階段偷改）
-- [ ] dedicated environment 的 500+ full baseline（S5 前必做）
+- [x] 第一個 scaling blocker 已用數據定位
+- [x] 後續優化順序已由數據決定
+
+500+ full baseline 不列為本階段的假性勾選項：目前 wire format 已在 24 / 100 人明確 100% 超過 UDP payload budget。應先完成 S3-C.6，再用相同 Load Lab 對照修正前後 scaling curve；dedicated environment 的正式 500+ full-combat capacity test 則在 S5 前完成。
