@@ -13,9 +13,13 @@ func TestS3WorldMessagesRoundTrip(t *testing.T) {
 		protocol.SessionWelcome{
 			SessionID: 1, EntityID: 2, RealtimePort: 7778, RealtimeToken: "00112233445566778899aabbccddeeff",
 			TickRateHz: 20, SnapshotRateHz: 10,
-			World: protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3a-001", GameplaySHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+			World: protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
 		},
-		protocol.WorldDynamicState{Revision: 7, Blockers: []protocol.WorldBlockerState{{ID: "main-gate", Enabled: false}}},
+		protocol.WorldDynamicState{
+			Revision: 7,
+			Blockers: []protocol.WorldBlockerState{{ID: "main-gate", Enabled: false}},
+			Gates: []protocol.WorldGateState{{ID: "main-gate", HP: 0, MaxHP: 1000, Destroyed: true}},
+		},
 	}
 
 	for _, want := range messages {
