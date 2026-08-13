@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/li41/astrahold-server/internal/codec/jsonv1"
+	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/transport"
@@ -40,7 +40,7 @@ func TestOpenRejectsMissingWorldIdentity(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.TCPAddress = "127.0.0.1:0"
 	cfg.UDPAddress = "127.0.0.1:0"
-	server := NewServer(cfg, newFakeRuntime(), jsonv1.Codec{})
+	server := NewServer(cfg, newFakeRuntime(), gamev1.Codec{})
 	if err := server.Open(); err != ErrInvalidWorldIdentity {
 		t.Fatalf("Open() error = %v, want ErrInvalidWorldIdentity", err)
 	}
@@ -52,7 +52,8 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	cfg.TCPAddress = "127.0.0.1:0"
 	cfg.UDPAddress = "127.0.0.1:0"
 	cfg.WorldIdentity = protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3a-001", GameplaySHA256: testGameplaySHA}
-	server := NewServer(cfg, runtime, jsonv1.Codec{})
+	codec := gamev1.Codec{}
+	server := NewServer(cfg, runtime, codec)
 	if err := server.Open(); err != nil { t.Fatal(err) }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -63,7 +64,7 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	defer tcpConn.Close()
 
-	welcomeEnvelope, err := transport.ReadEnvelope(tcpConn, jsonv1.Codec{})
+	welcomeEnvelope, err := transport.ReadEnvelope(tcpConn, codec)
 	if err != nil { t.Fatal(err) }
 	welcome, ok := welcomeEnvelope.Message.(protocol.SessionWelcome)
 	if !ok { t.Fatalf("unexpected welcome: %#v", welcomeEnvelope.Message) }
@@ -79,7 +80,7 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	if uint64(join.Session.ID) != welcome.SessionID || join.Entity.ID != welcome.EntityID { t.Fatal("join/welcome mismatch") }
 
 	if err := join.Session.Connection().TrySend(protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: 1, Message: protocol.EntityDespawn{EntityID: 999}}); err != nil { t.Fatal(err) }
-	reliable, err := transport.ReadEnvelope(tcpConn, jsonv1.Codec{})
+	reliable, err := transport.ReadEnvelope(tcpConn, codec)
 	if err != nil { t.Fatal(err) }
 	if reliable.Delivery != protocol.DeliveryReliableOrdered || reliable.Sequence != 1 { t.Fatalf("reliable route mismatch: %#v", reliable) }
 
@@ -90,7 +91,7 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	defer udpConn.Close()
 
 	moveEnvelope := protocol.Envelope{Delivery: protocol.DeliveryRealtimeSequenced, Sequence: 3, Message: protocol.ClientMoveInput{DirectionX: 1}}
-	packet, err := EncodeDatagram(token, moveEnvelope, jsonv1.Codec{})
+	packet, err := EncodeDatagram(token, moveEnvelope, codec)
 	if err != nil { t.Fatal(err) }
 	if _, err := udpConn.Write(packet); err != nil { t.Fatal(err) }
 	select {
@@ -105,9 +106,10 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	buffer := make([]byte, MaxDatagramSize)
 	n, err := udpConn.Read(buffer)
 	if err != nil { t.Fatal(err) }
-	gotToken, got, err := DecodeDatagram(buffer[:n], jsonv1.Codec{})
+	gotToken, got, err := DecodeDatagram(buffer[:n], codec)
 	if err != nil { t.Fatal(err) }
 	if gotToken != token || got.Sequence != 4 || got.ServerTick != 10 { t.Fatal("realtime route mismatch") }
+	if _, ok := got.Message.(protocol.PositionCorrection); !ok { t.Fatalf("unexpected realtime message: %#v", got.Message) }
 
 	_ = tcpConn.Close()
 	select {
