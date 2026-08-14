@@ -67,6 +67,9 @@ func (r *Runtime) applyRespawn(name string, request RespawnRequest, report *Step
 		r.respawnPolicy.Cancel(request.EntityID)
 	}
 
+	// Protection 是純 server-side damage legality state；不需要改變 respawn AOI/Vitals ordering。
+	r.grantReviveProtection(request.EntityID, report.Tick, report)
+
 	// Respawn 同時改 vitals 與 AOI position。Dirty Vitals 先保留，但在下一次正常 snapshot
 	// 完成 desired membership rebuild 前不得 fan-out，避免 stale-known observer 先看到復活狀態。
 	r.markEntityVitalsDirty(request.EntityID)
