@@ -99,7 +99,6 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 
-	// departed 只在 AOI membership change 時計算一次；retry build 只 prune 已 Confirm / 再次 desired 的 ID。
 	batch.Stats.DespawnCandidates = len(state.departed)
 	for i, id := range state.departed {
 		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
@@ -130,6 +129,12 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 			break
 		}
 		e := frame.Entities[index]
+		generation := frame.TransformGenerations[index]
+		// Reliable Spawn 本身已攜帶同一份 authoritative transform。這裡先記在 unknown track；
+		// TrySend 若失敗，known 仍為 false，realtime scheduler 不會誤用；retry 會覆寫最新 generation。
+		// ConfirmSpawn 成功把 known=true 後，Spawn transform 即成為 dirty/refresh scheduler 的有效 baseline。
+		track.lastDeliveredGeneration = generation
+		track.lastSentBuild = state.buildNumber
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
 			Message: protocol.EntitySpawn{
