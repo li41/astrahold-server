@@ -6,6 +6,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -86,6 +87,7 @@ func (c *QueueConnection) Done() <-chan struct{}              { return c.done }
 type Session struct {
 	ID                          ID
 	EntityID                    world.EntityID
+	CharacterIdentity           characteridentity.Binding
 	AOIRadius                   float32
 	connection                  Connection
 	lastProcessedInputSequence  uint32
@@ -94,11 +96,24 @@ type Session struct {
 	nextRealtimeSequence        uint32
 }
 
+// New keeps the development/test constructor convenient by issuing a fresh ephemeral
+// character identity. Ephemeral identity is a durable event ownership key for this
+// character incarnation, but it is not returning-character authentication.
 func New(id ID, entityID world.EntityID, aoiRadius float32, connection Connection) (*Session, error) {
-	if id == 0 || entityID == 0 || aoiRadius <= 0 || connection == nil {
+	identity, err := characteridentity.NewEphemeral()
+	if err != nil {
+		return nil, err
+	}
+	return NewWithCharacterIdentity(id, entityID, identity, aoiRadius, connection)
+}
+
+// NewWithCharacterIdentity is the trusted integration seam used after an upstream
+// account/character resolver has selected an identity.
+func NewWithCharacterIdentity(id ID, entityID world.EntityID, identity characteridentity.Binding, aoiRadius float32, connection Connection) (*Session, error) {
+	if id == 0 || entityID == 0 || !identity.Valid() || aoiRadius <= 0 || connection == nil {
 		return nil, ErrInvalidSession
 	}
-	return &Session{ID: id, EntityID: entityID, AOIRadius: aoiRadius, connection: connection}, nil
+	return &Session{ID: id, EntityID: entityID, CharacterIdentity: identity, AOIRadius: aoiRadius, connection: connection}, nil
 }
 func (s *Session) Connection() Connection             { return s.connection }
 func (s *Session) LastProcessedInputSequence() uint32 { return s.lastProcessedInputSequence }
