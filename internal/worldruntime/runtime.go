@@ -40,6 +40,7 @@ type Config struct {
 	MaxChurnLifecycleMessagesPerSnapshot int
 	MaxInitialVitalsPerTick              int
 	MaxChurnInitialVitalsPerTick         int
+	MaxDirtyVitalsPerTick                int
 	CollectMetrics                       bool
 }
 
@@ -58,6 +59,7 @@ func DefaultConfig() Config {
 		MaxChurnLifecycleMessagesPerSnapshot: 6000,
 		MaxInitialVitalsPerTick:              8000,
 		MaxChurnInitialVitalsPerTick:         2500,
+		MaxDirtyVitalsPerTick:                4000,
 	}
 }
 
@@ -83,7 +85,9 @@ type StepMetrics struct {
 	CommandQueueDepthAfter             int
 	CommandsDrained                    int
 	EntityActionsApplied               int
+	DirtyVitalsGlobalBudget            int
 	DirtyVitalsSelected                int
+	DirtyVitalsGlobalBudgetExhausted   bool
 	SessionsReplicated                 int
 	AOIQueries                         int
 	AOICandidates                      int
@@ -148,6 +152,8 @@ type Runtime struct {
 	sessionDynamicRevision    map[session.ID]uint64
 	entityVitalsRevision      map[world.EntityID]uint64
 	dirtyVitalsEntities       map[world.EntityID]struct{}
+	dirtyVitalsScratch        []world.EntityID
+	dirtyVitalsNextEntity     world.EntityID
 	sessionVitalsRevision     map[session.ID]map[world.EntityID]uint64
 	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
 	lifecycleSessionCursor    int
@@ -191,6 +197,9 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.MaxChurnInitialVitalsPerTick <= 0 {
 		config.MaxChurnInitialVitalsPerTick = 2500
+	}
+	if config.MaxDirtyVitalsPerTick <= 0 {
+		config.MaxDirtyVitalsPerTick = 4000
 	}
 	characters, err := character.NewService(config.CharacterMaxHP)
 	if err != nil {
