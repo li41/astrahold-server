@@ -36,12 +36,11 @@ type sentTransform struct {
 }
 
 type snapshotCandidate struct {
-	entity   world.EntityState
-	tier     Tier
-	age      uint64
-	cadence  uint64
-	dirty    bool
-	forced   bool
+	entity  world.EntityState
+	tier    Tier
+	age     uint64
+	cadence uint64
+	dirty   bool
 }
 
 type viewState struct {
@@ -172,7 +171,6 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 			age:     age,
 			cadence: cadence,
 			dirty:   dirty,
-			forced:  forced,
 		})
 	}
 
@@ -190,26 +188,29 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 	}
 
 	batch.Stats.SnapshotCandidates = len(state.candidates)
-	sort.Slice(state.candidates, func(i, j int) bool {
-		a, b := state.candidates[i], state.candidates[j]
-		// age/cadence 越大代表相對於自己的 LOD cadence 越 overdue。
-		// 交叉相乘避免 hot path 浮點除法，也讓 budget 壓力下的排序 deterministic。
-		left := a.age * b.cadence
-		right := b.age * a.cadence
-		if left != right {
-			return left > right
-		}
-		if a.dirty != b.dirty {
-			return a.dirty
-		}
-		if a.tier != b.tier {
-			return a.tier < b.tier
-		}
-		if a.age != b.age {
-			return a.age > b.age
-		}
-		return a.entity.ID < b.entity.ID
-	})
+	budgetExceeded := len(state.candidates) > s.policy.MaxTransformsPerBuild
+	if budgetExceeded {
+		sort.Slice(state.candidates, func(i, j int) bool {
+			a, b := state.candidates[i], state.candidates[j]
+			// age/cadence 越大代表相對於自己的 LOD cadence 越 overdue。
+			// 只有真的超過 budget 時才付 ranking 成本；normal path 保留 AOI 的 EntityID 穩定順序。
+			left := a.age * b.cadence
+			right := b.age * a.cadence
+			if left != right {
+				return left > right
+			}
+			if a.dirty != b.dirty {
+				return a.dirty
+			}
+			if a.tier != b.tier {
+				return a.tier < b.tier
+			}
+			if a.age != b.age {
+				return a.age > b.age
+			}
+			return a.entity.ID < b.entity.ID
+		})
+	}
 
 	selectedCount := len(state.candidates)
 	if selectedCount > s.policy.MaxTransformsPerBuild {
@@ -233,7 +234,9 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 			batch.Stats.FarSelected++
 		}
 	}
-	sort.Slice(transforms, func(i, j int) bool { return transforms[i].EntityID < transforms[j].EntityID })
+	if budgetExceeded {
+		sort.Slice(transforms, func(i, j int) bool { return transforms[i].EntityID < transforms[j].EntityID })
+	}
 
 	chunkCount := (len(transforms) + protocol.MaxSnapshotEntitiesPerChunk - 1) / protocol.MaxSnapshotEntitiesPerChunk
 	if chunkCount == 0 {
