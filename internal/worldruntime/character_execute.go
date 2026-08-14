@@ -37,11 +37,19 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		if r.respawnPolicy != nil {
 			r.respawnPolicy.Cancel(targetID)
 		}
+		r.grantReviveProtection(targetID, tick, report)
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
 		return true
 
 	case combat.EffectDamage:
+		// Grace 是 server-side target damage legality。一般 range / layer / LOS 已在上面驗證；
+		// 受保護 Player 不吃 damage，也不讓本次 action Commit cooldown。
+		if target.Kind == world.EntityPlayer && r.isReviveProtected(targetID, tick) {
+			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sessionID, Err: ErrEntityReviveProtected})
+			report.Metrics.ReviveProtectionDamageBlocks++
+			return false
+		}
 		state, err := r.characters.ReduceHP(targetID, prepared.Damage.Amount)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
