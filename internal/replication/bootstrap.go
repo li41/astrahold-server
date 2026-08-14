@@ -22,14 +22,22 @@ func (s *Service) BuildFrameBorrowedLifecycleFirst(sessionID session.ID, selfID 
 func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool, limits LifecycleLimits) Batch {
 	desiredChanged := !sameDesiredIDs(state.desiredIDs, frame, visibleIndices)
 	if desiredChanged {
-		// Mass join 常見的是 desired 只成長；舊 desired 全部仍存在時不可能產生 Despawn，
-		// 因此不為 rare churn diff 掃整份 known map。真正有 membership removal 才建立 pending departed。
-		membershipRemoved := desiredMembershipRemoved(state.desiredIDs, frame, visibleIndices)
-		rebuildDesiredTracks(state, frame, visibleIndices)
-		if membershipRemoved {
-			rebuildPendingDeparted(state)
-		} else if len(state.departed) > 0 {
-			prunePendingDeparted(state)
+		// Mass join 的 common path 是 EntityID stable order 尾端持續追加。這種 change
+		// 不可能產生 Despawn，也不需要把既有 dense tracks 全部經 known/maps 重建一次。
+		if desiredAppendOnly(state.desiredIDs, frame, visibleIndices) {
+			appendDesiredTracks(state, frame, visibleIndices)
+			if len(state.departed) > 0 {
+				prunePendingDeparted(state)
+			}
+		} else {
+			// 一般 membership change 才做 subset/removal 判斷與完整 dense rebuild。
+			membershipRemoved := desiredMembershipRemoved(state.desiredIDs, frame, visibleIndices)
+			rebuildDesiredTracks(state, frame, visibleIndices)
+			if membershipRemoved {
+				rebuildPendingDeparted(state)
+			} else if len(state.departed) > 0 {
+				prunePendingDeparted(state)
+			}
 		}
 	} else if len(state.departed) > 0 {
 		prunePendingDeparted(state)
@@ -42,6 +50,69 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 		return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, borrowSnapshotStorage, limits)
 	}
 	return s.buildBootstrapLifecycleFrame(state, selfID, lastProcessedInput, frame, visibleIndices, firstUnknown, limits)
+}
+
+// desiredAppendOnly 判斷新 desired 是否只是 stable EntityID order 的尾端追加。
+// 只有完全保留舊 prefix 且新長度更長才走 fast path；中間插入或任何 removal 都回一般 rebuild。
+func desiredAppendOnly(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {
+	if len(previous) == 0 || len(visibleIndices) <= len(previous) {
+		return false
+	}
+	for i, id := range previous {
+		index := visibleIndices[i]
+		if index < 0 || index >= len(frame.Entities) || frame.Entities[index].ID != id {
+			return false
+		}
+	}
+	return true
+}
+
+// appendDesiredTracks 保留既有 dense track state，只初始化新增尾段。
+// 這避免 500-client ramp-up 每次新 peer 加入時，對每個 Session 重做整份 known/map lookup。
+func appendDesiredTracks(state *viewState, frame *simulation.ReplicationFrame, visibleIndices []int) {
+	oldCount := len(state.desiredIDs)
+	count := len(visibleIndices)
+
+	if cap(state.desiredIDs) < count {
+		capacity := count
+		if doubled := cap(state.desiredIDs) * 2; doubled > capacity {
+			capacity = doubled
+		}
+		ids := make([]world.EntityID, count, capacity)
+		copy(ids, state.desiredIDs)
+		state.desiredIDs = ids
+	} else {
+		state.desiredIDs = state.desiredIDs[:count]
+	}
+
+	if cap(state.tracks) < count {
+		capacity := count
+		if doubled := cap(state.tracks) * 2; doubled > capacity {
+			capacity = doubled
+		}
+		tracks := make([]entityTrack, count, capacity)
+		copy(tracks, state.tracks)
+		state.tracks = tracks
+	} else {
+		state.tracks = state.tracks[:count]
+		clear(state.tracks[oldCount:])
+	}
+
+	for i := oldCount; i < count; i++ {
+		index := visibleIndices[i]
+		if index < 0 || index >= len(frame.Entities) {
+			continue
+		}
+		id := frame.Entities[index].ID
+		_, known := state.known[id]
+		state.desiredIDs[i] = id
+		state.tracks[i] = entityTrack{
+			id:                      id,
+			known:                   known,
+			lastDeliveredGeneration: state.lastDeliveredGeneration[id],
+			lastSentBuild:           state.lastSentBuild[id],
+		}
+	}
 }
 
 // desiredMembershipRemoved 利用 desired / frame 的 stable EntityID order 做 two-pointer subset 檢查。
