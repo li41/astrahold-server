@@ -2,7 +2,7 @@ package worldruntime
 
 import "testing"
 
-func TestStaggeredInitialVitalsBudgetPreservesCycleCapacity(t *testing.T) {
+func TestStaggeredWorkBudgetPreservesCycleCapacity(t *testing.T) {
 	tests := []struct {
 		name          string
 		base          int
@@ -10,14 +10,15 @@ func TestStaggeredInitialVitalsBudgetPreservesCycleCapacity(t *testing.T) {
 		want          []int
 	}{
 		{name: "every tick cannot stagger", base: 2500, snapshotEvery: 1, want: []int{2500, 2500}},
-		{name: "20Hz world 10Hz snapshot", base: 2500, snapshotEvery: 2, want: []int{0, 5000, 0, 5000}},
+		{name: "20Hz world 10Hz snapshot global", base: 2500, snapshotEvery: 2, want: []int{0, 5000, 0, 5000}},
+		{name: "20Hz world 10Hz snapshot per session", base: 32, snapshotEvery: 2, want: []int{0, 64, 0, 64}},
 		{name: "four tick cycle", base: 3000, snapshotEvery: 4, want: []int{0, 4000, 4000, 4000}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var cycleTotal int
 			for i, want := range tt.want {
-				got := staggeredInitialVitalsBudget(tt.base, uint64(i), tt.snapshotEvery)
+				got := staggeredWorkBudget(tt.base, uint64(i), tt.snapshotEvery)
 				if got != want {
 					t.Fatalf("tick=%d budget=%d want=%d", i, got, want)
 				}
