@@ -69,6 +69,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if tick%r.config.SnapshotEveryTicks == 0 {
 		sessions := r.sessions.List()
 		report.Metrics.SessionsReplicated = len(sessions)
+		report.Metrics.LifecycleGlobalBudget = r.config.MaxLifecycleMessagesPerSnapshot
 
 		if measure {
 			stageStart = time.Now()
@@ -78,7 +79,19 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.ReplicationFrameBuildDuration = time.Since(stageStart)
 		}
 
-		for _, s := range sessions {
+		startIndex := 0
+		if len(sessions) > 0 {
+			startIndex = r.lifecycleSessionCursor % len(sessions)
+			if startIndex < 0 {
+				startIndex = 0
+			}
+		}
+		globalRemaining := r.config.MaxLifecycleMessagesPerSnapshot
+		budgetExhaustedNextCursor := -1
+
+		for order := 0; order < len(sessions); order++ {
+			index := (startIndex + order) % len(sessions)
+			s := sessions[index]
 			self, _, ok := frame.Entity(s.EntityID)
 			if !ok {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound})
@@ -99,10 +112,19 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.AOISharedCandidateReuses += queryStats.SharedCandidateReuses
 			report.Metrics.AOIPhysicalCandidateScans += queryStats.SharedCandidateScans
 
+			maxMessages := r.config.MaxLifecyclePerSessionBuild
+			if r.config.MaxLifecycleMessagesPerSnapshot > 0 {
+				if globalRemaining <= 0 {
+					maxMessages = -1
+				} else if maxMessages <= 0 || maxMessages > globalRemaining {
+					maxMessages = globalRemaining
+				}
+			}
 			connection := s.Connection()
 			lifecycleLimits := replication.LifecycleLimits{
 				MaxSpawns:   r.config.MaxSpawnsPerSessionBuild,
 				MaxDespawns: r.config.MaxDespawnsPerSessionBuild,
+				MaxMessages: maxMessages,
 			}
 			if measure {
 				stageStart = time.Now()
@@ -131,6 +153,19 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.DespawnSelected += batch.Stats.DespawnSelected
 			report.Metrics.DespawnDeferred += batch.Stats.DespawnDeferred
 
+			selectedLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+			report.Metrics.LifecycleGlobalSelected += selectedLifecycle
+			if r.config.MaxLifecycleMessagesPerSnapshot > 0 {
+				globalRemaining -= selectedLifecycle
+				if globalRemaining < 0 {
+					globalRemaining = 0
+				}
+				if globalRemaining == 0 && budgetExhaustedNextCursor < 0 {
+					report.Metrics.LifecycleGlobalBudgetExhausted = true
+					budgetExhaustedNextCursor = (index + 1) % len(sessions)
+				}
+			}
+
 			if measure {
 				stageStart = time.Now()
 			}
@@ -156,6 +191,16 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			}
 			if measure {
 				report.Metrics.DeliveryDuration += time.Since(stageStart)
+			}
+		}
+
+		// 若 global budget 在中途耗盡，下次從下一個 Session 開始；
+		// 否則也輪轉一格，避免長期 churn 下固定低 ID 永遠先取得 lifecycle quantum。
+		if len(sessions) > 0 {
+			if budgetExhaustedNextCursor >= 0 {
+				r.lifecycleSessionCursor = budgetExhaustedNextCursor
+			} else {
+				r.lifecycleSessionCursor = (startIndex + 1) % len(sessions)
 			}
 		}
 	}
