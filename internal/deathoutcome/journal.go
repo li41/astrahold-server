@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -30,15 +31,15 @@ var (
 )
 
 var (
-	ErrInvalidJournalPath       = errors.New("deathoutcome: invalid journal path")
-	ErrCorruptJournal           = errors.New("deathoutcome: corrupt journal")
-	ErrJournalClosed            = errors.New("deathoutcome: journal closed")
-	ErrJournalRecordOverflow    = errors.New("deathoutcome: journal record id overflow")
-	ErrInvalidCheckpointPath    = errors.New("deathoutcome: invalid checkpoint path")
-	ErrCorruptCheckpoint        = errors.New("deathoutcome: corrupt checkpoint")
+	ErrInvalidJournalPath        = errors.New("deathoutcome: invalid journal path")
+	ErrCorruptJournal            = errors.New("deathoutcome: corrupt journal")
+	ErrJournalClosed             = errors.New("deathoutcome: journal closed")
+	ErrJournalRecordOverflow     = errors.New("deathoutcome: journal record id overflow")
+	ErrInvalidCheckpointPath     = errors.New("deathoutcome: invalid checkpoint path")
+	ErrCorruptCheckpoint         = errors.New("deathoutcome: corrupt checkpoint")
 	ErrCheckpointJournalMismatch = errors.New("deathoutcome: checkpoint journal mismatch")
-	ErrCheckpointAhead          = errors.New("deathoutcome: checkpoint ahead of journal")
-	ErrCheckpointOffsetMismatch = errors.New("deathoutcome: checkpoint offset mismatch")
+	ErrCheckpointAhead           = errors.New("deathoutcome: checkpoint ahead of journal")
+	ErrCheckpointOffsetMismatch  = errors.New("deathoutcome: checkpoint offset mismatch")
 )
 
 type JournalRecord struct {
