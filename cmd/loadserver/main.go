@@ -68,13 +68,13 @@ func main() {
 
 	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 combat_revision=%s scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, loadedCombat.Definition.Revision, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	if err := waitForClients(ctx,server,*clients,*readyTimeout); err != nil { stop(); <-serveDone; <-loopDone; log.Fatal(err) }
-	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset()
+	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset(); server.ResetNetworkMetrics()
 
 	measurementTimer:=time.NewTimer(*duration); completed:=false
 	select { case <-measurementTimer.C: completed=true; case <-ctx.Done(): measurementTimer.Stop() }
-	report:=collector.Finish(scenario,*clients)
+	report:=withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics())
 	if err:=loadlab.WriteReport(*reportPath,report); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write report: %v",err) }
-	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d",*reportPath,report.Ticks,report.TickDuration.P99MS,report.Queue.MaxDepthBefore,report.Errors.DatagramTooLarge)
+	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d realtime_mbps=%.3f encode_avg_us=%.3f",*reportPath,report.Ticks,report.TickDuration.P99MS,report.Queue.MaxDepthBefore,report.Errors.DatagramTooLarge,report.Network.RealtimeMbitsPerSec,report.Network.EncodeAverageUS)
 
 	if completed && *shutdownGrace>0 { timer:=time.NewTimer(*shutdownGrace); select { case <-timer.C: case <-ctx.Done(): timer.Stop() } }
 	stop(); serveErr:=<-serveDone; loopErr:=<-loopDone
