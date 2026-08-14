@@ -70,15 +70,36 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 	return delivered
 }
 
-// Initial Vitals 與 lifecycle 使用同一種 phase-sensitive budgeting：
-// pure bootstrap 保留較高吞吐；一旦 mixed churn 被偵測，就降到 churn cap，直到 lifecycle deferred
-// 與 initial Vitals pending 都清空。Session 起點持續 round-robin，避免固定 ID 優先。
+// staggeredInitialVitalsBudget 保留每個 snapshot cycle 的總吞吐，但把 initial Vitals
+// 從 snapshot tick 搬到中間的 world ticks。Spawn 只會在 snapshot tick 新增 pending Vitals，
+// 因此這能避免 lifecycle Delivery + Vitals Encode 同時吃掉同一個 50ms tick budget。
+func staggeredInitialVitalsBudget(base int, tick, snapshotEvery uint64) int {
+	if base <= 0 {
+		return 0
+	}
+	if snapshotEvery <= 1 {
+		return base
+	}
+	if tick%snapshotEvery == 0 {
+		return 0
+	}
+	// 原本每個 cycle 理論 capacity = base * snapshotEvery。
+	// 現在由其餘 snapshotEvery-1 個 ticks 平均承擔；向上取整避免吞吐下降。
+	numerator := base * int(snapshotEvery)
+	denominator := int(snapshotEvery - 1)
+	return (numerator + denominator - 1) / denominator
+}
+
+// Initial Vitals 與 lifecycle 使用同一種 phase-sensitive budgeting，並與 snapshot tick 錯峰：
+// pure bootstrap / mixed churn 都保留原本每個 snapshot cycle 的理論吞吐，但 snapshot tick
+// 不做 initial Vitals；中間 world tick 使用對應放大後的 budget。Dirty gameplay Vitals 不受此限制。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	sessions := r.sessions.List()
-	globalBudget := r.config.MaxInitialVitalsPerTick
+	baseBudget := r.config.MaxInitialVitalsPerTick
 	if r.lifecycleChurnActive {
-		globalBudget = r.config.MaxChurnInitialVitalsPerTick
+		baseBudget = r.config.MaxChurnInitialVitalsPerTick
 	}
+	globalBudget := staggeredInitialVitalsBudget(baseBudget, tick, r.config.SnapshotEveryTicks)
 	report.Metrics.InitialVitalsGlobalBudget = globalBudget
 	globalRemaining := globalBudget
 	startIndex := 0
