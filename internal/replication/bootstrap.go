@@ -20,11 +20,13 @@ func (s *Service) BuildFrameBorrowedLifecycleFirst(sessionID session.ID, selfID 
 }
 
 func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool, limits LifecycleLimits) Batch {
-	if !sameDesiredIDs(state.desiredIDs, frame, visibleIndices) {
+	desiredChanged := !sameDesiredIDs(state.desiredIDs, frame, visibleIndices)
+	if desiredChanged {
 		rebuildDesiredTracks(state, frame, visibleIndices)
+		rebuildPendingDeparted(state)
+	} else if len(state.departed) > 0 {
+		prunePendingDeparted(state)
 	}
-	// Global budget 已由前面的 Session 用完時仍更新 desired dense state，
-	// 但本 Session 不再掃 known / sort departed / materialize lifecycle。
 	if limits.MaxMessages < 0 {
 		return s.buildDeferredLifecycleFrame(state, selfID, lastProcessedInput, frame)
 	}
@@ -33,6 +35,28 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 		return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, borrowSnapshotStorage, limits)
 	}
 	return s.buildBootstrapLifecycleFrame(state, selfID, lastProcessedInput, frame, visibleIndices, firstUnknown, limits)
+}
+
+func rebuildPendingDeparted(state *viewState) {
+	state.departed = state.departed[:0]
+	for id := range state.known {
+		if !containsDesiredID(state.desiredIDs, id) {
+			state.departed = append(state.departed, id)
+		}
+	}
+	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
+}
+
+func prunePendingDeparted(state *viewState) {
+	write := 0
+	for _, id := range state.departed {
+		if _, known := state.known[id]; !known || containsDesiredID(state.desiredIDs, id) {
+			continue
+		}
+		state.departed[write] = id
+		write++
+	}
+	state.departed = state.departed[:write]
 }
 
 func firstUnknownDesired(state *viewState) int {
@@ -50,6 +74,9 @@ func (s *Service) buildDeferredLifecycleFrame(state *viewState, selfID world.Ent
 	batch := Batch{Messages: state.messages}
 	if firstUnknownDesired(state) >= 0 {
 		batch.Stats.SpawnDeferred = 1
+	}
+	if len(state.departed) > 0 {
+		batch.Stats.DespawnDeferred = len(state.departed)
 	}
 	if self, _, ok := frame.Entity(selfID); ok {
 		batch.Messages = append(batch.Messages, Outbound{
@@ -72,14 +99,7 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 
-	// AOI churn 同時產生 departed + unknown 時先清掉 stale known lifecycle。
-	state.departed = state.departed[:0]
-	for id := range state.known {
-		if !containsDesiredID(state.desiredIDs, id) {
-			state.departed = append(state.departed, id)
-		}
-	}
-	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
+	// departed 只在 AOI membership change 時計算一次；retry build 只 prune 已 Confirm / 再次 desired 的 ID。
 	batch.Stats.DespawnCandidates = len(state.departed)
 	for i, id := range state.departed {
 		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
