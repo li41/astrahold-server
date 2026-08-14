@@ -7,12 +7,12 @@ import (
 )
 
 func TestS3E9MixedFixtureHotPairsAreBalancedAcrossClusters(t *testing.T) {
-	pairs, err := TeleportChurnCombatPairs(500, 48)
+	pairs, err := TeleportChurnCombatPairs(500, 56)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pairs) != 96 {
-		t.Fatalf("combat pairs=%d want=96", len(pairs))
+	if len(pairs) != 112 {
+		t.Fatalf("combat pairs=%d want=112", len(pairs))
 	}
 
 	hot := 0
@@ -29,8 +29,8 @@ func TestS3E9MixedFixtureHotPairsAreBalancedAcrossClusters(t *testing.T) {
 			east++
 		}
 	}
-	if hot != 48 || west != 24 || east != 24 {
-		t.Fatalf("hot pairs=%d west=%d east=%d want=48/24/24", hot, west, east)
+	if hot != 56 || west != 28 || east != 28 {
+		t.Fatalf("hot pairs=%d west=%d east=%d want=56/28/28", hot, west, east)
 	}
 }
 
