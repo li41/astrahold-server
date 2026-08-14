@@ -192,9 +192,14 @@ func (j *Journal) Append(event Event) (JournalRecord, error) {
 	if j.lastRecordID == ^uint64(0) {
 		return JournalRecord{}, ErrJournalRecordOverflow
 	}
-	if stat, err := j.file.Stat(); err != nil {
+	stat, err := j.file.Stat()
+	if err != nil {
 		return JournalRecord{}, err
-	} else if stat.Size() != j.endOffset {
+	}
+	if stat.Size() < j.endOffset {
+		return JournalRecord{}, fmt.Errorf("%w: journal size=%d below durable end=%d", ErrCorruptJournal, stat.Size(), j.endOffset)
+	}
+	if stat.Size() > j.endOffset {
 		if err := j.file.Truncate(j.endOffset); err != nil {
 			return JournalRecord{}, err
 		}
