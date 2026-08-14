@@ -17,7 +17,7 @@ on:
       - '.github/workflows/s3e9-mixed-soak.yml'
 
 jobs:
-  mixed-gameplay-500-baseline:
+  mixed-gameplay-500:
     if: startsWith(github.head_ref, 'agent/s3e9')
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -31,7 +31,7 @@ jobs:
         run: |
           go build -o /tmp/astrahold-loadserver ./cmd/loadserver
           go build -o /tmp/astrahold-loadbot ./cmd/loadbot
-      - name: Run 500-client long mixed gameplay baseline
+      - name: Run 500-client long mixed gameplay hard gates
         shell: bash
         run: |
           set -u
@@ -91,35 +91,48 @@ jobs:
           jq -e '.ready_clients == 500 and .failed_connections == 0 and .decode_errors == 0 and .network_errors == 0 and .incomplete_snapshot_resets == 0 and .completed_snapshots > 0 and .moves_sent > 0' artifacts/mixed-bots.json >/dev/null
           jq -e '.dynamic_states == 14500' artifacts/mixed-bots.json >/dev/null
 
+          # Initial convergence 保留 S3-E.8 的 pure 125k relationship contract，不能被 active movement 污染。
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/mixed-server-convergence.json >/dev/null
 
           # 一次 authoritative teleport 只作為 phase trigger；其後 42 秒持續 gameplay、真實 bot movement 與 objective update。
-          jq -e '.rounds == 1 and (.round | length) == 1' artifacts/mixed-server-churn-soak.json >/dev/null
-          jq -e '.round[0].observed_non_converged == true and .round[0].pending_spawns == 0 and .round[0].pending_despawns == 0 and .round[0].pending_vitals_entities == 0 and .round[0].dirty_vitals_entities == 0 and .round[0].pending_dynamic_sessions == 0 and .round[0].reliable_queued == 0 and .round[0].reliable_in_flight == 0' artifacts/mixed-server-churn-soak.json >/dev/null
+          # Movement 關閉後必須在 45 秒內完成 semantic drain；movers 也必須真的改變 AOI membership。
+          jq -e '.rounds == 1 and (.round | length) == 1 and .max_trigger_to_converged_seconds < 45' artifacts/mixed-server-churn-soak.json >/dev/null
+          jq -e '.round[0].observed_non_converged == true and .round[0].desired_relationships == .round[0].known_desired and .round[0].desired_relationships > 140000 and .round[0].pending_spawns == 0 and .round[0].pending_despawns == 0 and .round[0].pending_vitals_entities == 0 and .round[0].dirty_vitals_entities == 0 and .round[0].pending_dynamic_sessions == 0 and .round[0].reliable_queued == 0 and .round[0].reliable_in_flight == 0' artifacts/mixed-server-churn-soak.json >/dev/null
 
           # 112 個 initial basic-attack；56 個 stationary hot pairs × 280 個 150ms soak waves = 15,680。
           # 每個 hot target只承受100 + 280 = 380 damage，不混入 defeat semantics。
-          jq -e '.round[0].combat_actions_applied == 15792 and .round[0].action_rejections == 0 and .round[0].dirty_vitals_selected > 0 and .round[0].max_dirty_vitals_selected_per_tick <= 4000' artifacts/mixed-server-churn-soak.json >/dev/null
+          # Dirty selected >3M 確認不是只有 action count，而是真的持續 fan-out到大量 known relationships。
+          jq -e '.round[0].combat_actions_applied == 15792 and .round[0].action_rejections == 0 and .round[0].dirty_vitals_selected > 3000000 and .round[0].max_dirty_vitals_selected_per_tick <= 4000' artifacts/mixed-server-churn-soak.json >/dev/null
 
           # 不弱化既有 lifecycle / Initial Vitals / dirty gameplay Vitals work quantum。
           jq -e '.round[0].max_lifecycle_selected_per_tick <= 6000 and .round[0].max_initial_vitals_selected_per_tick <= 5000' artifacts/mixed-server-churn-soak.json >/dev/null
           jq -e '.round[0].command_errors == 0 and .round[0].unexpected_tick_errors == 0 and .round[0].delivery_errors == 0 and .round[0].network_errors == 0 and .round[0].datagram_too_large == 0' artifacts/mixed-server-churn-soak.json >/dev/null
 
-          # Fairness baseline：先要求有 budget pressure 與 round-robin progress；age hard gate等 baseline artifact 後再設定。
-          jq -e '.dirty_vitals_fairness.budget_exhaustions > 0 and .dirty_vitals_fairness.session_cursor_advances > 0 and .dirty_vitals_fairness.entity_completions > 0 and .dirty_vitals_fairness.max_dirty_entities > 0' artifacts/mixed-server-churn-round-01-slow-ticks.json >/dev/null
+          # 兩次 exact PASS baseline 的 worst observed：dirty/entity completion 28 ticks、pending revision age 3 ticks、
+          # revision completion 6 ticks、budget exhaustion 832、cursor advances 755。留 bounded headroom後鎖成 hard gate。
+          jq -e '.dirty_vitals_fairness.budget_exhaustions >= 700 and .dirty_vitals_fairness.session_cursor_advances >= 600 and .dirty_vitals_fairness.session_cursor_wraps > 0 and .dirty_vitals_fairness.entity_completions > 0 and .dirty_vitals_fairness.max_dirty_entities > 0 and .dirty_vitals_fairness.oldest_dirty_age_ticks <= 32 and .dirty_vitals_fairness.oldest_pending_revision_age_ticks <= 4 and .dirty_vitals_fairness.max_entity_completion_ticks <= 32 and .dirty_vitals_fairness.max_revision_completion_ticks <= 8' artifacts/mixed-server-churn-round-01-slow-ticks.json >/dev/null
 
-          # Memory/retention 先量 baseline，不先發明 arbitrary leak threshold。
-          jq -e '.round[0].total_alloc_bytes > 0 and .round[0].mallocs > 0 and .round[0].heap_alloc_bytes > 0 and .round[0].heap_sys_bytes > 0' artifacts/mixed-server-churn-soak.json >/dev/null
+          # Composite active phase 的兩次 exact PASS：p99=55.431/42.801ms、max=61.600/47.303ms。
+          # 這是 S3-E.9 新 workload gate；S3-E.8 與 drain 後 steady 的既有 <50ms gate仍原封不動。
+          jq -e '.round[0].tick_p99_ms < 60 and .round[0].tick_max_ms < 70' artifacts/mixed-server-churn-soak.json >/dev/null
 
-          # Long phase p99 / fairness age / memory growth此時只輸出 baseline；不因新 workload 先放寬 50ms gate。
-          jq '{tick_p99_ms:.round[0].tick_p99_ms, tick_max_ms:.round[0].tick_max_ms, trigger_to_converged_seconds:.round[0].trigger_to_converged_seconds, spawn_selected:.round[0].spawn_selected, despawn_selected:.round[0].despawn_selected, heap_alloc_bytes:.round[0].heap_alloc_bytes, heap_sys_bytes:.round[0].heap_sys_bytes, total_alloc_bytes:.round[0].total_alloc_bytes, mallocs:.round[0].mallocs, num_gc:.round[0].num_gc}' artifacts/mixed-server-churn-soak.json
+          # 兩次 exact PASS 的 allocation envelope約1.101GB、19.6M mallocs、HeapAlloc 104-115MB、HeapSys約132MB、GC=21。
+          # 門檻保留約10-20% runner/GC headroom，用來抓 allocator/retention regression，而不是追求單次最低值。
+          jq -e '.round[0].total_alloc_bytes < 1250000000 and .round[0].mallocs < 22000000 and .round[0].heap_alloc_bytes < 128000000 and .round[0].heap_sys_bytes < 160000000 and .round[0].num_gc <= 25' artifacts/mixed-server-churn-soak.json >/dev/null
+
+          # Long phase drain 後保留既有 steady-state 50ms hard gate與零錯誤；live heap也必須回落到兩次 baseline
+          # 都能穩定達到的96MB以下，避免 active-phase transient allocation長期 retained。
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50 and .memory.heap_alloc_bytes < 96000000 and .memory.heap_sys_bytes < 160000000' artifacts/mixed-server.json >/dev/null
+          ACTIVE_HEAP=$(jq -r '.round[0].heap_alloc_bytes' artifacts/mixed-server-churn-soak.json)
+          STEADY_HEAP=$(jq -r '.memory.heap_alloc_bytes' artifacts/mixed-server.json)
+          test "$STEADY_HEAP" -lt "$ACTIVE_HEAP"
+
+          jq '{tick_p99_ms:.round[0].tick_p99_ms, tick_max_ms:.round[0].tick_max_ms, trigger_to_converged_seconds:.round[0].trigger_to_converged_seconds, desired_relationships:.round[0].desired_relationships, dirty_vitals_selected:.round[0].dirty_vitals_selected, heap_alloc_bytes:.round[0].heap_alloc_bytes, heap_sys_bytes:.round[0].heap_sys_bytes, total_alloc_bytes:.round[0].total_alloc_bytes, mallocs:.round[0].mallocs, num_gc:.round[0].num_gc}' artifacts/mixed-server-churn-soak.json
           jq '.dirty_vitals_fairness' artifacts/mixed-server-churn-round-01-slow-ticks.json
-
-          # Long phase drain 後仍要求既有 steady-state 50ms hard gate與零錯誤。
-          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50' artifacts/mixed-server.json >/dev/null
-      - name: Upload S3-E.9 mixed gameplay baseline
+          jq '{steady_p99_ms:.tick_duration.p99_ms, steady_heap_alloc_bytes:.memory.heap_alloc_bytes, steady_heap_sys_bytes:.memory.heap_sys_bytes}' artifacts/mixed-server.json
+      - name: Upload S3-E.9 mixed gameplay reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: s3e9-long-mixed-gameplay-500-baseline
+          name: s3e9-long-mixed-gameplay-500
           path: artifacts/
