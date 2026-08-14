@@ -9,21 +9,33 @@ import (
 
 func testAction() ActionDefinition {
 	return ActionDefinition{
-		ID: "basic-attack",
-		Targets: []TargetKind{TargetGate},
-		Range: 4.5,
-		BaseDamage: 100,
-		DamageType: DamagePhysical,
+		ID:              "basic-attack",
+		Targets:         []TargetKind{TargetGate},
+		Range:           4.5,
+		BaseDamage:      100,
+		DamageType:      DamagePhysical,
 		CooldownSeconds: 0.5,
+	}
+}
+
+func testResurrectAction() ActionDefinition {
+	return ActionDefinition{
+		ID:              "resurrect",
+		Effect:          EffectResurrect,
+		Targets:         []TargetKind{TargetEntity},
+		Range:           4.5,
+		ReviveHPPercent: 30,
+		CooldownSeconds: 10,
 	}
 }
 
 func TestLoadRejectsUnknownFields(t *testing.T) {
 	_, err := Load(strings.NewReader(`{
-		"schema_version":1,
+		"schema_version":2,
 		"revision":"r1",
 		"actions":[{
 			"id":"basic-attack",
+			"effect":"damage",
 			"targets":["gate"],
 			"range":4.5,
 			"base_damage":100,
@@ -37,6 +49,38 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesDamageAndAcceptsResurrection(t *testing.T) {
+	loaded, err := Load(strings.NewReader(`{
+		"schema_version":2,
+		"revision":"r2",
+		"actions":[
+			{
+				"id":"basic-attack",
+				"effect":"damage",
+				"targets":["entity"],
+				"range":4.5,
+				"base_damage":100,
+				"damage_type":"physical",
+				"cooldown_seconds":0.5
+			},
+			{
+				"id":"resurrect",
+				"effect":"resurrect",
+				"targets":["entity"],
+				"range":4.5,
+				"revive_hp_percent":30,
+				"cooldown_seconds":10
+			}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Definition.Actions[0].Effect != EffectDamage || loaded.Definition.Actions[1].Effect != EffectResurrect {
+		t.Fatalf("effects=%#v", loaded.Definition.Actions)
+	}
+}
+
 func TestPrepareBuildsServerOwnedDamageSource(t *testing.T) {
 	svc, err := NewService([]ActionDefinition{testAction()})
 	if err != nil {
@@ -47,11 +91,42 @@ func TestPrepareBuildsServerOwnedDamageSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Definition.Range != 4.5 || prepared.Damage.Amount != 100 || prepared.Damage.Type != DamagePhysical {
+	if prepared.Definition.Effect != EffectDamage || prepared.Definition.Range != 4.5 || prepared.Damage.Amount != 100 || prepared.Damage.Type != DamagePhysical {
 		t.Fatalf("prepared=%+v", prepared)
 	}
 	if prepared.Damage.Source.ActorEntityID != 42 || prepared.Damage.Source.ActionID != "basic-attack" {
 		t.Fatalf("source=%+v", prepared.Damage.Source)
+	}
+}
+
+func TestPrepareResurrectionCarriesPolicyWithoutDamage(t *testing.T) {
+	svc, err := NewService([]ActionDefinition{testResurrectAction()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := svc.Prepare(7, "resurrect", Target{Kind: TargetEntity, ID: "9"}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Definition.Effect != EffectResurrect || prepared.Definition.ReviveHPPercent != 30 {
+		t.Fatalf("prepared=%+v", prepared)
+	}
+	if prepared.Damage.Amount != 0 || prepared.Damage.Type != "" || prepared.Damage.Source.ActorEntityID != 0 {
+		t.Fatalf("resurrection unexpectedly carries damage=%+v", prepared.Damage)
+	}
+}
+
+func TestResurrectionDefinitionRejectsDamageOrGateTarget(t *testing.T) {
+	badDamage := testResurrectAction()
+	badDamage.BaseDamage = 1
+	if _, err := NewService([]ActionDefinition{badDamage}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("damage field err=%v", err)
+	}
+
+	badTarget := testResurrectAction()
+	badTarget.Targets = []TargetKind{TargetGate}
+	if _, err := NewService([]ActionDefinition{badTarget}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("gate target err=%v", err)
 	}
 }
 
