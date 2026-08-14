@@ -19,6 +19,7 @@ const (
 	ScenarioDistributed   Scenario = "distributed"
 	ScenarioGateZerg      Scenario = "gate-zerg"
 	ScenarioVerticalSiege Scenario = "vertical-siege"
+	ScenarioTeleportChurn Scenario = "teleport-churn"
 )
 
 var ErrUnknownScenario = errors.New("loadlab: unknown scenario")
@@ -26,7 +27,7 @@ var ErrUnknownScenario = errors.New("loadlab: unknown scenario")
 func ParseScenario(value string) (Scenario, error) {
 	scenario := Scenario(value)
 	switch scenario {
-	case ScenarioDistributed, ScenarioGateZerg, ScenarioVerticalSiege:
+	case ScenarioDistributed, ScenarioGateZerg, ScenarioVerticalSiege, ScenarioTeleportChurn:
 		return scenario, nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrUnknownScenario, value)
@@ -50,6 +51,11 @@ func NewPlayerFactory(def gameplayworld.Definition, scenario Scenario, totalClie
 	layout, err := buildLayout(def, scenario)
 	if err != nil {
 		return nil, err
+	}
+	if scenario == ScenarioTeleportChurn {
+		if err := validateTeleportChurnLayout(layout, totalClients); err != nil {
+			return nil, err
+		}
 	}
 
 	return func(_ session.ID, entityID world.EntityID) tcpudp.PlayerSpec {
@@ -113,6 +119,15 @@ func spawnPosition(layout scenarioLayout, scenario Scenario, index, total int) w
 		default:
 			return pointOnSurface(layout.wall, gridPoint(layout.wall.Bounds, index/3, maxInt(1, total*3/10), 0.15))
 		}
+	case ScenarioTeleportChurn:
+		west, east := teleportChurnBounds(layout)
+		groupSize := total / 2
+		localIndex := index % groupSize
+		bounds := west
+		if index >= groupSize {
+			bounds = east
+		}
+		return pointOnSurface(layout.ground, gridPoint(bounds, localIndex, groupSize, 0.25))
 	default:
 		return pointOnSurface(layout.ground, gridPoint(layout.ground.Bounds, index, total, 2))
 	}
@@ -130,6 +145,63 @@ func gateApproachBounds(layout scenarioLayout) gameplayworld.BoundsXZ {
 		MaxX: min32(layout.ground.Bounds.MaxX-1, centerX+12),
 		MinZ: minZ,
 		MaxZ: maxZ,
+	}
+}
+
+// TeleportChurnTargets 回傳 S3-E.7 的 deterministic authoritative teleport plan。
+// 500-client case 會把兩個 250 人群組各前 125 人交換到另一群相同 grid slot，
+// 因此所有 Session 都會同時失去半個舊 AOI、取得半個新 AOI。
+func TeleportChurnTargets(def gameplayworld.Definition, totalClients int) (map[world.EntityID]world.Position, error) {
+	layout, err := buildLayout(def, ScenarioTeleportChurn)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTeleportChurnLayout(layout, totalClients); err != nil {
+		return nil, err
+	}
+	west, east := teleportChurnBounds(layout)
+	groupSize := totalClients / 2
+	moversPerGroup := groupSize / 2
+	targets := make(map[world.EntityID]world.Position, moversPerGroup*2)
+	for localIndex := 0; localIndex < moversPerGroup; localIndex++ {
+		westID := world.EntityID(localIndex + 1)
+		eastID := world.EntityID(groupSize + localIndex + 1)
+		westTarget := pointOnSurface(layout.ground, gridPoint(west, localIndex, groupSize, 0.25))
+		eastTarget := pointOnSurface(layout.ground, gridPoint(east, localIndex, groupSize, 0.25))
+		targets[westID] = eastTarget
+		targets[eastID] = westTarget
+	}
+	return targets, nil
+}
+
+func validateTeleportChurnLayout(layout scenarioLayout, totalClients int) error {
+	if totalClients < 4 || totalClients%4 != 0 {
+		return errors.New("loadlab: teleport-churn clients must be >= 4 and divisible by 4")
+	}
+	west, east := teleportChurnBounds(layout)
+	if west.MinX >= west.MaxX || west.MinZ >= west.MaxZ || east.MinX >= east.MaxX || east.MinZ >= east.MaxZ {
+		return errors.New("loadlab: ground surface is too small for teleport-churn clusters")
+	}
+	dx := east.MinX - west.MaxX
+	dz := east.MinZ - west.MaxZ
+	if math.Sqrt(float64(dx*dx+dz*dz)) <= 64 {
+		return errors.New("loadlab: teleport-churn clusters must be more than AOI radius apart")
+	}
+	return nil
+}
+
+func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gameplayworld.BoundsXZ) {
+	ground := layout.ground.Bounds
+	return gameplayworld.BoundsXZ{
+		MinX: ground.MinX + 2,
+		MaxX: ground.MinX + 18,
+		MinZ: ground.MinZ + 2,
+		MaxZ: ground.MinZ + 18,
+	}, gameplayworld.BoundsXZ{
+		MinX: ground.MaxX - 18,
+		MaxX: ground.MaxX - 2,
+		MinZ: ground.MaxZ - 18,
+		MaxZ: ground.MaxZ - 2,
 	}
 }
 
@@ -174,6 +246,8 @@ func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.
 	switch scenario {
 	case ScenarioGateZerg:
 		return 0, 1
+	case ScenarioTeleportChurn:
+		return 0, 0
 	case ScenarioVerticalSiege:
 		role := int((uint64(entityID) - 1) % 10)
 		switch {
