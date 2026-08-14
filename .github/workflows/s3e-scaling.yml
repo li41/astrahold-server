@@ -79,6 +79,7 @@ jobs:
           # Convergence phase 必須以 application lifecycle + Reliable transport 真正 drain 結束。
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == .convergence.observation.world.known_desired and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
           # S3-E.6 同時限制 convergence tail 與完成時間：不能只把 burst 攤成過長登入等待。
+          # Final acceptance 刻意重跑同一組 gates，確認不是單次 runner tail 偶然過關。
           jq -e '.tick_duration.p99_ms < 50' artifacts/server-convergence.json >/dev/null
           jq -e '.convergence.ready_to_converged_seconds < 2' artifacts/server-convergence.json >/dev/null
           # 正式 steady-state capacity gate 保持不變。
