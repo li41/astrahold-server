@@ -18,9 +18,10 @@ var churnCombatPairsPerGroup = flag.Int(
 )
 
 type churnCombatMetrics struct {
-	ActionsApplied      uint64 `json:"combat_actions_applied"`
-	ActionRejections    uint64 `json:"action_rejections"`
-	DirtyVitalsSelected uint64 `json:"dirty_vitals_selected"`
+	ActionsApplied                  uint64 `json:"combat_actions_applied"`
+	ActionRejections                uint64 `json:"action_rejections"`
+	DirtyVitalsSelected             uint64 `json:"dirty_vitals_selected"`
+	MaxDirtyVitalsSelectedPerTick   int    `json:"max_dirty_vitals_selected_per_tick"`
 }
 
 func enqueueChurnCombatActions(runtime *worldruntime.Runtime, round int, pairs []loadlab.EntityCombatPair) error {
