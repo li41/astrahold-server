@@ -40,8 +40,6 @@ func (r *Runtime) removeSessionVitals(id session.ID) {
 	delete(r.sessionVitalsPending, id)
 }
 
-// queueEntityVitalsForSession 只在 Reliable Spawn 成功排入 outbound queue 後呼叫。
-// 這讓 initial vitals retry 與 lifecycle known truth 綁在一起，而不是每 tick 掃全世界 Character state。
 func (r *Runtime) queueEntityVitalsForSession(sessionID session.ID, entityID world.EntityID) {
 	pending := r.sessionVitalsPending[sessionID]
 	if pending == nil {
@@ -72,16 +70,32 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 	return delivered
 }
 
-// replicateEntityVitals 將 Character full-state 視為可重送的 Reliable state，而不是一次性事件。
-// S3-E.6 對 Spawn 建立的 initial full state 加 per-session work budget；成功才刪 pending，
-// 第一個 Reliable backpressure 後停止該 Session 本 tick 的 initial vitals 工作。
-// Dirty fan-out 保持原本 latest full-state retry semantics。
+// Initial Vitals 與 lifecycle 使用同一種 phase-sensitive budgeting：
+// pure bootstrap 保留較高吞吐；一旦 mixed churn 被偵測，就降到 churn cap，直到 lifecycle deferred
+// 與 initial Vitals pending 都清空。Session 起點持續 round-robin，避免固定 ID 優先。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
-	for sessionID, pending := range r.sessionVitalsPending {
-		s, ok := r.sessions.Get(sessionID)
-		if !ok {
-			delete(r.sessionVitalsPending, sessionID)
-			delete(r.sessionVitalsRevision, sessionID)
+	sessions := r.sessions.List()
+	globalBudget := r.config.MaxInitialVitalsPerTick
+	if r.lifecycleChurnActive {
+		globalBudget = r.config.MaxChurnInitialVitalsPerTick
+	}
+	report.Metrics.InitialVitalsGlobalBudget = globalBudget
+	globalRemaining := globalBudget
+	startIndex := 0
+	if len(sessions) > 0 {
+		startIndex = r.vitalsSessionCursor % len(sessions)
+		if startIndex < 0 {
+			startIndex = 0
+		}
+	}
+	budgetExhaustedNextCursor := -1
+
+	for order := 0; order < len(sessions); order++ {
+		index := (startIndex + order) % len(sessions)
+		s := sessions[index]
+		sessionID := s.ID
+		pending := r.sessionVitalsPending[sessionID]
+		if len(pending) == 0 {
 			continue
 		}
 		delivered := r.ensureSessionVitalsDelivered(sessionID)
@@ -103,7 +117,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				delete(pending, entityID)
 				continue
 			}
-			if selected >= maxInitialVitalsPerSessionTick {
+			if selected >= maxInitialVitalsPerSessionTick || globalRemaining <= 0 {
 				break
 			}
 			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
@@ -113,21 +127,47 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				continue
 			}
 			selected++
+			globalRemaining--
+			report.Metrics.InitialVitalsGlobalSelected++
 			delivered[entityID] = revision
 			delete(pending, entityID)
 		}
 		if len(pending) == 0 {
 			delete(r.sessionVitalsPending, sessionID)
 		}
+		if globalRemaining <= 0 {
+			report.Metrics.InitialVitalsGlobalBudgetExhausted = true
+			budgetExhaustedNextCursor = (index + 1) % len(sessions)
+			break
+		}
+	}
+
+	if len(sessions) > 0 {
+		if budgetExhaustedNextCursor >= 0 {
+			r.vitalsSessionCursor = budgetExhaustedNextCursor
+		} else {
+			r.vitalsSessionCursor = (startIndex + 1) % len(sessions)
+		}
+	}
+
+	for sessionID := range r.sessionVitalsPending {
+		if _, ok := r.sessions.Get(sessionID); !ok {
+			delete(r.sessionVitalsPending, sessionID)
+			delete(r.sessionVitalsRevision, sessionID)
+		}
+	}
+
+	// 只在 snapshot tick 判斷 churn phase 是否完成，避免兩個 snapshot 之間 lifecycle metrics 為 0 時誤清。
+	if r.lifecycleChurnActive && tick%r.config.SnapshotEveryTicks == 0 &&
+		report.Metrics.LifecycleGlobalSelected == 0 && report.Metrics.SpawnDeferred == 0 && report.Metrics.DespawnDeferred == 0 &&
+		len(r.sessionVitalsPending) == 0 {
+		r.lifecycleChurnActive = false
 	}
 
 	if len(r.dirtyVitalsEntities) == 0 {
 		return
 	}
 
-	// Dirty fan-out 是 O(Sessions × dirty entities)，而不是 O(Sessions × all characters) 每 tick。
-	// 若某 Session backpressure，該 entity 保留 dirty，下一 tick retry latest full state。
-	sessions := r.sessions.List()
 	for entityID := range r.dirtyVitalsEntities {
 		state, ok := r.characters.State(entityID)
 		if !ok {

@@ -25,14 +25,14 @@ type DurationSummary struct {
 }
 
 type StageSummary struct {
-	CommandAverageMS                 float64 `json:"command_average_ms"`
-	SimulationAverageMS              float64 `json:"simulation_average_ms"`
-	DynamicReplicationAverageMS      float64 `json:"dynamic_replication_average_ms"`
-	ReplicationFrameBuildAverageMS   float64 `json:"replication_frame_build_average_ms"`
-	AOIAverageMS                     float64 `json:"aoi_average_ms"`
-	ReplicationBuildAverageMS        float64 `json:"replication_build_average_ms"`
-	DeliveryAverageMS                float64 `json:"delivery_average_ms"`
-	VitalsReplicationAverageMS       float64 `json:"vitals_replication_average_ms"`
+	CommandAverageMS               float64 `json:"command_average_ms"`
+	SimulationAverageMS            float64 `json:"simulation_average_ms"`
+	DynamicReplicationAverageMS    float64 `json:"dynamic_replication_average_ms"`
+	ReplicationFrameBuildAverageMS float64 `json:"replication_frame_build_average_ms"`
+	AOIAverageMS                   float64 `json:"aoi_average_ms"`
+	ReplicationBuildAverageMS      float64 `json:"replication_build_average_ms"`
+	DeliveryAverageMS              float64 `json:"delivery_average_ms"`
+	VitalsReplicationAverageMS     float64 `json:"vitals_replication_average_ms"`
 }
 
 type QueueSummary struct {
@@ -43,31 +43,49 @@ type QueueSummary struct {
 }
 
 type AOISummary struct {
-	Queries                 uint64  `json:"queries"`
-	Candidates              uint64  `json:"candidates"`
-	Visible                 uint64  `json:"visible"`
-	CandidatesPerQuery      float64 `json:"candidates_per_query"`
-	VisiblePerQuery         float64 `json:"visible_per_query"`
-	CandidateToVisible      float64 `json:"candidate_to_visible_ratio"`
-	SharedCandidateBuilds   uint64  `json:"shared_candidate_builds"`
-	SharedCandidateReuses   uint64  `json:"shared_candidate_reuses"`
-	PhysicalCandidateScans  uint64  `json:"physical_candidate_scans"`
-	SharedReuseRatio        float64 `json:"shared_reuse_ratio"`
+	Queries                uint64  `json:"queries"`
+	Candidates             uint64  `json:"candidates"`
+	Visible                uint64  `json:"visible"`
+	CandidatesPerQuery     float64 `json:"candidates_per_query"`
+	VisiblePerQuery        float64 `json:"visible_per_query"`
+	CandidateToVisible     float64 `json:"candidate_to_visible_ratio"`
+	SharedCandidateBuilds  uint64  `json:"shared_candidate_builds"`
+	SharedCandidateReuses  uint64  `json:"shared_candidate_reuses"`
+	PhysicalCandidateScans uint64  `json:"physical_candidate_scans"`
+	SharedReuseRatio       float64 `json:"shared_reuse_ratio"`
 }
 
 type ReplicationSummary struct {
-	SessionsReplicated       uint64  `json:"sessions_replicated"`
-	OutboundMessages         uint64  `json:"outbound_messages"`
-	MessagesPerSecond        float64 `json:"messages_per_second"`
-	SnapshotCandidates       uint64  `json:"snapshot_candidates"`
-	SnapshotTransforms       uint64  `json:"snapshot_transforms"`
-	SnapshotDeferred         uint64  `json:"snapshot_deferred"`
-	SnapshotForcedRefreshes  uint64  `json:"snapshot_forced_refreshes"`
-	SnapshotNearTransforms   uint64  `json:"snapshot_near_transforms"`
-	SnapshotMidTransforms    uint64  `json:"snapshot_mid_transforms"`
-	SnapshotFarTransforms    uint64  `json:"snapshot_far_transforms"`
-	TransformsPerSession     float64 `json:"transforms_per_session"`
-	DeferredCandidateRatio   float64 `json:"deferred_candidate_ratio"`
+	SessionsReplicated      uint64  `json:"sessions_replicated"`
+	OutboundMessages        uint64  `json:"outbound_messages"`
+	MessagesPerSecond       float64 `json:"messages_per_second"`
+	SnapshotCandidates      uint64  `json:"snapshot_candidates"`
+	SnapshotTransforms      uint64  `json:"snapshot_transforms"`
+	SnapshotDeferred        uint64  `json:"snapshot_deferred"`
+	SnapshotForcedRefreshes uint64  `json:"snapshot_forced_refreshes"`
+	SnapshotNearTransforms  uint64  `json:"snapshot_near_transforms"`
+	SnapshotMidTransforms   uint64  `json:"snapshot_mid_transforms"`
+	SnapshotFarTransforms   uint64  `json:"snapshot_far_transforms"`
+	TransformsPerSession    float64 `json:"transforms_per_session"`
+	DeferredCandidateRatio  float64 `json:"deferred_candidate_ratio"`
+}
+
+type LifecycleSummary struct {
+	SpawnCandidates                    uint64 `json:"spawn_candidates"`
+	SpawnSelected                      uint64 `json:"spawn_selected"`
+	SpawnDeferred                      uint64 `json:"spawn_deferred"`
+	DespawnCandidates                  uint64 `json:"despawn_candidates"`
+	DespawnSelected                    uint64 `json:"despawn_selected"`
+	DespawnDeferred                    uint64 `json:"despawn_deferred"`
+	BackpressureStops                  uint64 `json:"backpressure_stops"`
+	GlobalBudgetPerSnapshot            int    `json:"global_budget_per_snapshot"`
+	GlobalSelected                     uint64 `json:"global_selected"`
+	GlobalBudgetExhaustions            uint64 `json:"global_budget_exhaustions"`
+	MaxGlobalSelectedPerTick           int    `json:"max_global_selected_per_tick"`
+	InitialVitalsBudgetPerTick         int    `json:"initial_vitals_budget_per_tick"`
+	InitialVitalsSelected              uint64 `json:"initial_vitals_selected"`
+	InitialVitalsBudgetExhaustions     uint64 `json:"initial_vitals_budget_exhaustions"`
+	MaxInitialVitalsSelectedPerTick    int    `json:"max_initial_vitals_selected_per_tick"`
 }
 
 type ErrorSummary struct {
@@ -103,6 +121,7 @@ type ServerReport struct {
 	Queue              QueueSummary       `json:"queue"`
 	AOI                AOISummary         `json:"aoi"`
 	Replication        ReplicationSummary `json:"replication"`
+	Lifecycle          LifecycleSummary   `json:"lifecycle"`
 	Errors             ErrorSummary       `json:"errors"`
 	Memory             MemorySummary      `json:"memory"`
 }
@@ -119,33 +138,48 @@ type ServerCollector struct {
 	tickDurations []time.Duration
 	ticks         uint64
 
-	commandDuration                 time.Duration
-	simulationDuration              time.Duration
-	dynamicReplicationDuration      time.Duration
-	replicationFrameBuildDuration   time.Duration
-	aoiDuration                     time.Duration
-	replicationBuildDuration        time.Duration
-	deliveryDuration                time.Duration
-	vitalsReplicationDuration       time.Duration
+	commandDuration               time.Duration
+	simulationDuration            time.Duration
+	dynamicReplicationDuration    time.Duration
+	replicationFrameBuildDuration time.Duration
+	aoiDuration                   time.Duration
+	replicationBuildDuration      time.Duration
+	deliveryDuration              time.Duration
+	vitalsReplicationDuration     time.Duration
 
-	maxQueueBefore int
-	maxQueueAfter  int
-	commands       uint64
-	aoiQueries     uint64
-	aoiCandidates  uint64
-	aoiVisible     uint64
-	aoiSharedCandidateBuilds  uint64
-	aoiSharedCandidateReuses  uint64
-	aoiPhysicalCandidateScans uint64
-	sessions       uint64
-	messages       uint64
-	snapshotCandidates      uint64
-	snapshotTransforms      uint64
-	snapshotDeferred        uint64
-	snapshotForcedRefreshes uint64
-	snapshotNearTransforms  uint64
-	snapshotMidTransforms   uint64
-	snapshotFarTransforms   uint64
+	maxQueueBefore                    int
+	maxQueueAfter                     int
+	commands                          uint64
+	aoiQueries                        uint64
+	aoiCandidates                     uint64
+	aoiVisible                        uint64
+	aoiSharedCandidateBuilds          uint64
+	aoiSharedCandidateReuses          uint64
+	aoiPhysicalCandidateScans         uint64
+	sessions                          uint64
+	messages                          uint64
+	snapshotCandidates                uint64
+	snapshotTransforms                uint64
+	snapshotDeferred                  uint64
+	snapshotForcedRefreshes           uint64
+	snapshotNearTransforms            uint64
+	snapshotMidTransforms             uint64
+	snapshotFarTransforms             uint64
+	spawnCandidates                   uint64
+	spawnSelected                     uint64
+	spawnDeferred                     uint64
+	despawnCandidates                 uint64
+	despawnSelected                   uint64
+	despawnDeferred                   uint64
+	lifecycleBackpressureStops        uint64
+	lifecycleGlobalBudget             int
+	lifecycleGlobalSelected           uint64
+	lifecycleGlobalBudgetExhaustions  uint64
+	maxLifecycleGlobalSelected        int
+	initialVitalsGlobalBudget         int
+	initialVitalsGlobalSelected       uint64
+	initialVitalsBudgetExhaustions    uint64
+	maxInitialVitalsGlobalSelected    int
 
 	commandErrors        uint64
 	blockedMoves         uint64
@@ -160,8 +194,6 @@ func NewServerCollector(tickRateHz, snapshotRateHz int) *ServerCollector {
 	return &ServerCollector{tickRateHz: tickRateHz, snapshotRate: snapshotRateHz}
 }
 
-// Reset 在所有預期 Client ready 後開始新的量測 window。
-// 不可用整個 struct assignment reset，因為 mu 可能正處於 locked 狀態。
 func (c *ServerCollector) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -205,6 +237,21 @@ func (c *ServerCollector) Reset() {
 	c.snapshotNearTransforms = 0
 	c.snapshotMidTransforms = 0
 	c.snapshotFarTransforms = 0
+	c.spawnCandidates = 0
+	c.spawnSelected = 0
+	c.spawnDeferred = 0
+	c.despawnCandidates = 0
+	c.despawnSelected = 0
+	c.despawnDeferred = 0
+	c.lifecycleBackpressureStops = 0
+	c.lifecycleGlobalBudget = 0
+	c.lifecycleGlobalSelected = 0
+	c.lifecycleGlobalBudgetExhaustions = 0
+	c.maxLifecycleGlobalSelected = 0
+	c.initialVitalsGlobalBudget = 0
+	c.initialVitalsGlobalSelected = 0
+	c.initialVitalsBudgetExhaustions = 0
+	c.maxInitialVitalsGlobalSelected = 0
 	c.commandErrors = 0
 	c.blockedMoves = 0
 	c.unexpectedTickErrors = 0
@@ -254,6 +301,33 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	c.snapshotNearTransforms += uint64(m.SnapshotNearTransforms)
 	c.snapshotMidTransforms += uint64(m.SnapshotMidTransforms)
 	c.snapshotFarTransforms += uint64(m.SnapshotFarTransforms)
+	c.spawnCandidates += uint64(m.SpawnCandidates)
+	c.spawnSelected += uint64(m.SpawnSelected)
+	c.spawnDeferred += uint64(m.SpawnDeferred)
+	c.despawnCandidates += uint64(m.DespawnCandidates)
+	c.despawnSelected += uint64(m.DespawnSelected)
+	c.despawnDeferred += uint64(m.DespawnDeferred)
+	c.lifecycleBackpressureStops += uint64(m.LifecycleBackpressureStops)
+	if m.LifecycleGlobalBudget > c.lifecycleGlobalBudget {
+		c.lifecycleGlobalBudget = m.LifecycleGlobalBudget
+	}
+	c.lifecycleGlobalSelected += uint64(m.LifecycleGlobalSelected)
+	if m.LifecycleGlobalSelected > c.maxLifecycleGlobalSelected {
+		c.maxLifecycleGlobalSelected = m.LifecycleGlobalSelected
+	}
+	if m.LifecycleGlobalBudgetExhausted {
+		c.lifecycleGlobalBudgetExhaustions++
+	}
+	if m.InitialVitalsGlobalBudget > c.initialVitalsGlobalBudget {
+		c.initialVitalsGlobalBudget = m.InitialVitalsGlobalBudget
+	}
+	c.initialVitalsGlobalSelected += uint64(m.InitialVitalsGlobalSelected)
+	if m.InitialVitalsGlobalSelected > c.maxInitialVitalsGlobalSelected {
+		c.maxInitialVitalsGlobalSelected = m.InitialVitalsGlobalSelected
+	}
+	if m.InitialVitalsGlobalBudgetExhausted {
+		c.initialVitalsBudgetExhaustions++
+	}
 	c.commandErrors += uint64(len(report.CommandErrors))
 	c.deliveryErrors += uint64(len(report.DeliveryErrors))
 	for _, item := range report.TickErrors {
@@ -339,14 +413,14 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 		Ticks:              ticks,
 		TickDuration:       summarizeDurations(c.tickDurations),
 		Stages: StageSummary{
-			CommandAverageMS:                durationMS(c.commandDuration) / tickFloat,
-			SimulationAverageMS:             durationMS(c.simulationDuration) / tickFloat,
-			DynamicReplicationAverageMS:     durationMS(c.dynamicReplicationDuration) / tickFloat,
-			ReplicationFrameBuildAverageMS:  durationMS(c.replicationFrameBuildDuration) / tickFloat,
-			AOIAverageMS:                    durationMS(c.aoiDuration) / tickFloat,
-			ReplicationBuildAverageMS:       durationMS(c.replicationBuildDuration) / tickFloat,
-			DeliveryAverageMS:               durationMS(c.deliveryDuration) / tickFloat,
-			VitalsReplicationAverageMS:      durationMS(c.vitalsReplicationDuration) / tickFloat,
+			CommandAverageMS:               durationMS(c.commandDuration) / tickFloat,
+			SimulationAverageMS:            durationMS(c.simulationDuration) / tickFloat,
+			DynamicReplicationAverageMS:    durationMS(c.dynamicReplicationDuration) / tickFloat,
+			ReplicationFrameBuildAverageMS: durationMS(c.replicationFrameBuildDuration) / tickFloat,
+			AOIAverageMS:                   durationMS(c.aoiDuration) / tickFloat,
+			ReplicationBuildAverageMS:      durationMS(c.replicationBuildDuration) / tickFloat,
+			DeliveryAverageMS:              durationMS(c.deliveryDuration) / tickFloat,
+			VitalsReplicationAverageMS:     durationMS(c.vitalsReplicationDuration) / tickFloat,
 		},
 		Queue: QueueSummary{
 			MaxDepthBefore:         c.maxQueueBefore,
@@ -379,6 +453,23 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 			SnapshotFarTransforms:   c.snapshotFarTransforms,
 			TransformsPerSession:    float64(c.snapshotTransforms) / sessions,
 			DeferredCandidateRatio:  float64(c.snapshotDeferred) / candidates,
+		},
+		Lifecycle: LifecycleSummary{
+			SpawnCandidates:                 c.spawnCandidates,
+			SpawnSelected:                   c.spawnSelected,
+			SpawnDeferred:                   c.spawnDeferred,
+			DespawnCandidates:               c.despawnCandidates,
+			DespawnSelected:                 c.despawnSelected,
+			DespawnDeferred:                 c.despawnDeferred,
+			BackpressureStops:               c.lifecycleBackpressureStops,
+			GlobalBudgetPerSnapshot:         c.lifecycleGlobalBudget,
+			GlobalSelected:                  c.lifecycleGlobalSelected,
+			GlobalBudgetExhaustions:         c.lifecycleGlobalBudgetExhaustions,
+			MaxGlobalSelectedPerTick:        c.maxLifecycleGlobalSelected,
+			InitialVitalsBudgetPerTick:      c.initialVitalsGlobalBudget,
+			InitialVitalsSelected:           c.initialVitalsGlobalSelected,
+			InitialVitalsBudgetExhaustions:  c.initialVitalsBudgetExhaustions,
+			MaxInitialVitalsSelectedPerTick: c.maxInitialVitalsGlobalSelected,
 		},
 		Errors: ErrorSummary{
 			CommandErrors:        c.commandErrors,

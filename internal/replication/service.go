@@ -34,19 +34,32 @@ type BuildStats struct {
 }
 
 // LifecycleLimits 將可重建的 Reliable lifecycle materialization 限制在固定 work quantum。
-// 0 代表 unlimited，保留既有 Build / BuildFrame compatibility semantics；production Runtime
-// 會傳入正值，將 mass join / teleport / AOI churn 的 Spawn / Despawn 工作攤到多個 snapshot build。
+// 個別 limit 的 0 代表 unlimited，保留既有 Build / BuildFrame compatibility semantics；
+// 負值代表本 build 禁止該類 / 全部 lifecycle materialization。
+// MaxMessages 是 Spawn + Despawn 共用的 combined quantum，讓 Runtime 可再套 global per-snapshot budget。
 type LifecycleLimits struct {
 	MaxSpawns   int
 	MaxDespawns int
+	MaxMessages int
+}
+
+func lifecycleLimitAllows(limit, selected int) bool {
+	if limit < 0 {
+		return false
+	}
+	return limit == 0 || selected < limit
 }
 
 func (l LifecycleLimits) allowSpawn(selected int) bool {
-	return l.MaxSpawns <= 0 || selected < l.MaxSpawns
+	return lifecycleLimitAllows(l.MaxSpawns, selected)
 }
 
 func (l LifecycleLimits) allowDespawn(selected int) bool {
-	return l.MaxDespawns <= 0 || selected < l.MaxDespawns
+	return lifecycleLimitAllows(l.MaxDespawns, selected)
+}
+
+func (l LifecycleLimits) allowMessage(selected int) bool {
+	return lifecycleLimitAllows(l.MaxMessages, selected)
 }
 
 type Batch struct {
@@ -98,7 +111,7 @@ func (h *snapshotCandidateHeap) Pop() any {
 
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
-	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity查 map。
+	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity 查 map。
 	known map[world.EntityID]struct{}
 
 	// desiredIDs / tracks 與 shared frame 的 stable EntityID order 對齊。
@@ -108,8 +121,8 @@ type viewState struct {
 
 	departed                   []world.EntityID
 	lastSnapshot               map[world.EntityID]sentTransform // legacy Build compatibility only
-	lastDeliveredGeneration    map[world.EntityID]uint64        // legacy Build compatibility + rare membership rebuild
-	lastSentBuild              map[world.EntityID]uint64        // legacy Build compatibility + rare membership rebuild
+	lastDeliveredGeneration    map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
+	lastSentBuild              map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
 	candidates                 []snapshotCandidate
 	selectedCandidates         []snapshotCandidate
 	messages                   []Outbound
@@ -301,7 +314,8 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		if !track.known {
 			hasUnknown = true
 			batch.Stats.SpawnCandidates++
-			if lifecycleLimits.allowSpawn(batch.Stats.SpawnSelected) {
+			totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+			if lifecycleLimits.allowMessage(totalLifecycle) && lifecycleLimits.allowSpawn(batch.Stats.SpawnSelected) {
 				tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 				batch.Messages = append(batch.Messages, Outbound{
 					Delivery: protocol.DeliveryReliableOrdered,
@@ -362,7 +376,8 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	}
 	batch.Stats.DespawnCandidates = len(state.departed)
 	for _, id := range state.departed {
-		if !lifecycleLimits.allowDespawn(batch.Stats.DespawnSelected) {
+		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+		if !lifecycleLimits.allowMessage(totalLifecycle) || !lifecycleLimits.allowDespawn(batch.Stats.DespawnSelected) {
 			batch.Stats.DespawnDeferred++
 			continue
 		}
@@ -457,7 +472,8 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	return batch
 }
 
-// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，n// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
+// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，
+// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
 func selectSnapshotCandidates(buffer []snapshotCandidate, candidates []snapshotCandidate, budget int) []snapshotCandidate {
 	if budget <= 0 || len(candidates) <= budget {
 		return candidates

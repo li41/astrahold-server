@@ -72,6 +72,21 @@ func (w *World) Remove(id world.EntityID) {
 	w.spatial.Remove(id)
 }
 
+// Teleport 是 server-authoritative 管理 / gameplay transition primitive。
+// 它不走 navigation path resolution，會同步更新 movement state、entity transform 與 spatial index，
+// 並清除舊移動方向，避免同一 tick 在新位置繼續套用 teleport 前的 input。
+func (w *World) Teleport(id world.EntityID, position world.Position) error {
+	a, ok := w.actors[id]
+	if !ok {
+		return ErrEntityNotFound
+	}
+	a.move.Position = position
+	a.move.Direction = world.Vec3{}
+	a.entity.Transform.Position = position
+	w.spatial.Upsert(id, position)
+	return nil
+}
+
 // SetMoveInput 只更新 client 的移動意圖；實際位置要等下一個 server Tick 才改變。
 func (w *World) SetMoveInput(id world.EntityID, input movement.Input) error {
 	a, ok := w.actors[id]

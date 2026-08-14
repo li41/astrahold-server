@@ -9,29 +9,86 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// BuildFrameLifecycleFirst 在 view 尚有 unknown desired entity 時只做 bounded Reliable lifecycle
-// 與 self correction；Spawn 自身已帶 authoritative transform，因此 bootstrap 尚未完成前不重複支付
-// remote snapshot candidate scheduling。當所有 desired entity 都 known 後，自動回到完整 BuildFrame path。
 func (s *Service) BuildFrameLifecycleFirst(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
 	state := s.ensureView(sessionID)
 	return s.buildFrameLifecycleFirst(state, selfID, lastProcessedInput, frame, visibleIndices, false, limits)
 }
 
-// BuildFrameBorrowedLifecycleFirst 是 ImmediateRealtimeConnection 的 lifecycle-first production path。
 func (s *Service) BuildFrameBorrowedLifecycleFirst(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
 	state := s.ensureView(sessionID)
 	return s.buildFrameLifecycleFirst(state, selfID, lastProcessedInput, frame, visibleIndices, true, limits)
 }
 
 func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool, limits LifecycleLimits) Batch {
-	if !sameDesiredIDs(state.desiredIDs, frame, visibleIndices) {
+	desiredChanged := !sameDesiredIDs(state.desiredIDs, frame, visibleIndices)
+	if desiredChanged {
+		// Mass join 常見的是 desired 只成長；舊 desired 全部仍存在時不可能產生 Despawn，
+		// 因此不為 rare churn diff 掃整份 known map。真正有 membership removal 才建立 pending departed。
+		membershipRemoved := desiredMembershipRemoved(state.desiredIDs, frame, visibleIndices)
 		rebuildDesiredTracks(state, frame, visibleIndices)
+		if membershipRemoved {
+			rebuildPendingDeparted(state)
+		} else if len(state.departed) > 0 {
+			prunePendingDeparted(state)
+		}
+	} else if len(state.departed) > 0 {
+		prunePendingDeparted(state)
+	}
+	if limits.MaxMessages < 0 {
+		return s.buildDeferredLifecycleFrame(state, selfID, lastProcessedInput, frame)
 	}
 	firstUnknown := firstUnknownDesired(state)
 	if firstUnknown < 0 {
 		return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, borrowSnapshotStorage, limits)
 	}
 	return s.buildBootstrapLifecycleFrame(state, selfID, lastProcessedInput, frame, visibleIndices, firstUnknown, limits)
+}
+
+// desiredMembershipRemoved 利用 desired / frame 的 stable EntityID order 做 two-pointer subset 檢查。
+// true 代表至少一個舊 desired ID 不在新 AOI；只有這種 membership change 才需要掃 known 建 Despawn list。
+func desiredMembershipRemoved(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {
+	if len(previous) == 0 {
+		return false
+	}
+	previousIndex := 0
+	for _, frameIndex := range visibleIndices {
+		if frameIndex < 0 || frameIndex >= len(frame.Entities) {
+			continue
+		}
+		id := frame.Entities[frameIndex].ID
+		for previousIndex < len(previous) && previous[previousIndex] < id {
+			return true
+		}
+		if previousIndex < len(previous) && previous[previousIndex] == id {
+			previousIndex++
+			if previousIndex == len(previous) {
+				return false
+			}
+		}
+	}
+	return previousIndex < len(previous)
+}
+
+func rebuildPendingDeparted(state *viewState) {
+	state.departed = state.departed[:0]
+	for id := range state.known {
+		if !containsDesiredID(state.desiredIDs, id) {
+			state.departed = append(state.departed, id)
+		}
+	}
+	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
+}
+
+func prunePendingDeparted(state *viewState) {
+	write := 0
+	for _, id := range state.departed {
+		if _, known := state.known[id]; !known || containsDesiredID(state.desiredIDs, id) {
+			continue
+		}
+		state.departed[write] = id
+		write++
+	}
+	state.departed = state.departed[:write]
 }
 
 func firstUnknownDesired(state *viewState) int {
@@ -43,13 +100,51 @@ func firstUnknownDesired(state *viewState) int {
 	return -1
 }
 
+func (s *Service) buildDeferredLifecycleFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame) Batch {
+	state.buildNumber++
+	state.messages = state.messages[:0]
+	batch := Batch{Messages: state.messages}
+	if firstUnknownDesired(state) >= 0 {
+		batch.Stats.SpawnDeferred = 1
+	}
+	if len(state.departed) > 0 {
+		batch.Stats.DespawnDeferred = len(state.departed)
+	}
+	if self, _, ok := frame.Entity(selfID); ok {
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryRealtimeSequenced,
+			Message: protocol.PositionCorrection{
+				Tick:                       frame.Tick,
+				EntityID:                   self.ID,
+				Position:                   self.Transform.Position,
+				Yaw:                        self.Transform.Yaw,
+				LastProcessedInputSequence: lastProcessedInput,
+			},
+		})
+	}
+	state.messages = batch.Messages
+	return batch
+}
+
 func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, firstUnknown int, limits LifecycleLimits) Batch {
 	state.buildNumber++
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 
-	// 從最早未完成的 desired track 開始；一旦 Spawn quantum 用完就立即停止。
-	// Deferred work 不應為了完整統計而先掃過一次，下一個 build 會從新的 firstUnknown 繼續。
+	batch.Stats.DespawnCandidates = len(state.departed)
+	for i, id := range state.departed {
+		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+		if !limits.allowMessage(totalLifecycle) || !limits.allowDespawn(batch.Stats.DespawnSelected) {
+			batch.Stats.DespawnDeferred = len(state.departed) - i
+			break
+		}
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Message:  protocol.EntityDespawn{EntityID: id},
+		})
+		batch.Stats.DespawnSelected++
+	}
+
 	for i := firstUnknown; i < len(visibleIndices) && i < len(state.tracks); i++ {
 		index := visibleIndices[i]
 		if index < 0 || index >= len(frame.Entities) {
@@ -60,13 +155,15 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 			continue
 		}
 		batch.Stats.SpawnCandidates++
-		if !limits.allowSpawn(batch.Stats.SpawnSelected) {
-			// lifecycle-first path 的 Deferred 只表示「本 build 尚有更多工作」，
-			// 不為了取得完整 deferred cardinality 而掃完整份 AOI。
+		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+		if !limits.allowMessage(totalLifecycle) || !limits.allowSpawn(batch.Stats.SpawnSelected) {
 			batch.Stats.SpawnDeferred = 1
 			break
 		}
 		e := frame.Entities[index]
+		generation := frame.TransformGenerations[index]
+		track.lastDeliveredGeneration = generation
+		track.lastSentBuild = state.buildNumber
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
 			Message: protocol.EntitySpawn{
@@ -81,26 +178,6 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 			},
 		})
 		batch.Stats.SpawnSelected++
-	}
-
-	state.departed = state.departed[:0]
-	for id := range state.known {
-		if !containsDesiredID(state.desiredIDs, id) {
-			state.departed = append(state.departed, id)
-		}
-	}
-	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
-	batch.Stats.DespawnCandidates = len(state.departed)
-	for _, id := range state.departed {
-		if !limits.allowDespawn(batch.Stats.DespawnSelected) {
-			batch.Stats.DespawnDeferred++
-			continue
-		}
-		batch.Messages = append(batch.Messages, Outbound{
-			Delivery: protocol.DeliveryReliableOrdered,
-			Message:  protocol.EntityDespawn{EntityID: id},
-		})
-		batch.Stats.DespawnSelected++
 	}
 
 	if self, _, ok := frame.Entity(selfID); ok {

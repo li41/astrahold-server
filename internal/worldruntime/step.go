@@ -36,6 +36,10 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
+		case teleportCommand:
+			r.applyTeleport(cmd.name(), c, &report)
+		case teleportBatchCommand:
+			r.applyTeleportBatch(cmd.name(), c, &report)
 		case useActionCommand:
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
@@ -66,6 +70,12 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		sessions := r.sessions.List()
 		report.Metrics.SessionsReplicated = len(sessions)
 
+		globalBudget := r.config.MaxLifecycleMessagesPerSnapshot
+		if r.lifecycleChurnActive {
+			globalBudget = r.config.MaxChurnLifecycleMessagesPerSnapshot
+		}
+		report.Metrics.LifecycleGlobalBudget = globalBudget
+
 		if measure {
 			stageStart = time.Now()
 		}
@@ -74,7 +84,19 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.ReplicationFrameBuildDuration = time.Since(stageStart)
 		}
 
-		for _, s := range sessions {
+		startIndex := 0
+		if len(sessions) > 0 {
+			startIndex = r.lifecycleSessionCursor % len(sessions)
+			if startIndex < 0 {
+				startIndex = 0
+			}
+		}
+		globalRemaining := globalBudget
+		budgetExhaustedNextCursor := -1
+
+		for order := 0; order < len(sessions); order++ {
+			index := (startIndex + order) % len(sessions)
+			s := sessions[index]
 			self, _, ok := frame.Entity(s.EntityID)
 			if !ok {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "replicate", SessionID: s.ID, Err: ErrSessionEntityNotFound})
@@ -95,10 +117,19 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.AOISharedCandidateReuses += queryStats.SharedCandidateReuses
 			report.Metrics.AOIPhysicalCandidateScans += queryStats.SharedCandidateScans
 
+			maxMessages := r.config.MaxLifecyclePerSessionBuild
+			if globalBudget > 0 {
+				if globalRemaining <= 0 {
+					maxMessages = -1
+				} else if maxMessages <= 0 || maxMessages > globalRemaining {
+					maxMessages = globalRemaining
+				}
+			}
 			connection := s.Connection()
 			lifecycleLimits := replication.LifecycleLimits{
 				MaxSpawns:   r.config.MaxSpawnsPerSessionBuild,
 				MaxDespawns: r.config.MaxDespawnsPerSessionBuild,
+				MaxMessages: maxMessages,
 			}
 			if measure {
 				stageStart = time.Now()
@@ -127,6 +158,29 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.DespawnSelected += batch.Stats.DespawnSelected
 			report.Metrics.DespawnDeferred += batch.Stats.DespawnDeferred
 
+			selectedLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+			report.Metrics.LifecycleGlobalSelected += selectedLifecycle
+
+			// 第一個 departed candidate 就代表這不是 pure bootstrap，而是 mixed AOI churn。
+			// 立即把本 snapshot 的 global ceiling 收斂到較低 churn budget；第一個 Session 最多只先用32筆。
+			if batch.Stats.DespawnCandidates > 0 && !r.lifecycleChurnActive {
+				r.lifecycleChurnActive = true
+				if r.config.MaxChurnLifecycleMessagesPerSnapshot > 0 && (globalBudget <= 0 || r.config.MaxChurnLifecycleMessagesPerSnapshot < globalBudget) {
+					globalBudget = r.config.MaxChurnLifecycleMessagesPerSnapshot
+					report.Metrics.LifecycleGlobalBudget = globalBudget
+				}
+			}
+			if globalBudget > 0 {
+				globalRemaining = globalBudget - report.Metrics.LifecycleGlobalSelected
+				if globalRemaining < 0 {
+					globalRemaining = 0
+				}
+				if globalRemaining == 0 && budgetExhaustedNextCursor < 0 {
+					report.Metrics.LifecycleGlobalBudgetExhausted = true
+					budgetExhaustedNextCursor = (index + 1) % len(sessions)
+				}
+			}
+
 			if measure {
 				stageStart = time.Now()
 			}
@@ -138,8 +192,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				}
 				envelope := protocol.Envelope{Delivery: out.Delivery, Sequence: s.NextOutboundSequence(out.Delivery), ServerTick: tick, Message: out.Message}
 				if err := connection.TrySend(envelope); err != nil {
-					// Spawn / Despawn 是可重建的 Reliable lifecycle state。第一個 backpressure 後，
-					// 同 Session 這個 build 的後續 lifecycle TrySend 不再做無效重試；realtime 仍照常送。
 					if lifecycle && errors.Is(err, session.ErrBackpressure) {
 						lifecycleBackpressured = true
 						report.Metrics.LifecycleBackpressureStops++
@@ -154,10 +206,16 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				report.Metrics.DeliveryDuration += time.Since(stageStart)
 			}
 		}
+
+		if len(sessions) > 0 {
+			if budgetExhaustedNextCursor >= 0 {
+				r.lifecycleSessionCursor = budgetExhaustedNextCursor
+			} else {
+				r.lifecycleSessionCursor = (startIndex + 1) % len(sessions)
+			}
+		}
 	}
 
-	// Vitals 是 Reliable full state。S3-E.2 只處理 Spawn pending 與 global dirty fan-out；
-	// outbound queue 暫時滿只延後 latest full state，不放寬 convergence correctness。
 	if measure {
 		stageStart = time.Now()
 	}

@@ -21,28 +21,43 @@ var (
 	ErrJoinEntityMismatch    = errors.New("worldruntime: join session/entity mismatch")
 )
 
+type TeleportRequest struct {
+	EntityID world.EntityID
+	Position world.Position
+}
+
 type Config struct {
-	CommandQueueCapacity       int
-	MaxCommandsPerTick         int
-	SnapshotEveryTicks         uint64
-	CharacterMaxHP             uint32
-	AOIOptions                 spatial.QueryOptions
-	ReplicationPolicy          replication.Policy
-	MaxSpawnsPerSessionBuild   int
-	MaxDespawnsPerSessionBuild int
-	CollectMetrics             bool
+	CommandQueueCapacity                 int
+	MaxCommandsPerTick                   int
+	SnapshotEveryTicks                   uint64
+	CharacterMaxHP                       uint32
+	AOIOptions                           spatial.QueryOptions
+	ReplicationPolicy                    replication.Policy
+	MaxSpawnsPerSessionBuild             int
+	MaxDespawnsPerSessionBuild           int
+	MaxLifecyclePerSessionBuild          int
+	MaxLifecycleMessagesPerSnapshot      int
+	MaxChurnLifecycleMessagesPerSnapshot int
+	MaxInitialVitalsPerTick              int
+	MaxChurnInitialVitalsPerTick         int
+	CollectMetrics                       bool
 }
 
 func DefaultConfig() Config {
 	return Config{
-		CommandQueueCapacity:       4096,
-		MaxCommandsPerTick:         2048,
-		SnapshotEveryTicks:         2,
-		CharacterMaxHP:             1000,
-		AOIOptions:                 spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
-		ReplicationPolicy:          replication.DefaultPolicy(),
-		MaxSpawnsPerSessionBuild:   32,
-		MaxDespawnsPerSessionBuild: 64,
+		CommandQueueCapacity:                 4096,
+		MaxCommandsPerTick:                   2048,
+		SnapshotEveryTicks:                   2,
+		CharacterMaxHP:                       1000,
+		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
+		ReplicationPolicy:                    replication.DefaultPolicy(),
+		MaxSpawnsPerSessionBuild:             32,
+		MaxDespawnsPerSessionBuild:           64,
+		MaxLifecyclePerSessionBuild:          32,
+		MaxLifecycleMessagesPerSnapshot:      16000,
+		MaxChurnLifecycleMessagesPerSnapshot: 7000,
+		MaxInitialVitalsPerTick:              8000,
+		MaxChurnInitialVitalsPerTick:         3500,
 	}
 }
 
@@ -64,40 +79,46 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore       int
-	CommandQueueDepthAfter        int
-	CommandsDrained               int
-	SessionsReplicated            int
-	AOIQueries                    int
-	AOICandidates                 int
-	AOIVisible                    int
-	AOISharedCandidateBuilds      int
-	AOISharedCandidateReuses      int
-	AOIPhysicalCandidateScans     int
-	OutboundMessages              int
-	SnapshotCandidates            int
-	SnapshotTransforms            int
-	SnapshotDeferred              int
-	SnapshotForcedRefreshes       int
-	SnapshotNearTransforms        int
-	SnapshotMidTransforms         int
-	SnapshotFarTransforms         int
-	SpawnCandidates               int
-	SpawnSelected                 int
-	SpawnDeferred                 int
-	DespawnCandidates             int
-	DespawnSelected               int
-	DespawnDeferred               int
-	LifecycleBackpressureStops    int
-	CommandDuration               time.Duration
-	SimulationDuration            time.Duration
-	DynamicReplicationDuration    time.Duration
-	ReplicationFrameBuildDuration time.Duration
-	AOIDuration                   time.Duration
-	ReplicationBuildDuration      time.Duration
-	DeliveryDuration              time.Duration
-	VitalsReplicationDuration     time.Duration
-	TotalDuration                 time.Duration
+	CommandQueueDepthBefore            int
+	CommandQueueDepthAfter             int
+	CommandsDrained                    int
+	SessionsReplicated                 int
+	AOIQueries                         int
+	AOICandidates                      int
+	AOIVisible                         int
+	AOISharedCandidateBuilds           int
+	AOISharedCandidateReuses           int
+	AOIPhysicalCandidateScans          int
+	OutboundMessages                   int
+	SnapshotCandidates                 int
+	SnapshotTransforms                 int
+	SnapshotDeferred                   int
+	SnapshotForcedRefreshes            int
+	SnapshotNearTransforms             int
+	SnapshotMidTransforms              int
+	SnapshotFarTransforms              int
+	SpawnCandidates                    int
+	SpawnSelected                      int
+	SpawnDeferred                      int
+	DespawnCandidates                  int
+	DespawnSelected                    int
+	DespawnDeferred                    int
+	LifecycleBackpressureStops         int
+	LifecycleGlobalBudget              int
+	LifecycleGlobalSelected            int
+	LifecycleGlobalBudgetExhausted     bool
+	InitialVitalsGlobalBudget          int
+	InitialVitalsGlobalSelected        int
+	InitialVitalsGlobalBudgetExhausted bool
+	CommandDuration                    time.Duration
+	SimulationDuration                 time.Duration
+	DynamicReplicationDuration         time.Duration
+	ReplicationFrameBuildDuration      time.Duration
+	AOIDuration                        time.Duration
+	ReplicationBuildDuration           time.Duration
+	DeliveryDuration                   time.Duration
+	VitalsReplicationDuration          time.Duration
+	TotalDuration                      time.Duration
 }
 
 type StepReport struct {
@@ -127,6 +148,9 @@ type Runtime struct {
 	dirtyVitalsEntities       map[world.EntityID]struct{}
 	sessionVitalsRevision     map[session.ID]map[world.EntityID]uint64
 	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
+	lifecycleSessionCursor    int
+	vitalsSessionCursor       int
+	lifecycleChurnActive      bool
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -150,6 +174,21 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.MaxDespawnsPerSessionBuild <= 0 {
 		config.MaxDespawnsPerSessionBuild = 64
+	}
+	if config.MaxLifecyclePerSessionBuild <= 0 {
+		config.MaxLifecyclePerSessionBuild = 32
+	}
+	if config.MaxLifecycleMessagesPerSnapshot <= 0 {
+		config.MaxLifecycleMessagesPerSnapshot = 16000
+	}
+	if config.MaxChurnLifecycleMessagesPerSnapshot <= 0 {
+		config.MaxChurnLifecycleMessagesPerSnapshot = 7000
+	}
+	if config.MaxInitialVitalsPerTick <= 0 {
+		config.MaxInitialVitalsPerTick = 8000
+	}
+	if config.MaxChurnInitialVitalsPerTick <= 0 {
+		config.MaxChurnInitialVitalsPerTick = 3500
 	}
 	characters, err := character.NewService(config.CharacterMaxHP)
 	if err != nil {
@@ -192,4 +231,16 @@ func (r *Runtime) EnqueueJoin(request JoinRequest) error {
 func (r *Runtime) EnqueueLeave(id session.ID) error { return r.queue.tryPush(leaveCommand{id: id}) }
 func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.ClientMoveInput) error {
 	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
+}
+
+func (r *Runtime) EnqueueTeleport(entityID world.EntityID, position world.Position) error {
+	return r.queue.tryPush(teleportCommand{entityID: entityID, position: position})
+}
+
+func (r *Runtime) EnqueueTeleportBatch(requests []TeleportRequest) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	owned := append([]TeleportRequest(nil), requests...)
+	return r.queue.tryPush(teleportBatchCommand{requests: owned})
 }
