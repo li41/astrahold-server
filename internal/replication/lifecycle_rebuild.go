@@ -1,9 +1,6 @@
 package replication
 
-import (
-	"github.com/li41/astrahold-server/internal/simulation"
-	"github.com/li41/astrahold-server/internal/world"
-)
+import "github.com/li41/astrahold-server/internal/simulation"
 
 // rebuildLifecycleDesiredTracks 是 lifecycle-first membership-change 專用的 dense-track rebuild。
 //
@@ -30,9 +27,4 @@ func rebuildLifecycleDesiredTracks(state *viewState, frame *simulation.Replicati
 		state.desiredIDs[i] = id
 		state.tracks[i] = track
 	}
-}
-
-// lifecycleTrackIndex 只供同 package tests 做可讀性較高的 track lookup。
-func lifecycleTrackIndex(ids []world.EntityID, id world.EntityID) int {
-	return desiredIndex(ids, id)
 }
