@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "revision": "s3e9-soak-001",
+  "actions": [
+    {
+      "id": "basic-attack",
+      "targets": ["gate", "entity"],
+      "range": 4.5,
+      "base_damage": 100,
+      "damage_type": "physical",
+      "cooldown_seconds": 0.5
+    },
+    {
+      "id": "soak-attack",
+      "targets": ["entity"],
+      "range": 4.5,
+      "base_damage": 1,
+      "damage_type": "physical",
+      "cooldown_seconds": 0.05
+    }
+  ]
+}
