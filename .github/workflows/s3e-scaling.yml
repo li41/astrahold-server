@@ -44,8 +44,6 @@ jobs:
             -shutdown-grace 2s \
             -ready-timeout 60s \
             -report artifacts/server.json \
-            -alloc-profile-prefix artifacts/allocs \
-            -alloc-profile-rate 65536 \
             > artifacts/server.log 2>&1 &
           SERVER_PID=$!
           sleep 1
@@ -65,11 +63,6 @@ jobs:
           SERVER_STATUS=$?
           set -e
 
-          if [[ -f artifacts/allocs-before.pprof && -f artifacts/allocs-after.pprof ]]; then
-            go tool pprof -top -alloc_space -base artifacts/allocs-before.pprof /tmp/astrahold-loadserver artifacts/allocs-after.pprof > artifacts/allocs-top-space.txt
-            go tool pprof -top -alloc_objects -base artifacts/allocs-before.pprof /tmp/astrahold-loadserver artifacts/allocs-after.pprof > artifacts/allocs-top-objects.txt
-            cat artifacts/allocs-top-space.txt
-          fi
           cat artifacts/server.json || true
           cat artifacts/bots.json || true
           test "$BOT_STATUS" -eq 0
