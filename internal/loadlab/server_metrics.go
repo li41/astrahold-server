@@ -49,9 +49,18 @@ type AOISummary struct {
 }
 
 type ReplicationSummary struct {
-	SessionsReplicated uint64  `json:"sessions_replicated"`
-	OutboundMessages   uint64  `json:"outbound_messages"`
-	MessagesPerSecond  float64 `json:"messages_per_second"`
+	SessionsReplicated       uint64  `json:"sessions_replicated"`
+	OutboundMessages         uint64  `json:"outbound_messages"`
+	MessagesPerSecond        float64 `json:"messages_per_second"`
+	SnapshotCandidates       uint64  `json:"snapshot_candidates"`
+	SnapshotTransforms       uint64  `json:"snapshot_transforms"`
+	SnapshotDeferred         uint64  `json:"snapshot_deferred"`
+	SnapshotForcedRefreshes  uint64  `json:"snapshot_forced_refreshes"`
+	SnapshotNearTransforms   uint64  `json:"snapshot_near_transforms"`
+	SnapshotMidTransforms    uint64  `json:"snapshot_mid_transforms"`
+	SnapshotFarTransforms    uint64  `json:"snapshot_far_transforms"`
+	TransformsPerSession     float64 `json:"transforms_per_session"`
+	DeferredCandidateRatio   float64 `json:"deferred_candidate_ratio"`
 }
 
 type ErrorSummary struct {
@@ -117,6 +126,13 @@ type ServerCollector struct {
 	aoiVisible     uint64
 	sessions       uint64
 	messages       uint64
+	snapshotCandidates      uint64
+	snapshotTransforms      uint64
+	snapshotDeferred        uint64
+	snapshotForcedRefreshes uint64
+	snapshotNearTransforms  uint64
+	snapshotMidTransforms   uint64
+	snapshotFarTransforms   uint64
 
 	commandErrors        uint64
 	blockedMoves         uint64
@@ -163,6 +179,13 @@ func (c *ServerCollector) Reset() {
 	c.aoiVisible = 0
 	c.sessions = 0
 	c.messages = 0
+	c.snapshotCandidates = 0
+	c.snapshotTransforms = 0
+	c.snapshotDeferred = 0
+	c.snapshotForcedRefreshes = 0
+	c.snapshotNearTransforms = 0
+	c.snapshotMidTransforms = 0
+	c.snapshotFarTransforms = 0
 	c.commandErrors = 0
 	c.blockedMoves = 0
 	c.unexpectedTickErrors = 0
@@ -199,6 +222,13 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	c.aoiVisible += uint64(m.AOIVisible)
 	c.sessions += uint64(m.SessionsReplicated)
 	c.messages += uint64(m.OutboundMessages)
+	c.snapshotCandidates += uint64(m.SnapshotCandidates)
+	c.snapshotTransforms += uint64(m.SnapshotTransforms)
+	c.snapshotDeferred += uint64(m.SnapshotDeferred)
+	c.snapshotForcedRefreshes += uint64(m.SnapshotForcedRefreshes)
+	c.snapshotNearTransforms += uint64(m.SnapshotNearTransforms)
+	c.snapshotMidTransforms += uint64(m.SnapshotMidTransforms)
+	c.snapshotFarTransforms += uint64(m.SnapshotFarTransforms)
 	c.commandErrors += uint64(len(report.CommandErrors))
 	c.deliveryErrors += uint64(len(report.DeliveryErrors))
 	for _, item := range report.TickErrors {
@@ -256,6 +286,14 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 	if visible == 0 {
 		visible = 1
 	}
+	sessions := float64(c.sessions)
+	if sessions == 0 {
+		sessions = 1
+	}
+	candidates := float64(c.snapshotCandidates)
+	if candidates == 0 {
+		candidates = 1
+	}
 
 	networkOps := make(map[string]uint64, len(c.networkByOperation))
 	for key, value := range c.networkByOperation {
@@ -293,9 +331,18 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 			CandidateToVisible: float64(c.aoiCandidates) / visible,
 		},
 		Replication: ReplicationSummary{
-			SessionsReplicated: c.sessions,
-			OutboundMessages:   c.messages,
-			MessagesPerSecond:  float64(c.messages) / seconds,
+			SessionsReplicated:      c.sessions,
+			OutboundMessages:        c.messages,
+			MessagesPerSecond:       float64(c.messages) / seconds,
+			SnapshotCandidates:      c.snapshotCandidates,
+			SnapshotTransforms:      c.snapshotTransforms,
+			SnapshotDeferred:        c.snapshotDeferred,
+			SnapshotForcedRefreshes: c.snapshotForcedRefreshes,
+			SnapshotNearTransforms:  c.snapshotNearTransforms,
+			SnapshotMidTransforms:   c.snapshotMidTransforms,
+			SnapshotFarTransforms:   c.snapshotFarTransforms,
+			TransformsPerSession:    float64(c.snapshotTransforms) / sessions,
+			DeferredCandidateRatio:  float64(c.snapshotDeferred) / candidates,
 		},
 		Errors: ErrorSummary{
 			CommandErrors:        c.commandErrors,
