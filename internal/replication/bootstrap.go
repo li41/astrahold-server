@@ -22,8 +22,15 @@ func (s *Service) BuildFrameBorrowedLifecycleFirst(sessionID session.ID, selfID 
 func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool, limits LifecycleLimits) Batch {
 	desiredChanged := !sameDesiredIDs(state.desiredIDs, frame, visibleIndices)
 	if desiredChanged {
+		// Mass join 常見的是 desired 只成長；舊 desired 全部仍存在時不可能產生 Despawn，
+		// 因此不為 rare churn diff 掃整份 known map。真正有 membership removal 才建立 pending departed。
+		membershipRemoved := desiredMembershipRemoved(state.desiredIDs, frame, visibleIndices)
 		rebuildDesiredTracks(state, frame, visibleIndices)
-		rebuildPendingDeparted(state)
+		if membershipRemoved {
+			rebuildPendingDeparted(state)
+		} else if len(state.departed) > 0 {
+			prunePendingDeparted(state)
+		}
 	} else if len(state.departed) > 0 {
 		prunePendingDeparted(state)
 	}
@@ -35,6 +42,31 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 		return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, borrowSnapshotStorage, limits)
 	}
 	return s.buildBootstrapLifecycleFrame(state, selfID, lastProcessedInput, frame, visibleIndices, firstUnknown, limits)
+}
+
+// desiredMembershipRemoved 利用 desired / frame 的 stable EntityID order 做 two-pointer subset 檢查。
+// true 代表至少一個舊 desired ID 不在新 AOI；只有這種 membership change 才需要掃 known 建 Despawn list。
+func desiredMembershipRemoved(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {
+	if len(previous) == 0 {
+		return false
+	}
+	previousIndex := 0
+	for _, frameIndex := range visibleIndices {
+		if frameIndex < 0 || frameIndex >= len(frame.Entities) {
+			continue
+		}
+		id := frame.Entities[frameIndex].ID
+		for previousIndex < len(previous) && previous[previousIndex] < id {
+			return true
+		}
+		if previousIndex < len(previous) && previous[previousIndex] == id {
+			previousIndex++
+			if previousIndex == len(previous) {
+				return false
+			}
+		}
+	}
+	return previousIndex < len(previous)
 }
 
 func rebuildPendingDeparted(state *viewState) {
@@ -130,9 +162,6 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 		}
 		e := frame.Entities[index]
 		generation := frame.TransformGenerations[index]
-		// Reliable Spawn 本身已攜帶同一份 authoritative transform。這裡先記在 unknown track；
-		// TrySend 若失敗，known 仍為 false，realtime scheduler 不會誤用；retry 會覆寫最新 generation。
-		// ConfirmSpawn 成功把 known=true 後，Spawn transform 即成為 dirty/refresh scheduler 的有效 baseline。
 		track.lastDeliveredGeneration = generation
 		track.lastSentBuild = state.buildNumber
 		batch.Messages = append(batch.Messages, Outbound{
