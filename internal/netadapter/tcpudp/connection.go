@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -13,10 +14,11 @@ import (
 var ErrRealtimeAddressMismatch = errors.New("tcpudp: realtime endpoint IP mismatch")
 
 type clientConnection struct {
-	tcp   net.Conn
-	udp   *net.UDPConn
-	token Token
-	codec transport.PayloadCodec
+	tcp     net.Conn
+	udp     *net.UDPConn
+	token   Token
+	codec   transport.PayloadCodec
+	metrics *networkCounters
 
 	reliable chan protocol.Envelope
 	realtime *realtimeMailbox
@@ -28,7 +30,7 @@ type clientConnection struct {
 	bindNotify chan struct{}
 }
 
-func newClientConnection(tcp net.Conn, udp *net.UDPConn, token Token, codec transport.PayloadCodec, reliableCapacity int) *clientConnection {
+func newClientConnection(tcp net.Conn, udp *net.UDPConn, token Token, codec transport.PayloadCodec, reliableCapacity int, metrics *networkCounters) *clientConnection {
 	if reliableCapacity <= 0 {
 		reliableCapacity = 128
 	}
@@ -37,6 +39,7 @@ func newClientConnection(tcp net.Conn, udp *net.UDPConn, token Token, codec tran
 		udp:        udp,
 		token:      token,
 		codec:      codec,
+		metrics:    metrics,
 		reliable:   make(chan protocol.Envelope, reliableCapacity),
 		realtime:   newRealtimeMailbox(),
 		done:       make(chan struct{}),
@@ -120,6 +123,8 @@ func (c *clientConnection) runReliableWriter() error {
 }
 
 func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
+	// WriteToUDP 在回傳後不再持有 packet bytes，因此每個 writer 可以安全重用自己的 MTU-sized buffer。
+	packetBuffer := make([]byte, 0, MaxDatagramSize)
 	for {
 		addr := c.realtimeAddr()
 		if addr == nil {
@@ -137,13 +142,17 @@ func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
 		if !ok {
 			return nil
 		}
-		packet, err := EncodeDatagram(c.token, envelope, c.codec)
+		started := time.Now()
+		packet, err := AppendEncodeDatagram(packetBuffer[:0], c.token, envelope, c.codec)
+		encodeDuration := time.Since(started)
 		if err != nil {
 			if onDrop != nil {
 				onDrop(err)
 			}
 			continue
 		}
+		packetBuffer = packet[:0]
+		c.metrics.recordRealtime(envelope.Message.Type(), len(packet), encodeDuration)
 		if _, err := c.udp.WriteToUDP(packet, addr); err != nil {
 			if onDrop != nil {
 				onDrop(err)

@@ -93,6 +93,7 @@ type Server struct {
 	nextSession atomic.Uint64
 	nextEntity  atomic.Uint64
 	errors      chan NetworkError
+	metrics     networkCounters
 	closeOnce   sync.Once
 }
 
@@ -253,7 +254,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 
-	connection := newClientConnection(raw, s.udp, token, s.codec, s.config.ReliableQueueCapacity)
+	connection := newClientConnection(raw, s.udp, token, s.codec, s.config.ReliableQueueCapacity, &s.metrics)
 	sess, err := session.New(sid, eid, spec.AOIRadius, connection)
 	if err != nil {
 		_ = raw.Close()

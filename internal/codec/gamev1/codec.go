@@ -1,4 +1,4 @@
-// Package gamev1 提供 Protocol v3 的混合 Payload Codec。
+// Package gamev1 提供 Protocol v6 使用的混合 Payload Codec。
 //
 // Reliable control message 仍委派給 jsonv1，方便 Godot Thin Client 開發；
 // Realtime movement / snapshot / correction 則使用固定欄位 binary，降低 payload 與 allocation。
@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	clientMovePayloadSize          = 8
-	worldSnapshotHeaderSize        = 14
-	worldSnapshotTransformSize     = 26
-	positionCorrectionPayloadSize  = 38
+	clientMovePayloadSize         = 8
+	worldSnapshotHeaderSize       = 14
+	worldSnapshotTransformSize    = 26
+	positionCorrectionPayloadSize = 38
 )
 
 var (
@@ -58,6 +58,40 @@ func (c Codec) Marshal(message protocol.Message) ([]byte, error) {
 	}
 }
 
+// AppendMarshal 讓 transport 可以直接把 realtime payload 寫進 reusable frame/datagram buffer。
+// wire layout 與 Marshal 完全一致；Reliable JSON fallback 仍保留既有 codec contract。
+func (c Codec) AppendMarshal(dst []byte, message protocol.Message) ([]byte, error) {
+	switch m := message.(type) {
+	case protocol.ClientMoveInput:
+		return appendMove(dst, m), nil
+	case *protocol.ClientMoveInput:
+		if m == nil {
+			return dst, ErrInvalidPayload
+		}
+		return appendMove(dst, *m), nil
+	case protocol.WorldSnapshot:
+		return appendSnapshot(dst, m)
+	case *protocol.WorldSnapshot:
+		if m == nil {
+			return dst, ErrInvalidPayload
+		}
+		return appendSnapshot(dst, *m)
+	case protocol.PositionCorrection:
+		return appendCorrection(dst, m), nil
+	case *protocol.PositionCorrection:
+		if m == nil {
+			return dst, ErrInvalidPayload
+		}
+		return appendCorrection(dst, *m), nil
+	default:
+		payload, err := c.json.Marshal(message)
+		if err != nil {
+			return dst, err
+		}
+		return append(dst, payload...), nil
+	}
+}
+
 func (c Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.Message, error) {
 	switch messageType {
 	case protocol.MessageClientMoveInput:
@@ -84,11 +118,35 @@ func marshalMove(message protocol.ClientMoveInput) []byte {
 	return out
 }
 
+func appendMove(dst []byte, message protocol.ClientMoveInput) []byte {
+	start := len(dst)
+	dst = growPayload(dst, clientMovePayloadSize)
+	out := dst[start:]
+	writeFloat32(out[0:4], message.DirectionX)
+	writeFloat32(out[4:8], message.DirectionZ)
+	return dst
+}
+
 func marshalSnapshot(message protocol.WorldSnapshot) ([]byte, error) {
 	if !message.ValidChunk() {
 		return nil, ErrInvalidSnapshotChunk
 	}
 	out := make([]byte, worldSnapshotHeaderSize+len(message.Entities)*worldSnapshotTransformSize)
+	writeSnapshot(out, message)
+	return out, nil
+}
+
+func appendSnapshot(dst []byte, message protocol.WorldSnapshot) ([]byte, error) {
+	if !message.ValidChunk() {
+		return dst, ErrInvalidSnapshotChunk
+	}
+	start := len(dst)
+	dst = growPayload(dst, worldSnapshotHeaderSize+len(message.Entities)*worldSnapshotTransformSize)
+	writeSnapshot(dst[start:], message)
+	return dst, nil
+}
+
+func writeSnapshot(out []byte, message protocol.WorldSnapshot) {
 	binary.BigEndian.PutUint64(out[0:8], message.Tick)
 	binary.BigEndian.PutUint16(out[8:10], message.ChunkIndex)
 	binary.BigEndian.PutUint16(out[10:12], message.ChunkCount)
@@ -104,7 +162,6 @@ func marshalSnapshot(message protocol.WorldSnapshot) ([]byte, error) {
 		binary.BigEndian.PutUint16(out[offset+24:offset+26], uint16(transform.Position.Layer))
 		offset += worldSnapshotTransformSize
 	}
-	return out, nil
 }
 
 func unmarshalSnapshot(data []byte) (protocol.Message, error) {
@@ -144,6 +201,18 @@ func unmarshalSnapshot(data []byte) (protocol.Message, error) {
 
 func marshalCorrection(message protocol.PositionCorrection) []byte {
 	out := make([]byte, positionCorrectionPayloadSize)
+	writeCorrection(out, message)
+	return out
+}
+
+func appendCorrection(dst []byte, message protocol.PositionCorrection) []byte {
+	start := len(dst)
+	dst = growPayload(dst, positionCorrectionPayloadSize)
+	writeCorrection(dst[start:], message)
+	return dst
+}
+
+func writeCorrection(out []byte, message protocol.PositionCorrection) {
 	binary.BigEndian.PutUint64(out[0:8], message.Tick)
 	binary.BigEndian.PutUint64(out[8:16], uint64(message.EntityID))
 	writeFloat32(out[16:20], message.Position.X)
@@ -152,7 +221,6 @@ func marshalCorrection(message protocol.PositionCorrection) []byte {
 	writeFloat32(out[28:32], message.Yaw)
 	binary.BigEndian.PutUint16(out[32:34], uint16(message.Position.Layer))
 	binary.BigEndian.PutUint32(out[34:38], message.LastProcessedInputSequence)
-	return out
 }
 
 func unmarshalCorrection(data []byte) (protocol.Message, error) {
@@ -171,6 +239,19 @@ func unmarshalCorrection(data []byte) (protocol.Message, error) {
 		Yaw:                        readFloat32(data[28:32]),
 		LastProcessedInputSequence: binary.BigEndian.Uint32(data[34:38]),
 	}, nil
+}
+
+func growPayload(dst []byte, count int) []byte {
+	if count <= 0 {
+		return dst
+	}
+	start := len(dst)
+	if count <= cap(dst)-start {
+		dst = dst[:start+count]
+		clear(dst[start:])
+		return dst
+	}
+	return append(dst, make([]byte, count)...)
 }
 
 func writeFloat32(target []byte, value float32) {
