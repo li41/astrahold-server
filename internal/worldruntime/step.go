@@ -72,8 +72,12 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.AOISharedCandidateReuses += queryStats.SharedCandidateReuses
 			report.Metrics.AOIPhysicalCandidateScans += queryStats.SharedCandidateScans
 
+			connection := s.Connection()
 			if measure { stageStart = time.Now() }
-			batch := r.replication.BuildFrame(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
+			var batch = r.replication.BuildFrame(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
+			if _, immediate := connection.(session.ImmediateRealtimeConnection); immediate {
+				batch = r.replication.BuildFrameBorrowed(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
+			}
 			if measure { report.Metrics.ReplicationBuildDuration += time.Since(stageStart) }
 			report.Metrics.OutboundMessages += len(batch.Messages)
 			report.Metrics.SnapshotCandidates += batch.Stats.SnapshotCandidates
@@ -87,7 +91,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			if measure { stageStart = time.Now() }
 			for _, out := range batch.Messages {
 				envelope := protocol.Envelope{Delivery:out.Delivery,Sequence:s.NextOutboundSequence(out.Delivery),ServerTick:tick,Message:out.Message}
-				if err := s.Connection().TrySend(envelope); err != nil {
+				if err := connection.TrySend(envelope); err != nil {
 					// Spawn / Despawn 是可重建的 Reliable lifecycle state。
 					// outbound queue 暫時滿只代表延後，不能把 lifecycle 標成已知或視為永久 delivery loss。
 					if isLifecycleMessage(out.Message) && errors.Is(err, session.ErrBackpressure) {
