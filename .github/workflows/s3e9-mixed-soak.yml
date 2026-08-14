@@ -62,7 +62,7 @@ jobs:
           sleep 1
 
           set +e
-          ASTRAHOLD_S3E9_MIXED_MOVEMENT=1 /tmp/astrahold-loadbot \
+          ASTRAHOLD_S3E9_MIXED_MOVEMENT=1 ASTRAHOLD_S3E9_MIXED_DYNAMIC_UPDATES=28 /tmp/astrahold-loadbot \
             -tcp 127.0.0.1:21777 \
             -clients 500 \
             -scenario teleport-churn \
@@ -85,10 +85,11 @@ jobs:
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
 
-          # 500 bots 全程走真實 TCP/UDP。Initial bootstrap dynamic 尚未完成時，teleport-churn input仍維持零方向；
-          # 第一個 objective WorldDynamicState fan-out 使 dynamic_states > ready，才語意啟動 250 個 interleaved movers。
+          # 500 bots 全程走真實 TCP/UDP。Bootstrap 500 筆 dynamic 完成前維持零方向；
+          # 第一個 objective delivery（501）語意啟動 movers；第 28 次 objective fan-out 全部完成
+          # 時累計正好 14,500 筆 dynamic，movement window 關閉並回到零方向，之後只等 semantic drain。
           jq -e '.ready_clients == 500 and .failed_connections == 0 and .decode_errors == 0 and .network_errors == 0 and .incomplete_snapshot_resets == 0 and .completed_snapshots > 0 and .moves_sent > 0' artifacts/mixed-bots.json >/dev/null
-          jq -e '.dynamic_states > 500' artifacts/mixed-bots.json >/dev/null
+          jq -e '.dynamic_states == 14500' artifacts/mixed-bots.json >/dev/null
 
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/mixed-server-convergence.json >/dev/null
 
