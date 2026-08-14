@@ -42,6 +42,8 @@ func main() {
 		respawnPolicyPath            = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
 		deathPenaltyPath             = flag.String("death-penalty", "config/death-penalty.json", "Server death penalty policy JSON path")
 		deathOutcomeOutboxCapacity   = flag.Int("death-outcome-outbox-capacity", 4096, "Process-local death outcome outbox capacity")
+		deathOutcomeJournalPath      = flag.String("death-outcome-journal", "data/death-outcomes.journal", "Durable append-only death outcome journal path")
+		deathOutcomeCheckpointPath   = flag.String("death-outcome-checkpoint", "data/death-outcomes.checkpoint.json", "Durable death outcome consumer checkpoint path")
 		postReviveProtectionSeconds = flag.Float64("post-revive-protection-seconds", 3.0, "Server-side damage protection after respawn/resurrection; 0 disables")
 	)
 	flag.Parse()
@@ -55,6 +57,26 @@ func main() {
 	deathOutbox, err := deathoutcome.NewOutbox(*deathOutcomeOutboxCapacity)
 	if err != nil {
 		log.Fatalf("build death outcome outbox: %v", err)
+	}
+	deathJournal, err := deathoutcome.OpenJournal(*deathOutcomeJournalPath)
+	if err != nil {
+		log.Fatalf("open death outcome journal %q: %v", *deathOutcomeJournalPath, err)
+	}
+	defer func() {
+		if err := deathJournal.Close(); err != nil {
+			log.Printf("close death outcome journal: %v", err)
+		}
+	}()
+	deathCheckpointStore, err := deathoutcome.NewCheckpointStore(*deathOutcomeCheckpointPath)
+	if err != nil {
+		log.Fatalf("build death outcome checkpoint store %q: %v", *deathOutcomeCheckpointPath, err)
+	}
+	deathCheckpoint, recoveredDeathOutcomes, err := recoverDeathOutcomeJournal(deathJournal, deathCheckpointStore, logDeathOutcomeJournalRecord)
+	if err != nil {
+		log.Fatalf("recover death outcome journal: %v", err)
+	}
+	if deathJournal.RepairedTail() {
+		log.Printf("death outcome journal repaired incomplete crash tail: path=%s last_record_id=%d", deathJournal.Path(), deathJournal.LastRecordID())
 	}
 
 	loadedWorld, err := gameplayworld.LoadFile(*worldPath)
@@ -133,10 +155,20 @@ func main() {
 	loopDone := make(chan error, 1)
 	go func() { loopDone <- loop.RunObserved(ctx, logStepReport) }()
 	go logNetworkErrors(ctx, server.Errors())
-	go logDeathOutcomes(ctx, deathOutbox)
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
-	log.Printf("death outcome outbox is process-local structured logging only; it is not durable persistence")
+	journalCtx, stopJournal := context.WithCancel(context.Background())
+	journalDone := make(chan error, 1)
+	go func() {
+		err := runDeathOutcomeJournal(journalCtx, deathOutbox, deathJournal, deathCheckpointStore, deathCheckpoint, logDeathOutcomeJournalRecord)
+		if err != nil {
+			log.Printf("death outcome journal worker stopped with error: %v", err)
+			stop()
+		}
+		journalDone <- err
+	}()
+
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("death outcome durability: journal=%s checkpoint=%s append_fsync=true checkpoint_atomic_rename=true", deathJournal.Path(), deathCheckpointStore.Path())
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	if err := server.Serve(ctx); err != nil {
 		stop()
@@ -144,6 +176,13 @@ func main() {
 	}
 	if err := <-loopDone; err != nil {
 		log.Printf("world loop stopped with error: %v", err)
+	}
+
+	// Stop the journal worker only after the world loop is done producing new outcomes.
+	// The worker then fsyncs any remaining outbox events and checkpoints all journal records before exit.
+	stopJournal()
+	if err := <-journalDone; err != nil {
+		log.Printf("death outcome journal shutdown error: %v", err)
 	}
 }
 
@@ -198,31 +237,4 @@ func logNetworkErrors(ctx context.Context, events <-chan tcpudp.NetworkError) {
 			log.Printf("network error: session=%d op=%s err=%v", event.SessionID, event.Operation, event.Err)
 		}
 	}
-}
-
-func logDeathOutcomes(ctx context.Context, outbox *deathoutcome.Outbox) {
-	ticker := time.NewTicker(deathOutcomeDrainEvery)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			for drainDeathOutcomeBatch(outbox) > 0 {
-			}
-			return
-		case <-ticker.C:
-			drainDeathOutcomeBatch(outbox)
-		}
-	}
-}
-
-func drainDeathOutcomeBatch(outbox *deathoutcome.Outbox) int {
-	events := outbox.Pending(deathOutcomeDrainBatch)
-	for _, event := range events {
-		log.Printf("death outcome: event_id=%d entity=%d defeat_revision=%d context=%s defeated_tick=%d respawn_scheduled=%t spawn_point=%s spawn_class=%s due_tick=%d respawn_policy_revision=%s penalty_policy_revision=%s penalty_applied=%t checkpoint_forfeited=%t", event.EventID, event.EntityID, event.DefeatRevision, event.Context, event.DefeatedTick, event.Respawn.Scheduled, event.Respawn.SpawnPointID, event.Respawn.SpawnClass, event.Respawn.DueTick, event.RespawnPolicyRevision, event.DeathPenaltyPolicyRevision, event.PenaltyTransactionApplied, event.CheckpointForfeited)
-		if err := outbox.Confirm(event.EventID); err != nil {
-			log.Printf("death outcome confirm error: event_id=%d err=%v", event.EventID, err)
-			break
-		}
-	}
-	return len(events)
 }
