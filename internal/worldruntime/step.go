@@ -1,9 +1,11 @@
 package worldruntime
 
 import (
+	"errors"
 	"time"
 
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
 )
 
 func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
@@ -75,8 +77,15 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			for _, out := range batch.Messages {
 				envelope := protocol.Envelope{Delivery:out.Delivery,Sequence:s.NextOutboundSequence(out.Delivery),ServerTick:tick,Message:out.Message}
 				if err := s.Connection().TrySend(envelope); err != nil {
+					// Spawn / Despawn 是可重建的 Reliable lifecycle state。
+					// outbound queue 暫時滿只代表延後，不能把 lifecycle 標成已知或視為永久 delivery loss。
+					if isLifecycleMessage(out.Message) && errors.Is(err, session.ErrBackpressure) {
+						continue
+					}
 					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID,Delivery:out.Delivery,MessageType:out.Message.Type(),Err:err})
+					continue
 				}
+				confirmLifecycleDelivery(r, s.ID, out.Message)
 			}
 			if measure { report.Metrics.DeliveryDuration += time.Since(stageStart) }
 		}
@@ -89,4 +98,22 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	report.Metrics.CommandQueueDepthAfter = r.queue.depth()
 	if measure { report.Metrics.TotalDuration = time.Since(totalStart) }
 	return report
+}
+
+func isLifecycleMessage(message protocol.Message) bool {
+	switch message.(type) {
+	case protocol.EntitySpawn, protocol.EntityDespawn:
+		return true
+	default:
+		return false
+	}
+}
+
+func confirmLifecycleDelivery(r *Runtime, sessionID session.ID, message protocol.Message) {
+	switch value := message.(type) {
+	case protocol.EntitySpawn:
+		r.replication.ConfirmSpawn(sessionID, value.EntityID)
+	case protocol.EntityDespawn:
+		r.replication.ConfirmDespawn(sessionID, value.EntityID)
+	}
 }
