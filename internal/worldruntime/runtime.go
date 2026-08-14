@@ -193,3 +193,9 @@ func (r *Runtime) EnqueueLeave(id session.ID) error { return r.queue.tryPush(lea
 func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.ClientMoveInput) error {
 	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
 }
+
+// EnqueueTeleport 將 server-authoritative teleport 排入 world owner command queue。
+// 它不新增 wire message；位置改變仍透過既有 PositionCorrection / lifecycle replication 對 Client 收斂。
+func (r *Runtime) EnqueueTeleport(entityID world.EntityID, position world.Position) error {
+	return r.queue.tryPush(teleportCommand{entityID: entityID, position: position})
+}
