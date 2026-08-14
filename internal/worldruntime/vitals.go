@@ -283,11 +283,19 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 		for sessionOrder := 0; sessionOrder < len(sessions); sessionOrder++ {
 			sessionIndex := (sessionStart + sessionOrder) % len(sessions)
 			s := sessions[sessionIndex]
-			if !r.replication.Knows(s.ID, entityID) {
+
+			// ConfirmSpawn 一定會先 queue Initial Vitals；成功送過任一 Vitals 後則會留下
+			// delivered revision。ConfirmDespawn 同步移除兩者，因此 pending ∪ delivered正好是
+			// Dirty Vitals需要的 known-relationship mirror。這裡直接讀 runtime mirror，避免每個
+			// relationship 再跨 replication Service做一次 Knows map lookup。
+			delivered := r.sessionVitalsRevision[s.ID]
+			deliveredRevision, hasDelivered := delivered[entityID]
+			pending := r.sessionVitalsPending[s.ID]
+			_, hasPending := pending[entityID]
+			if !hasDelivered && !hasPending {
 				continue
 			}
-			delivered := r.ensureSessionVitalsDelivered(s.ID)
-			if delivered[entityID] >= revision {
+			if hasDelivered && deliveredRevision >= revision {
 				continue
 			}
 			pendingAge := tick - progress.RevisionTick
@@ -313,8 +321,11 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			}
 			report.Metrics.DirtyVitalsSelected++
 			remaining--
+			if delivered == nil {
+				delivered = r.ensureSessionVitalsDelivered(s.ID)
+			}
 			delivered[entityID] = revision
-			if pending := r.sessionVitalsPending[s.ID]; pending != nil {
+			if hasPending {
 				delete(pending, entityID)
 				if len(pending) == 0 {
 					delete(r.sessionVitalsPending, s.ID)
