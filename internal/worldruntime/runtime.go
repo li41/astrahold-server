@@ -55,9 +55,9 @@ func DefaultConfig() Config {
 		MaxDespawnsPerSessionBuild:           64,
 		MaxLifecyclePerSessionBuild:          32,
 		MaxLifecycleMessagesPerSnapshot:      16000,
-		MaxChurnLifecycleMessagesPerSnapshot: 7000,
+		MaxChurnLifecycleMessagesPerSnapshot: 6000,
 		MaxInitialVitalsPerTick:              8000,
-		MaxChurnInitialVitalsPerTick:         3500,
+		MaxChurnInitialVitalsPerTick:         2500,
 	}
 }
 
@@ -182,13 +182,13 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config.MaxLifecycleMessagesPerSnapshot = 16000
 	}
 	if config.MaxChurnLifecycleMessagesPerSnapshot <= 0 {
-		config.MaxChurnLifecycleMessagesPerSnapshot = 7000
+		config.MaxChurnLifecycleMessagesPerSnapshot = 6000
 	}
 	if config.MaxInitialVitalsPerTick <= 0 {
 		config.MaxInitialVitalsPerTick = 8000
 	}
 	if config.MaxChurnInitialVitalsPerTick <= 0 {
-		config.MaxChurnInitialVitalsPerTick = 3500
+		config.MaxChurnInitialVitalsPerTick = 2500
 	}
 	characters, err := character.NewService(config.CharacterMaxHP)
 	if err != nil {
