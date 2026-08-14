@@ -170,6 +170,7 @@ type dirtyVitalsProgress struct {
 type Runtime struct {
 	world                     *simulation.World
 	sessions                  *session.Registry
+	characterIdentities       *characterIdentityRegistry
 	replication               *replication.Service
 	replicationFrameBuilder   *simulation.ReplicationFrameBuilder
 	replicationVisibleScratch []int
@@ -248,6 +249,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	r := &Runtime{
 		world:                   w,
 		sessions:                session.NewRegistry(),
+		characterIdentities:     newCharacterIdentityRegistry(),
 		replication:             replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder: simulation.NewReplicationFrameBuilder(),
 		characters:              characters,

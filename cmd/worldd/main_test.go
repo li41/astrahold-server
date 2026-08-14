@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
@@ -76,7 +77,7 @@ func TestIngestDeathOutcomeOutboxBatchPersistsBeforeConfirm(t *testing.T) {
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records=%#v err=%v", records, err)
 	}
-	if records[0].RecordID != 1 || records[0].Event.EventID == 0 || records[0].Event.EntityID != 1 {
+	if records[0].RecordID != 1 || records[0].Event.EventID == 0 || records[0].Event.EntityID != 1 || records[0].Event.CharacterID == "" {
 		t.Fatalf("record=%#v", records[0])
 	}
 }
@@ -208,6 +209,8 @@ func worlddDeathOutcomeEvent(entityID world.EntityID, defeatRevision uint64) dea
 	defeatedTick := uint64(100 + defeatRevision)
 	return deathoutcome.Event{
 		EntityID:                   entityID,
+		CharacterID:                characteridentity.ID("character:worldd-test"),
+		CharacterIdentityAssurance: characteridentity.AssuranceTrusted,
 		DefeatRevision:             defeatRevision,
 		Context:                    respawnpolicy.DeathContextPvE,
 		DefeatedTick:               defeatedTick,

@@ -20,6 +20,10 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: session.ErrInvalidSession})
 		return
 	}
+	if err := r.characterIdentities.validateSession(c.session); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err})
+		return
+	}
 	if _, ok := r.world.Entity(c.session.EntityID); !ok {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: ErrSessionEntityNotFound})
 		return
@@ -35,6 +39,7 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err})
 		return
 	}
+	r.characterIdentities.bindSession(c.session)
 	r.replication.Register(c.session.ID)
 }
 
@@ -58,6 +63,10 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: ErrJoinEntityMismatch})
 		return
 	}
+	if err := r.characterIdentities.validateSession(request.Session); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+		return
+	}
 	if err := r.world.Spawn(request.Entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
@@ -75,6 +84,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
+	r.characterIdentities.bindSession(request.Session)
 	r.replication.Register(request.Session.ID)
 }
 
@@ -93,6 +103,7 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 		r.respawnPolicy.Remove(s.EntityID)
 	}
 	r.characters.Remove(s.EntityID)
+	r.characterIdentities.removeEntity(s.EntityID)
 	r.world.Remove(s.EntityID)
 	_ = s.Connection().Close()
 }

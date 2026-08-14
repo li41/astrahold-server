@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -12,10 +13,12 @@ import (
 var ErrDeathRevisionOverflow = errors.New("worldruntime: death revision overflow")
 
 type deathOutcome struct {
-	EntityID     world.EntityID
-	Revision     uint64
-	Context      respawnpolicy.DeathContext
-	DefeatedTick uint64
+	EntityID                    world.EntityID
+	CharacterID                 characteridentity.ID
+	CharacterIdentityAssurance  characteridentity.Assurance
+	Revision                    uint64
+	Context                     respawnpolicy.DeathContext
+	DefeatedTick                uint64
 }
 
 type deathPenaltyOutcome struct {
@@ -34,13 +37,13 @@ func WithDeathOutcomeOutbox(outbox *deathoutcome.Outbox) Option {
 // recordPlayerDefeat 是 player alive -> defeated transition 的單一 outcome boundary。
 // ordering刻意固定為：
 //
-//  1. 產生單調 DefeatRevision；
+//  1. 產生單調 DefeatRevision 並快照目前 active CharacterID；
 //  2. 先讓 respawn policy 綁定本次 context/checkpoint/destination/due tick；
 //  3. 再 exactly-once 套用 death penalty；
 //  4. 最後把已成立的 immutable outcome enqueue 到 process-local outbox。
 //
 // 因此 checkpoint forfeiture 不會改寫「這次死亡」已綁定的 respawn 目的地；
-// outbox failure也不會 rollback已成立的 lethal / respawn / penalty truth。
+// outbox/identity failure也不會 rollback已成立的 lethal / respawn / penalty truth。
 func (r *Runtime) recordPlayerDefeat(entityID world.EntityID, tick uint64, context respawnpolicy.DeathContext, report *StepReport) {
 	outcome, err := r.beginDeathOutcome(entityID, tick, context, report)
 	if err != nil {
@@ -62,10 +65,15 @@ func (r *Runtime) beginDeathOutcome(entityID world.EntityID, tick uint64, contex
 	}
 	revision := current + 1
 	r.deathRevision[entityID] = revision
+	outcome := deathOutcome{EntityID: entityID, Revision: revision, Context: context, DefeatedTick: tick}
+	if binding, ok := r.characterIdentities.binding(entityID); ok {
+		outcome.CharacterID = binding.ID
+		outcome.CharacterIdentityAssurance = binding.Assurance
+	}
 	if report != nil {
 		report.Metrics.DeathOutcomesRecorded++
 	}
-	return deathOutcome{EntityID: entityID, Revision: revision, Context: context, DefeatedTick: tick}, nil
+	return outcome, nil
 }
 
 func (r *Runtime) applyDeathPenalty(outcome deathOutcome, report *StepReport) deathPenaltyOutcome {
@@ -103,12 +111,14 @@ func (r *Runtime) enqueueDeathOutcomeEvent(outcome deathOutcome, scheduled respa
 		return
 	}
 	event := deathoutcome.Event{
-		EntityID:                  outcome.EntityID,
-		DefeatRevision:            outcome.Revision,
-		Context:                   outcome.Context,
-		DefeatedTick:              outcome.DefeatedTick,
-		PenaltyTransactionApplied: penalty.TransactionApplied,
-		CheckpointForfeited:       penalty.CheckpointForfeited,
+		EntityID:                   outcome.EntityID,
+		CharacterID:                outcome.CharacterID,
+		CharacterIdentityAssurance: outcome.CharacterIdentityAssurance,
+		DefeatRevision:             outcome.Revision,
+		Context:                    outcome.Context,
+		DefeatedTick:               outcome.DefeatedTick,
+		PenaltyTransactionApplied:  penalty.TransactionApplied,
+		CheckpointForfeited:        penalty.CheckpointForfeited,
 	}
 	if r.respawnPolicy != nil {
 		event.RespawnPolicyRevision = r.respawnPolicy.Revision()

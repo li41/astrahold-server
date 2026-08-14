@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -239,6 +240,8 @@ func journalTestEvent(eventID, entityID, defeatRevision uint64) Event {
 	return Event{
 		EventID:                    eventID,
 		EntityID:                   world.EntityID(entityID),
+		CharacterID:                characteridentity.ID("character:journal-test"),
+		CharacterIdentityAssurance: characteridentity.AssuranceTrusted,
 		DefeatRevision:             defeatRevision,
 		Context:                    respawnpolicy.DeathContextPvE,
 		DefeatedTick:               defeatedTick,

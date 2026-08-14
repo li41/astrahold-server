@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -105,6 +106,12 @@ func TestOutboxValidatesOutcomeShape(t *testing.T) {
 	}
 	outbox, _ := NewOutbox(4)
 	invalid := testEvent(7, 1)
+	invalid.CharacterID = ""
+	invalid.CharacterIdentityAssurance = ""
+	if _, _, err := outbox.Enqueue(invalid); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatalf("identity err=%v", err)
+	}
+	invalid = testEvent(7, 1)
 	invalid.Respawn.Scheduled = false
 	if _, _, err := outbox.Enqueue(invalid); !errors.Is(err, ErrInvalidEvent) {
 		t.Fatalf("unscheduled binding err=%v", err)
@@ -119,6 +126,8 @@ func TestOutboxValidatesOutcomeShape(t *testing.T) {
 func testEvent(entityID world.EntityID, revision uint64) Event {
 	return Event{
 		EntityID:                   entityID,
+		CharacterID:                characteridentity.ID("character:test"),
+		CharacterIdentityAssurance: characteridentity.AssuranceTrusted,
 		DefeatRevision:             revision,
 		Context:                    respawnpolicy.DeathContextPvE,
 		DefeatedTick:               10,

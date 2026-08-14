@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/gateway"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -20,12 +21,13 @@ import (
 )
 
 var (
-	ErrNotOpen             = errors.New("tcpudp: server is not open")
-	ErrAlreadyOpen         = errors.New("tcpudp: server already open")
-	ErrInvalidPlayerSpec   = errors.New("tcpudp: invalid player bootstrap spec")
-	ErrInvalidWorldIdentity = errors.New("tcpudp: invalid world identity")
-	ErrTCPChannelMismatch  = errors.New("tcpudp: realtime message received on TCP")
-	ErrUDPChannelMismatch  = errors.New("tcpudp: reliable message received on UDP")
+	ErrNotOpen                  = errors.New("tcpudp: server is not open")
+	ErrAlreadyOpen              = errors.New("tcpudp: server already open")
+	ErrInvalidPlayerSpec        = errors.New("tcpudp: invalid player bootstrap spec")
+	ErrInvalidWorldIdentity     = errors.New("tcpudp: invalid world identity")
+	ErrInvalidCharacterIdentity = errors.New("tcpudp: invalid character identity")
+	ErrTCPChannelMismatch       = errors.New("tcpudp: realtime message received on TCP")
+	ErrUDPChannelMismatch       = errors.New("tcpudp: reliable message received on UDP")
 )
 
 type RuntimeSink interface {
@@ -44,23 +46,31 @@ type PlayerSpec struct {
 
 type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 
+// CharacterIdentityFactory is a trusted server integration seam. Implementations may
+// return AssuranceTrusted only after an upstream authenticated account/character resolver
+// has selected the character. The default development transport issues a fresh ephemeral
+// identity per connection and does not authenticate returning characters.
+type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentity.Binding, error)
+
 type Config struct {
-	TCPAddress            string
-	UDPAddress            string
-	TickRateHz            uint16
-	SnapshotRateHz        uint16
-	ReliableQueueCapacity int
-	PlayerFactory         PlayerFactory
-	WorldIdentity         protocol.WorldIdentity
+	TCPAddress               string
+	UDPAddress               string
+	TickRateHz               uint16
+	SnapshotRateHz           uint16
+	ReliableQueueCapacity    int
+	PlayerFactory            PlayerFactory
+	CharacterIdentityFactory CharacterIdentityFactory
+	WorldIdentity            protocol.WorldIdentity
 }
 
 func DefaultConfig() Config {
 	return Config{
-		TCPAddress:            "127.0.0.1:7777",
-		UDPAddress:            "127.0.0.1:7778",
-		TickRateHz:            20,
-		SnapshotRateHz:        10,
-		ReliableQueueCapacity: 128,
+		TCPAddress:               "127.0.0.1:7777",
+		UDPAddress:               "127.0.0.1:7778",
+		TickRateHz:               20,
+		SnapshotRateHz:           10,
+		ReliableQueueCapacity:    128,
+		CharacterIdentityFactory: defaultCharacterIdentityFactory,
 	}
 }
 
@@ -119,6 +129,9 @@ func NewServer(config Config, runtime RuntimeSink, codec transport.PayloadCodec)
 	if config.PlayerFactory == nil {
 		config.PlayerFactory = defaultPlayerFactory
 	}
+	if config.CharacterIdentityFactory == nil {
+		config.CharacterIdentityFactory = defaultCharacterIdentityFactory
+	}
 	return &Server{
 		config:  config,
 		runtime: runtime,
@@ -142,6 +155,10 @@ func defaultPlayerFactory(_ session.ID, entityID world.EntityID) PlayerSpec {
 		MaxStepHeight: 0.5,
 		AOIRadius:     64,
 	}
+}
+
+func defaultCharacterIdentityFactory(_ session.ID, _ world.EntityID) (characteridentity.Binding, error) {
+	return characteridentity.NewEphemeral()
 }
 
 func (s *Server) Open() error {
@@ -253,9 +270,20 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		_ = raw.Close()
 		return
 	}
+	identity, err := s.config.CharacterIdentityFactory(sid, eid)
+	if err != nil {
+		s.emit(sid, "character_identity_factory", err)
+		_ = raw.Close()
+		return
+	}
+	if !identity.Valid() {
+		s.emit(sid, "character_identity_factory", ErrInvalidCharacterIdentity)
+		_ = raw.Close()
+		return
+	}
 
 	connection := newClientConnection(raw, s.udp, token, s.codec, s.config.ReliableQueueCapacity, &s.metrics)
-	sess, err := session.New(sid, eid, spec.AOIRadius, connection)
+	sess, err := session.NewWithCharacterIdentity(sid, eid, identity, spec.AOIRadius, connection)
 	if err != nil {
 		_ = raw.Close()
 		return
