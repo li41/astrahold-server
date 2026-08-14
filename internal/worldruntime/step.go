@@ -69,15 +69,15 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				envelope := protocol.Envelope{Delivery:out.Delivery,Sequence:s.NextOutboundSequence(out.Delivery),ServerTick:tick,Message:out.Message}
 				if err := s.Connection().TrySend(envelope); err != nil {
 					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID,Delivery:out.Delivery,MessageType:out.Message.Type(),Err:err})
-					continue
-				}
-				if spawn, ok := out.Message.(protocol.EntitySpawn); ok {
-					r.sendEntityVitals(s, spawn.EntityID, tick, &report)
 				}
 			}
 			if measure { report.Metrics.DeliveryDuration += time.Since(stageStart) }
 		}
 	}
+
+	// Vitals 是 full Reliable state。若 outbound queue 暫時滿，只延後到下一 tick，
+	// 不把 backpressure 當成狀態遺失或不可恢復的 delivery error。
+	r.replicateEntityVitals(tick, &report)
 
 	report.Metrics.CommandQueueDepthAfter = r.queue.depth()
 	if measure { report.Metrics.TotalDuration = time.Since(totalStart) }
