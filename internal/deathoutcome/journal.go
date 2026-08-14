@@ -14,18 +14,22 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 const (
-	JournalSchemaVersion    uint16 = 1
-	checkpointSchemaVersion uint16 = 1
-	journalIDSize                  = 16
-	maxJournalPayload              = 1 << 20
+	legacyJournalSchemaVersion uint16 = 1
+	JournalSchemaVersion       uint16 = 2
+	checkpointSchemaVersion    uint16 = 1
+	journalIDSize                     = 16
+	maxJournalPayload                 = 1 << 20
 )
 
 var (
+	// journalMagic is the container/header version, not the record schema version.
+	// Keeping V1 here allows an S3-F.9 journal to continue receiving S3-F.10 v2 records.
 	journalMagic = []byte("ASTRAHOLD-DEATH-OUTCOME-JOURNAL-V1\n")
 	crcTable     = crc32.MakeTable(crc32.Castagnoli)
 )
@@ -76,6 +80,8 @@ type journalWireRecord struct {
 type journalWireEvent struct {
 	EventID                    uint64             `json:"event_id"`
 	EntityID                   world.EntityID     `json:"entity_id"`
+	CharacterID                string             `json:"character_id,omitempty"`
+	CharacterIdentityAssurance string             `json:"character_identity_assurance,omitempty"`
 	DefeatRevision             uint64             `json:"defeat_revision"`
 	Context                    string             `json:"context"`
 	DefeatedTick               uint64             `json:"defeated_tick"`
@@ -552,11 +558,17 @@ func decodeJournalRecord(payload []byte) (uint64, Event, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return 0, Event{}, fmt.Errorf("%w: trailing record data", ErrCorruptJournal)
 	}
-	if wire.SchemaVersion != JournalSchemaVersion || wire.RecordID == 0 {
+	if (wire.SchemaVersion != legacyJournalSchemaVersion && wire.SchemaVersion != JournalSchemaVersion) || wire.RecordID == 0 {
 		return 0, Event{}, fmt.Errorf("%w: invalid record header", ErrCorruptJournal)
 	}
 	event := wireToEvent(wire.Event)
-	if err := validateJournalEvent(event); err != nil {
+	var err error
+	if wire.SchemaVersion == legacyJournalSchemaVersion {
+		err = validateLegacyJournalEvent(event)
+	} else {
+		err = validateJournalEvent(event)
+	}
+	if err != nil {
 		return 0, Event{}, fmt.Errorf("%w: event: %v", ErrCorruptJournal, err)
 	}
 	return wire.RecordID, event, nil
@@ -570,27 +582,12 @@ func makeFrame(payload []byte) []byte {
 	return frame
 }
 
-func validateJournalEvent(event Event) error {
-	if event.EventID == 0 || event.EntityID == 0 || event.DefeatRevision == 0 || !validContext(event.Context) {
-		return ErrInvalidEvent
-	}
-	if event.CheckpointForfeited && !event.PenaltyTransactionApplied {
-		return fmt.Errorf("%w: checkpoint forfeiture requires applied penalty transaction", ErrInvalidEvent)
-	}
-	if event.Respawn.Scheduled {
-		if event.Respawn.SpawnPointID == "" || !validSpawnClass(event.Respawn.SpawnClass) || event.Respawn.DueTick <= event.DefeatedTick {
-			return fmt.Errorf("%w: invalid respawn binding", ErrInvalidEvent)
-		}
-	} else if event.Respawn.SpawnPointID != "" || event.Respawn.SpawnClass != "" || event.Respawn.Position != (world.Position{}) || event.Respawn.DueTick != 0 {
-		return fmt.Errorf("%w: unscheduled respawn must not carry binding fields", ErrInvalidEvent)
-	}
-	return nil
-}
-
 func eventToWire(event Event) journalWireEvent {
 	return journalWireEvent{
 		EventID:                    event.EventID,
 		EntityID:                   event.EntityID,
+		CharacterID:                string(event.CharacterID),
+		CharacterIdentityAssurance: string(event.CharacterIdentityAssurance),
 		DefeatRevision:             event.DefeatRevision,
 		Context:                    string(event.Context),
 		DefeatedTick:               event.DefeatedTick,
@@ -615,6 +612,8 @@ func wireToEvent(wire journalWireEvent) Event {
 	return Event{
 		EventID:                    wire.EventID,
 		EntityID:                   wire.EntityID,
+		CharacterID:                characteridentity.ID(wire.CharacterID),
+		CharacterIdentityAssurance: characteridentity.Assurance(wire.CharacterIdentityAssurance),
 		DefeatRevision:             wire.DefeatRevision,
 		Context:                    deathContextFromString(wire.Context),
 		DefeatedTick:               wire.DefeatedTick,
