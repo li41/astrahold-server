@@ -2,15 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/world"
+	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
 const worlddCharacterStateSHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+var worlddCharacterWorld = protocol.WorldIdentity{
+	WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: worlddCharacterStateSHA,
+}
 
 func TestPersistCharacterStateOutboxBatchSavesBeforeConfirm(t *testing.T) {
 	store, err := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
@@ -63,6 +70,73 @@ func TestPersistCharacterStateSequentialIntentsAdvanceRevision(t *testing.T) {
 	}
 }
 
+func TestLoadRestoreFlushesPendingLeaveBeforeRead(t *testing.T) {
+	store, _ := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
+	outbox, _ := characterstate.NewOutbox(4)
+	identity := worlddTrustedIdentity(t, "character:reconnect")
+	first := worlddCharacterSnapshot(900)
+	if _, err := store.Save(identity, 0, first); err != nil {
+		t.Fatal(err)
+	}
+	latest := worlddCharacterSnapshot(650)
+	latest.Position = world.Position{X: 33, Z: -11, Layer: 2}
+	if _, err := outbox.Enqueue(identity, latest); err != nil {
+		t.Fatal(err)
+	}
+	persistence := newCharacterStatePersistence(outbox, store, worlddCharacterWorld)
+	restore, ok, err := persistence.LoadRestore(identity)
+	if err != nil || !ok {
+		t.Fatalf("restore=%#v ok=%v err=%v", restore, ok, err)
+	}
+	if outbox.Depth() != 0 || restore.Revision != 2 || restore.HP != 650 || restore.Transform.Position != latest.Position {
+		t.Fatalf("restore=%#v depth=%d", restore, outbox.Depth())
+	}
+	loaded, exists, err := store.Load(identity)
+	if err != nil || !exists || loaded.Revision != 2 || loaded.Snapshot != latest {
+		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
+	}
+}
+
+func TestLoadRestoreRejectsWorldMismatch(t *testing.T) {
+	store, _ := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
+	outbox, _ := characterstate.NewOutbox(2)
+	identity := worlddTrustedIdentity(t, "character:world-mismatch")
+	snapshot := worlddCharacterSnapshot(800)
+	snapshot.World.Revision = "old-world"
+	if _, err := store.Save(identity, 0, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	persistence := newCharacterStatePersistence(outbox, store, worlddCharacterWorld)
+	if _, ok, err := persistence.LoadRestore(identity); ok || !errors.Is(err, worldruntime.ErrCharacterRestoreWorldMismatch) {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestLoadRestoreRejectsDefeatedRecord(t *testing.T) {
+	store, _ := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
+	outbox, _ := characterstate.NewOutbox(2)
+	identity := worlddTrustedIdentity(t, "character:defeated")
+	snapshot := worlddCharacterSnapshot(0)
+	snapshot.Defeated = true
+	if _, err := store.Save(identity, 0, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	persistence := newCharacterStatePersistence(outbox, store, worlddCharacterWorld)
+	if _, ok, err := persistence.LoadRestore(identity); ok || !errors.Is(err, worldruntime.ErrCharacterRestoreDefeatedUnsupported) {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestLoadRestoreMissingRecordUsesFreshBootstrap(t *testing.T) {
+	store, _ := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
+	outbox, _ := characterstate.NewOutbox(2)
+	persistence := newCharacterStatePersistence(outbox, store, worlddCharacterWorld)
+	identity := worlddTrustedIdentity(t, "character:new")
+	if restore, ok, err := persistence.LoadRestore(identity); err != nil || ok || restore != (worldruntime.CharacterRestore{}) {
+		t.Fatalf("restore=%#v ok=%v err=%v", restore, ok, err)
+	}
+}
+
 func TestRunCharacterStateStoreShutdownDrainsPending(t *testing.T) {
 	store, err := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
 	if err != nil {
@@ -73,9 +147,10 @@ func TestRunCharacterStateStoreShutdownDrainsPending(t *testing.T) {
 	if _, err := outbox.Enqueue(identity, worlddCharacterSnapshot(800)); err != nil {
 		t.Fatal(err)
 	}
+	persistence := newCharacterStatePersistence(outbox, store, worlddCharacterWorld)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := runCharacterStateStore(ctx, outbox, store); err != nil {
+	if err := runCharacterStateStore(ctx, persistence); err != nil {
 		t.Fatal(err)
 	}
 	if outbox.Depth() != 0 {
@@ -99,7 +174,7 @@ func worlddTrustedIdentity(t *testing.T, id string) characteridentity.Binding {
 func worlddCharacterSnapshot(hp uint32) characterstate.Snapshot {
 	return characterstate.Snapshot{
 		World: characterstate.WorldRef{
-			WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: worlddCharacterStateSHA,
+			WorldID: worlddCharacterWorld.WorldID, Revision: worlddCharacterWorld.Revision, GameplaySHA256: worlddCharacterWorld.GameplaySHA256,
 		},
 		HP: hp, MaxHP: 1000,
 		Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1},
