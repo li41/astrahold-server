@@ -22,6 +22,6 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sessionID,Err:err})
 		return false
 	}
-	r.broadcastEntityVitals(targetID, tick, report)
+	r.markEntityVitalsDirty(targetID)
 	return true
 }
