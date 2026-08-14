@@ -41,7 +41,7 @@ func DefaultConfig() Config {
 		CharacterMaxHP:             1000,
 		AOIOptions:                 spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
 		ReplicationPolicy:          replication.DefaultPolicy(),
-		MaxSpawnsPerSessionBuild:   64,
+		MaxSpawnsPerSessionBuild:   32,
 		MaxDespawnsPerSessionBuild: 64,
 	}
 }
@@ -146,7 +146,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config.CharacterMaxHP = 1000
 	}
 	if config.MaxSpawnsPerSessionBuild <= 0 {
-		config.MaxSpawnsPerSessionBuild = 64
+		config.MaxSpawnsPerSessionBuild = 32
 	}
 	if config.MaxDespawnsPerSessionBuild <= 0 {
 		config.MaxDespawnsPerSessionBuild = 64
