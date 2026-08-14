@@ -30,6 +30,13 @@ type slowTickRecord struct {
 	SnapshotCandidates         int     `json:"snapshot_candidates"`
 	SnapshotTransforms         int     `json:"snapshot_transforms"`
 	SnapshotDeferred           int     `json:"snapshot_deferred"`
+	SpawnCandidates            int     `json:"spawn_candidates"`
+	SpawnSelected              int     `json:"spawn_selected"`
+	SpawnDeferred              int     `json:"spawn_deferred"`
+	DespawnCandidates          int     `json:"despawn_candidates"`
+	DespawnSelected            int     `json:"despawn_selected"`
+	DespawnDeferred            int     `json:"despawn_deferred"`
+	LifecycleBackpressureStops int     `json:"lifecycle_backpressure_stops"`
 }
 
 type slowTickReport struct {
@@ -63,24 +70,31 @@ func (c *slowTickCollector) Record(report worldruntime.StepReport) {
 	}
 	m := report.Metrics
 	record := slowTickRecord{
-		Tick:                    report.Tick,
-		TotalMS:                 durationMS(m.TotalDuration),
-		CommandMS:               durationMS(m.CommandDuration),
-		SimulationMS:            durationMS(m.SimulationDuration),
-		DynamicReplicationMS:    durationMS(m.DynamicReplicationDuration),
-		ReplicationFrameBuildMS: durationMS(m.ReplicationFrameBuildDuration),
-		AOIMS:                   durationMS(m.AOIDuration),
-		ReplicationBuildMS:      durationMS(m.ReplicationBuildDuration),
-		DeliveryMS:              durationMS(m.DeliveryDuration),
-		VitalsReplicationMS:     durationMS(m.VitalsReplicationDuration),
-		QueueDepthBefore:        m.CommandQueueDepthBefore,
-		QueueDepthAfter:         m.CommandQueueDepthAfter,
-		CommandsDrained:         m.CommandsDrained,
-		SessionsReplicated:      m.SessionsReplicated,
-		OutboundMessages:        m.OutboundMessages,
-		SnapshotCandidates:      m.SnapshotCandidates,
-		SnapshotTransforms:      m.SnapshotTransforms,
-		SnapshotDeferred:        m.SnapshotDeferred,
+		Tick:                       report.Tick,
+		TotalMS:                    durationMS(m.TotalDuration),
+		CommandMS:                  durationMS(m.CommandDuration),
+		SimulationMS:               durationMS(m.SimulationDuration),
+		DynamicReplicationMS:       durationMS(m.DynamicReplicationDuration),
+		ReplicationFrameBuildMS:    durationMS(m.ReplicationFrameBuildDuration),
+		AOIMS:                      durationMS(m.AOIDuration),
+		ReplicationBuildMS:         durationMS(m.ReplicationBuildDuration),
+		DeliveryMS:                 durationMS(m.DeliveryDuration),
+		VitalsReplicationMS:        durationMS(m.VitalsReplicationDuration),
+		QueueDepthBefore:           m.CommandQueueDepthBefore,
+		QueueDepthAfter:            m.CommandQueueDepthAfter,
+		CommandsDrained:            m.CommandsDrained,
+		SessionsReplicated:         m.SessionsReplicated,
+		OutboundMessages:           m.OutboundMessages,
+		SnapshotCandidates:         m.SnapshotCandidates,
+		SnapshotTransforms:         m.SnapshotTransforms,
+		SnapshotDeferred:           m.SnapshotDeferred,
+		SpawnCandidates:            m.SpawnCandidates,
+		SpawnSelected:              m.SpawnSelected,
+		SpawnDeferred:              m.SpawnDeferred,
+		DespawnCandidates:          m.DespawnCandidates,
+		DespawnSelected:            m.DespawnSelected,
+		DespawnDeferred:            m.DespawnDeferred,
+		LifecycleBackpressureStops: m.LifecycleBackpressureStops,
 	}
 
 	if len(c.ticks) < c.limit {
