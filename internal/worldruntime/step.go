@@ -63,6 +63,13 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
 			if measure { report.Metrics.ReplicationBuildDuration += time.Since(stageStart) }
 			report.Metrics.OutboundMessages += len(batch.Messages)
+			report.Metrics.SnapshotCandidates += batch.Stats.SnapshotCandidates
+			report.Metrics.SnapshotTransforms += batch.Stats.SnapshotSelected
+			report.Metrics.SnapshotDeferred += batch.Stats.SnapshotDeferred
+			report.Metrics.SnapshotForcedRefreshes += batch.Stats.ForcedRefreshCandidates
+			report.Metrics.SnapshotNearTransforms += batch.Stats.NearSelected
+			report.Metrics.SnapshotMidTransforms += batch.Stats.MidSelected
+			report.Metrics.SnapshotFarTransforms += batch.Stats.FarSelected
 
 			if measure { stageStart = time.Now() }
 			for _, out := range batch.Messages {
