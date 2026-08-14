@@ -62,10 +62,10 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			}
-			// Respawn policy只屬於 player lifecycle。Death context由 authoritative actor/target kind推導，
-			// Client不提供 PvE/PvP/Siege分類，也不能指定對應目的地或 delay。
+			// Player death outcome統一在這個 owner-phase boundary產生 DefeatRevision，先綁定
+			// S3-F.4 respawn destination，再 exactly-once 套用 S3-F.7 death penalty。
 			if target.Kind == world.EntityPlayer {
-				r.scheduleRespawnForDefeat(targetID, tick, classifyDeathContext(actor, target), report)
+				r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report)
 			}
 		}
 		r.markEntityVitalsDirty(targetID)
