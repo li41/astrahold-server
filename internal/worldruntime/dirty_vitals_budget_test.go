@@ -88,8 +88,15 @@ func TestDirtyVitalsBudgetMakesRoundRobinProgressAcrossEntities(t *testing.T) {
 	if len(rt.dirtyVitalsEntities) != 0 {
 		t.Fatalf("dirty entities remain=%v", rt.dirtyVitalsEntities)
 	}
+
+	// 最後一個 tick 可能恰好把 budget 用到0；nextEntity 是 lazy cursor，下一個空 tick 清掉。
+	cleanup := StepReport{}
+	rt.replicateEntityVitals(5, &cleanup)
+	if cleanup.Metrics.DirtyVitalsSelected != 0 {
+		t.Fatalf("cleanup tick resent dirty vitals=%d", cleanup.Metrics.DirtyVitalsSelected)
+	}
 	if rt.dirtyVitalsNextEntity != 0 {
-		t.Fatalf("dirty next entity=%d want=0", rt.dirtyVitalsNextEntity)
+		t.Fatalf("dirty next entity=%d want=0 after cleanup tick", rt.dirtyVitalsNextEntity)
 	}
 
 	for i, connection := range connections {
