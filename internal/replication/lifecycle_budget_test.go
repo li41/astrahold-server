@@ -89,13 +89,60 @@ func TestLifecycleDespawnBudgetMakesBoundedProgress(t *testing.T) {
 	}
 }
 
+func TestLifecycleCombinedBudgetPrioritizesDepartedBeforeUnknown(t *testing.T) {
+	svc := NewService()
+	sid := session.ID(33)
+	svc.Register(sid)
+	initial := []world.EntityState{
+		{ID: 1, Kind: world.EntityPlayer},
+		{ID: 2, Kind: world.EntityPlayer},
+		{ID: 3, Kind: world.EntityPlayer},
+		{ID: 4, Kind: world.EntityPlayer},
+	}
+	primeKnown(svc, sid, 1, initial)
+
+	frame, visible := lifecycleFrameIDs(30, []world.EntityID{1, 2, 5, 6})
+	limits := LifecycleLimits{MaxSpawns: 2, MaxDespawns: 2, MaxMessages: 2}
+	first := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
+	if got := lifecycleIDs(first, false); !equalIDs(got, []world.EntityID{3, 4}) {
+		t.Fatalf("first churn despawns=%v want=[3 4]", got)
+	}
+	if got := lifecycleIDs(first, true); len(got) != 0 {
+		t.Fatalf("combined budget should be consumed by stale despawns first, spawns=%v", got)
+	}
+	if first.Stats.DespawnSelected != 2 || first.Stats.SpawnSelected != 0 || first.Stats.SpawnDeferred != 1 {
+		t.Fatalf("first churn stats=%+v", first.Stats)
+	}
+	for _, id := range []world.EntityID{3, 4} {
+		svc.ConfirmDespawn(sid, id)
+	}
+
+	second := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
+	if got := lifecycleIDs(second, false); len(got) != 0 {
+		t.Fatalf("despawns repeated after confirmation: %v", got)
+	}
+	if got := lifecycleIDs(second, true); !equalIDs(got, []world.EntityID{5, 6}) {
+		t.Fatalf("second churn spawns=%v want=[5 6]", got)
+	}
+	if second.Stats.SpawnSelected != 2 {
+		t.Fatalf("second churn stats=%+v", second.Stats)
+	}
+}
+
 func lifecycleFrame(tick uint64, count int) (*simulation.ReplicationFrame, []int) {
-	entities := make([]world.EntityState, count)
-	generations := make([]uint64, count)
-	indexByID := make(map[world.EntityID]int, count)
-	visible := make([]int, count)
-	for i := range entities {
-		id := world.EntityID(i + 1)
+	ids := make([]world.EntityID, count)
+	for i := range ids {
+		ids[i] = world.EntityID(i + 1)
+	}
+	return lifecycleFrameIDs(tick, ids)
+}
+
+func lifecycleFrameIDs(tick uint64, ids []world.EntityID) (*simulation.ReplicationFrame, []int) {
+	entities := make([]world.EntityState, len(ids))
+	generations := make([]uint64, len(ids))
+	indexByID := make(map[world.EntityID]int, len(ids))
+	visible := make([]int, len(ids))
+	for i, id := range ids {
 		entities[i] = world.EntityState{ID: id, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: float32(i)}}}
 		generations[i] = 1
 		indexByID[id] = i
