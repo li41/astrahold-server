@@ -47,21 +47,35 @@ func ParseToken(value string) (Token, error) {
 }
 
 func EncodeDatagram(token Token, envelope protocol.Envelope, codec transport.PayloadCodec) ([]byte, error) {
-	frame, err := transport.EncodeEnvelope(envelope, codec)
+	return AppendEncodeDatagram(make([]byte, 0, MaxDatagramSize), token, envelope, codec)
+}
+
+// AppendEncodeDatagram 直接把 ASTU header + ASTR frame + payload 寫入 dst。
+// realtime writer 以每連線 reusable 1200-byte buffer 呼叫，避免每個 datagram 配置 payload/frame/datagram 三份 slice。
+func AppendEncodeDatagram(dst []byte, token Token, envelope protocol.Envelope, codec transport.PayloadCodec) ([]byte, error) {
+	start := len(dst)
+	if DatagramHeaderSize <= cap(dst)-start {
+		dst = dst[:start+DatagramHeaderSize]
+		clear(dst[start:])
+	} else {
+		dst = append(dst, make([]byte, DatagramHeaderSize)...)
+	}
+
+	var err error
+	dst, err = transport.AppendEncodeEnvelope(dst, envelope, codec)
 	if err != nil {
-		return nil, err
+		return dst[:start], err
 	}
-	total := DatagramHeaderSize + len(frame)
-	if total > MaxDatagramSize {
-		return nil, ErrDatagramTooLarge
+	if len(dst)-start > MaxDatagramSize {
+		return dst[:start], ErrDatagramTooLarge
 	}
-	out := make([]byte, total)
-	binary.BigEndian.PutUint32(out[0:4], DatagramMagic)
-	binary.BigEndian.PutUint16(out[4:6], protocol.Version)
-	binary.BigEndian.PutUint16(out[6:8], DatagramHeaderSize)
-	copy(out[8:24], token[:])
-	copy(out[24:], frame)
-	return out, nil
+
+	header := dst[start : start+DatagramHeaderSize]
+	binary.BigEndian.PutUint32(header[0:4], DatagramMagic)
+	binary.BigEndian.PutUint16(header[4:6], protocol.Version)
+	binary.BigEndian.PutUint16(header[6:8], DatagramHeaderSize)
+	copy(header[8:24], token[:])
+	return dst, nil
 }
 
 func DecodeDatagram(data []byte, codec transport.PayloadCodec) (Token, protocol.Envelope, error) {
