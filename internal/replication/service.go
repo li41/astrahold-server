@@ -6,6 +6,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -36,23 +37,25 @@ type sentTransform struct {
 }
 
 type snapshotCandidate struct {
-	entity  world.EntityState
-	tier    Tier
-	age     uint64
-	cadence uint64
-	dirty   bool
+	entity     world.EntityState
+	generation uint64
+	tier       Tier
+	age        uint64
+	cadence    uint64
+	dirty      bool
 }
 
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
 	// AOI 可見但 Spawn backpressure 的 Entity 不可提前標成 known，否則 Client 會永久漏 Spawn。
-	known         map[world.EntityID]struct{}
-	desired       map[world.EntityID]struct{}
-	departed      []world.EntityID
-	lastSnapshot  map[world.EntityID]sentTransform
-	lastSentBuild map[world.EntityID]uint64
-	candidates    []snapshotCandidate
-	buildNumber   uint64
+	known                   map[world.EntityID]struct{}
+	desired                 map[world.EntityID]struct{}
+	departed                []world.EntityID
+	lastSnapshot            map[world.EntityID]sentTransform // legacy Build compatibility only
+	lastDeliveredGeneration map[world.EntityID]uint64
+	lastSentBuild           map[world.EntityID]uint64
+	candidates              []snapshotCandidate
+	buildNumber             uint64
 }
 
 type Service struct {
@@ -73,10 +76,11 @@ func NewService(policies ...Policy) *Service {
 
 func newViewState() *viewState {
 	return &viewState{
-		known:         make(map[world.EntityID]struct{}),
-		desired:       make(map[world.EntityID]struct{}),
-		lastSnapshot:  make(map[world.EntityID]sentTransform),
-		lastSentBuild: make(map[world.EntityID]uint64),
+		known:                   make(map[world.EntityID]struct{}),
+		desired:                 make(map[world.EntityID]struct{}),
+		lastSnapshot:            make(map[world.EntityID]sentTransform),
+		lastDeliveredGeneration: make(map[world.EntityID]uint64),
+		lastSentBuild:           make(map[world.EntityID]uint64),
 	}
 }
 
@@ -119,39 +123,74 @@ func (s *Service) ConfirmDespawn(sessionID session.ID, entityID world.EntityID) 
 	}
 	delete(state.known, entityID)
 	delete(state.lastSnapshot, entityID)
+	delete(state.lastDeliveredGeneration, entityID)
 	delete(state.lastSentBuild, entityID)
 }
 
+// Build 保留給既有單元測試與非 frame caller；production Runtime 使用 BuildFrame。
+// compatibility path 仍可從 lastSnapshot 推導 generation，但不位於 S3-E.2 hot path。
 func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, tick uint64, visible []world.EntityState) Batch {
-	state := s.views[sessionID]
-	if state == nil {
-		state = newViewState()
-		s.views[sessionID] = state
-	}
-	state.buildNumber++
-
+	state := s.ensureView(sessionID)
 	ordered := visible
 	if !sort.SliceIsSorted(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID }) {
 		ordered = append([]world.EntityState(nil), visible...)
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	}
+	frame := simulation.ReplicationFrame{
+		Tick:                 tick,
+		Entities:             ordered,
+		TransformGenerations: make([]uint64, len(ordered)),
+		IndexByID:            make(map[world.EntityID]int, len(ordered)),
+	}
+	visibleIndices := make([]int, len(ordered))
+	for i := range ordered {
+		e := ordered[i]
+		visibleIndices[i] = i
+		frame.IndexByID[e.ID] = i
+		generation := state.lastDeliveredGeneration[e.ID]
+		previous, hasPrevious := state.lastSnapshot[e.ID]
+		if !hasPrevious || previous.Position != e.Transform.Position || previous.Yaw != e.Transform.Yaw {
+			generation++
+			if generation == 0 {
+				generation = 1
+			}
+		}
+		frame.TransformGenerations[i] = generation
+	}
+	return s.buildFrame(state, sessionID, selfID, lastProcessedInput, &frame, visibleIndices)
+}
 
+// BuildFrame 使用 shared immutable frame 與 AOI index view。
+// production path 的 dirty 判斷只比較 generation，不重複比較 Position / Yaw。
+func (s *Service) BuildFrame(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
+	state := s.ensureView(sessionID)
+	return s.buildFrame(state, sessionID, selfID, lastProcessedInput, frame, visibleIndices)
+}
+
+func (s *Service) ensureView(sessionID session.ID) *viewState {
+	state := s.views[sessionID]
+	if state == nil {
+		state = newViewState()
+		s.views[sessionID] = state
+	}
+	return state
+}
+
+func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
+	state.buildNumber++
+	tick := frame.Tick
+
+	self, _, hasSelf := frame.Entity(selfID)
 	var selfTransform protocol.EntityTransform
 	var selfPosition world.Position
-	hasSelf := false
-	for i := range ordered {
-		if ordered[i].ID != selfID {
-			continue
-		}
-		selfPosition = ordered[i].Transform.Position
+	if hasSelf {
+		selfPosition = self.Transform.Position
 		selfTransform = protocol.EntityTransform{
-			EntityID: ordered[i].ID,
+			EntityID: self.ID,
 			Tick:     tick,
-			Position: ordered[i].Transform.Position,
-			Yaw:      ordered[i].Transform.Yaw,
+			Position: self.Transform.Position,
+			Yaw:      self.Transform.Yaw,
 		}
-		hasSelf = true
-		break
 	}
 
 	clear(state.desired)
@@ -159,8 +198,12 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 	messageCapacity := 4 + (s.policy.MaxTransformsPerBuild+protocol.MaxSnapshotEntitiesPerChunk-1)/protocol.MaxSnapshotEntitiesPerChunk
 	batch := Batch{Messages: make([]Outbound, 0, messageCapacity)}
 
-	for i := range ordered {
-		e := ordered[i]
+	for _, index := range visibleIndices {
+		if index < 0 || index >= len(frame.Entities) {
+			continue
+		}
+		e := frame.Entities[index]
+		generation := frame.TransformGenerations[index]
 		state.desired[e.ID] = struct{}{}
 		tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		if _, ok := state.known[e.ID]; !ok {
@@ -180,16 +223,16 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		if hasSelf {
 			tier = s.policy.tier(selfPosition, e.Transform.Position)
 		}
-		previous, hasPrevious := state.lastSnapshot[e.ID]
-		dirty := !hasPrevious || previous.Position != e.Transform.Position || previous.Yaw != e.Transform.Yaw
+		lastGeneration, hasDelivered := state.lastDeliveredGeneration[e.ID]
+		dirty := !hasDelivered || lastGeneration != generation
 		if dirty {
 			batch.Stats.DirtyVisible++
 		}
 		lastBuild := state.lastSentBuild[e.ID]
 		age := state.buildNumber - lastBuild
 		cadence := s.policy.cadence(tier)
-		forced := hasPrevious && age >= s.policy.refresh(tier)
-		dueDirty := dirty && (!hasPrevious || age >= cadence)
+		forced := hasDelivered && age >= s.policy.refresh(tier)
+		dueDirty := dirty && (!hasDelivered || age >= cadence)
 		if !dueDirty && !forced {
 			continue
 		}
@@ -197,11 +240,12 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 			batch.Stats.ForcedRefreshCandidates++
 		}
 		state.candidates = append(state.candidates, snapshotCandidate{
-			entity:  e,
-			tier:    tier,
-			age:     age,
-			cadence: cadence,
-			dirty:   dirty,
+			entity:     e,
+			generation: generation,
+			tier:       tier,
+			age:        age,
+			cadence:    cadence,
+			dirty:      dirty,
 		})
 	}
 
@@ -225,7 +269,7 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		sort.Slice(state.candidates, func(i, j int) bool {
 			a, b := state.candidates[i], state.candidates[j]
 			// age/cadence 越大代表相對於自己的 LOD cadence 越 overdue。
-			// 只有真的超過 budget 時才付 ranking 成本；normal path 保留 AOI 的 EntityID 穩定順序。
+			// 只有真的超過 budget 時才付 ranking 成本；normal path 保留 frame EntityID 穩定順序。
 			left := a.age * b.cadence
 			right := b.age * a.cadence
 			if left != right {
@@ -256,6 +300,7 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		e := candidate.entity
 		transforms[i] = protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		state.lastSnapshot[e.ID] = sentTransform{Position: e.Transform.Position, Yaw: e.Transform.Yaw}
+		state.lastDeliveredGeneration[e.ID] = candidate.generation
 		state.lastSentBuild[e.ID] = state.buildNumber
 		switch candidate.tier {
 		case TierNear:
