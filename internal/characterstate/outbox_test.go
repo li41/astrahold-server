@@ -3,6 +3,8 @@ package characterstate
 import (
 	"errors"
 	"testing"
+
+	"github.com/li41/astrahold-server/internal/characteridentity"
 )
 
 func TestSaveOutboxPendingIsNonDestructiveAndConfirmOrdered(t *testing.T) {
