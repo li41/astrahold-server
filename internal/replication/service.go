@@ -2,6 +2,7 @@
 package replication
 
 import (
+	"container/heap"
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -53,6 +54,26 @@ type snapshotCandidate struct {
 	dirty      bool
 }
 
+// snapshotCandidateHeap 把「目前 top-K 中最差的 candidate」放在 root。
+// 新 candidate 只要優先序高於 root 就取代它，因此不必對整份 AOI candidates 做 full sort。
+type snapshotCandidateHeap []snapshotCandidate
+
+func (h snapshotCandidateHeap) Len() int { return len(h) }
+func (h snapshotCandidateHeap) Less(i, j int) bool {
+	return candidateHigherPriority(h[j], h[i])
+}
+func (h snapshotCandidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *snapshotCandidateHeap) Push(value any) {
+	*h = append(*h, value.(snapshotCandidate))
+}
+func (h *snapshotCandidateHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
+}
+
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
 	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity 查 map。
@@ -63,13 +84,15 @@ type viewState struct {
 	desiredIDs []world.EntityID
 	tracks     []entityTrack
 
-	departed   []world.EntityID
-	lastSnapshot map[world.EntityID]sentTransform // legacy Build compatibility only
-	lastDeliveredGeneration map[world.EntityID]uint64 // legacy Build compatibility only
-	lastSentBuild map[world.EntityID]uint64 // legacy Build compatibility only
-	candidates []snapshotCandidate
-	messages   []Outbound
-	buildNumber uint64
+	departed                   []world.EntityID
+	lastSnapshot               map[world.EntityID]sentTransform // legacy Build compatibility only
+	lastDeliveredGeneration    map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
+	lastSentBuild              map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
+	candidates                 []snapshotCandidate
+	selectedCandidates         []snapshotCandidate
+	messages                   []Outbound
+	borrowedSnapshotTransforms []protocol.EntityTransform
+	buildNumber                uint64
 }
 
 type Service struct {
@@ -90,10 +113,10 @@ func NewService(policies ...Policy) *Service {
 
 func newViewState() *viewState {
 	return &viewState{
-		known: make(map[world.EntityID]struct{}),
-		lastSnapshot: make(map[world.EntityID]sentTransform),
+		known:                   make(map[world.EntityID]struct{}),
+		lastSnapshot:            make(map[world.EntityID]sentTransform),
 		lastDeliveredGeneration: make(map[world.EntityID]uint64),
-		lastSentBuild: make(map[world.EntityID]uint64),
+		lastSentBuild:           make(map[world.EntityID]uint64),
 	}
 }
 
@@ -149,7 +172,7 @@ func (s *Service) ConfirmDespawn(sessionID session.ID, entityID world.EntityID) 
 }
 
 // Build 保留給既有單元測試與非 frame caller；production Runtime 使用 BuildFrame。
-// compatibility path 仍可從 lastSnapshot 推導 generation，但不位於 S3-E.2 hot path。
+// compatibility path 仍可從 lastSnapshot 推導 generation，但不位於 S3-E.2+ hot path。
 func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, tick uint64, visible []world.EntityState) Batch {
 	state := s.ensureView(sessionID)
 	ordered := visible
@@ -158,10 +181,10 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	}
 	frame := simulation.ReplicationFrame{
-		Tick: tick,
-		Entities: ordered,
+		Tick:                 tick,
+		Entities:             ordered,
 		TransformGenerations: make([]uint64, len(ordered)),
-		IndexByID: make(map[world.EntityID]int, len(ordered)),
+		IndexByID:            make(map[world.EntityID]int, len(ordered)),
 	}
 	visibleIndices := make([]int, len(ordered))
 	for i := range ordered {
@@ -178,14 +201,22 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		}
 		frame.TransformGenerations[i] = generation
 	}
-	return s.buildFrame(state, selfID, lastProcessedInput, &frame, visibleIndices)
+	return s.buildFrame(state, selfID, lastProcessedInput, &frame, visibleIndices, false)
 }
 
 // BuildFrame 使用 shared immutable frame 與 AOI index view。
-// production path 的 dirty / cadence / known state 使用與 desired view 對齊的 dense track。
+// 回傳的 WorldSnapshot Entities 擁有獨立 backing storage，可交給會非同步保存 Envelope 的 Connection。
 func (s *Service) BuildFrame(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
 	state := s.ensureView(sessionID)
-	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, false)
+}
+
+// BuildFrameBorrowed 只可搭配 session.ImmediateRealtimeConnection。
+// WorldSnapshot Entities 使用 per-session reusable scratch；caller 必須在下一次同 Session build 前，
+// 讓每個 Realtime TrySend 成功返回並完成同步 materialization。
+func (s *Service) BuildFrameBorrowed(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
+	state := s.ensureView(sessionID)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, true)
 }
 
 func (s *Service) ensureView(sessionID session.ID) *viewState {
@@ -197,7 +228,7 @@ func (s *Service) ensureView(sessionID session.ID) *viewState {
 	return state
 }
 
-func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
+func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool) Batch {
 	state.buildNumber++
 	tick := frame.Tick
 
@@ -208,9 +239,9 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		selfPosition = self.Transform.Position
 		selfTransform = protocol.EntityTransform{
 			EntityID: self.ID,
-			Tick: tick,
+			Tick:     tick,
 			Position: self.Transform.Position,
-			Yaw: self.Transform.Yaw,
+			Yaw:      self.Transform.Yaw,
 		}
 	}
 
@@ -237,7 +268,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 			tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 			batch.Messages = append(batch.Messages, Outbound{
 				Delivery: protocol.DeliveryReliableOrdered,
-				Message: protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
+				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
 			})
 			// Spawn 自己已包含 authoritative transform。直到 Reliable Spawn 成功前，
 			// 不把這個 Entity 放進 realtime snapshot，也不讓 Vitals 認為 Client 已知。
@@ -267,13 +298,13 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 			batch.Stats.ForcedRefreshCandidates++
 		}
 		state.candidates = append(state.candidates, snapshotCandidate{
-			entity: e,
+			entity:     e,
 			generation: generation,
 			trackIndex: i,
-			tier: tier,
-			age: age,
-			cadence: cadence,
-			dirty: dirty,
+			tier:       tier,
+			age:        age,
+			cadence:    cadence,
+			dirty:      dirty,
 		})
 	}
 
@@ -291,43 +322,32 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	for _, id := range state.departed {
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
-			Message: protocol.EntityDespawn{EntityID: id},
+			Message:  protocol.EntityDespawn{EntityID: id},
 		})
 	}
 
 	batch.Stats.SnapshotCandidates = len(state.candidates)
+	selectedCandidates := state.candidates
 	budgetExceeded := len(state.candidates) > s.policy.MaxTransformsPerBuild
 	if budgetExceeded {
-		sort.Slice(state.candidates, func(i, j int) bool {
-			a, b := state.candidates[i], state.candidates[j]
-			left := a.age * b.cadence
-			right := b.age * a.cadence
-			if left != right {
-				return left > right
-			}
-			if a.dirty != b.dirty {
-				return a.dirty
-			}
-			if a.tier != b.tier {
-				return a.tier < b.tier
-			}
-			if a.age != b.age {
-				return a.age > b.age
-			}
-			return a.entity.ID < b.entity.ID
-		})
+		state.selectedCandidates = selectSnapshotCandidates(state.selectedCandidates, state.candidates, s.policy.MaxTransformsPerBuild)
+		selectedCandidates = state.selectedCandidates
 	}
 
-	selectedCount := len(state.candidates)
-	if selectedCount > s.policy.MaxTransformsPerBuild {
-		selectedCount = s.policy.MaxTransformsPerBuild
-	}
+	selectedCount := len(selectedCandidates)
 	batch.Stats.SnapshotSelected = selectedCount
 	batch.Stats.SnapshotDeferred = len(state.candidates) - selectedCount
-	// transforms 不能跨 build reuse：TrySend 後 transport writer 仍可能非同步持有 WorldSnapshot slice。
-	transforms := make([]protocol.EntityTransform, selectedCount)
+
+	var transforms []protocol.EntityTransform
+	if borrowSnapshotStorage {
+		state.borrowedSnapshotTransforms = resizeTransforms(state.borrowedSnapshotTransforms, selectedCount)
+		transforms = state.borrowedSnapshotTransforms
+	} else {
+		// Generic Connection 可能在 TrySend 返回後仍非同步持有 Envelope，因此必須給它 owned backing storage。
+		transforms = make([]protocol.EntityTransform, selectedCount)
+	}
 	for i := 0; i < selectedCount; i++ {
-		candidate := state.candidates[i]
+		candidate := selectedCandidates[i]
 		e := candidate.entity
 		transforms[i] = protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		if candidate.trackIndex >= 0 && candidate.trackIndex < len(state.tracks) {
@@ -335,7 +355,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 			track.lastDeliveredGeneration = candidate.generation
 			track.lastSentBuild = state.buildNumber
 		}
-		// compatibility mirrors：只有 legacy Build 會讀這些 map，production scheduler 不讀。
+		// compatibility mirrors：legacy Build 會讀；rare membership rebuild 也從這裡重建 dense track。
 		state.lastSnapshot[e.ID] = sentTransform{Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		state.lastDeliveredGeneration[e.ID] = candidate.generation
 		state.lastSentBuild[e.ID] = state.buildNumber
@@ -365,10 +385,10 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryRealtimeSequenced,
 			Message: protocol.WorldSnapshot{
-				Tick: tick,
+				Tick:        tick,
 				ChunkIndex: uint16(chunk),
 				ChunkCount: uint16(chunkCount),
-				Entities: transforms[start:end],
+				Entities:   transforms[start:end],
 			},
 		})
 	}
@@ -377,10 +397,10 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryRealtimeSequenced,
 			Message: protocol.PositionCorrection{
-				Tick: tick,
-				EntityID: selfTransform.EntityID,
-				Position: selfTransform.Position,
-				Yaw: selfTransform.Yaw,
+				Tick:                       tick,
+				EntityID:                   selfTransform.EntityID,
+				Position:                   selfTransform.Position,
+				Yaw:                        selfTransform.Yaw,
 				LastProcessedInputSequence: lastProcessedInput,
 			},
 		})
@@ -390,32 +410,109 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	return batch
 }
 
+// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，
+// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
+func selectSnapshotCandidates(buffer []snapshotCandidate, candidates []snapshotCandidate, budget int) []snapshotCandidate {
+	if budget <= 0 || len(candidates) <= budget {
+		return candidates
+	}
+	if cap(buffer) < budget {
+		buffer = make([]snapshotCandidate, budget)
+	} else {
+		buffer = buffer[:budget]
+	}
+	copy(buffer, candidates[:budget])
+	selected := snapshotCandidateHeap(buffer)
+	heap.Init(&selected)
+	for _, candidate := range candidates[budget:] {
+		if candidateHigherPriority(candidate, selected[0]) {
+			selected[0] = candidate
+			heap.Fix(&selected, 0)
+		}
+	}
+	return []snapshotCandidate(selected)
+}
+
+func candidateHigherPriority(a, b snapshotCandidate) bool {
+	left := a.age * b.cadence
+	right := b.age * a.cadence
+	if left != right {
+		return left > right
+	}
+	if a.dirty != b.dirty {
+		return a.dirty
+	}
+	if a.tier != b.tier {
+		return a.tier < b.tier
+	}
+	if a.age != b.age {
+		return a.age > b.age
+	}
+	return a.entity.ID < b.entity.ID
+}
+
+// rebuildDesiredTracks 只在 AOI membership 真正改變時執行。
+// S3-E.4 直接重用既有 dense buffers，並從 lifecycle/map mirrors 重建 rare-path state，
+// 避免每次 membership change 都配置新的 desiredIDs / tracks。
 func rebuildDesiredTracks(state *viewState, frame *simulation.ReplicationFrame, visibleIndices []int) {
-	oldIDs := state.desiredIDs
-	oldTracks := state.tracks
-	newIDs := make([]world.EntityID, len(visibleIndices))
-	newTracks := make([]entityTrack, len(visibleIndices))
+	count := len(visibleIndices)
+	state.desiredIDs = resizeEntityIDs(state.desiredIDs, count)
+	state.tracks = resizeEntityTracks(state.tracks, count)
 	for i, index := range visibleIndices {
 		if index < 0 || index >= len(frame.Entities) {
 			continue
 		}
 		id := frame.Entities[index].ID
-		newIDs[i] = id
-		oldIndex := desiredIndex(oldIDs, id)
-		if oldIndex >= 0 && oldIndex < len(oldTracks) {
-			newTracks[i] = oldTracks[oldIndex]
-			continue
-		}
 		_, known := state.known[id]
-		newTracks[i] = entityTrack{
-			id: id,
-			known: known,
+		state.desiredIDs[i] = id
+		state.tracks[i] = entityTrack{
+			id:                      id,
+			known:                   known,
 			lastDeliveredGeneration: state.lastDeliveredGeneration[id],
-			lastSentBuild: state.lastSentBuild[id],
+			lastSentBuild:           state.lastSentBuild[id],
 		}
 	}
-	state.desiredIDs = newIDs
-	state.tracks = newTracks
+}
+
+func resizeEntityIDs(buffer []world.EntityID, count int) []world.EntityID {
+	if cap(buffer) < count {
+		capacity := count
+		if doubled := cap(buffer) * 2; doubled > capacity {
+			capacity = doubled
+		}
+		buffer = make([]world.EntityID, count, capacity)
+	} else {
+		buffer = buffer[:count]
+		clear(buffer)
+	}
+	return buffer
+}
+
+func resizeEntityTracks(buffer []entityTrack, count int) []entityTrack {
+	if cap(buffer) < count {
+		capacity := count
+		if doubled := cap(buffer) * 2; doubled > capacity {
+			capacity = doubled
+		}
+		buffer = make([]entityTrack, count, capacity)
+	} else {
+		buffer = buffer[:count]
+		clear(buffer)
+	}
+	return buffer
+}
+
+func resizeTransforms(buffer []protocol.EntityTransform, count int) []protocol.EntityTransform {
+	if cap(buffer) < count {
+		capacity := count
+		if doubled := cap(buffer) * 2; doubled > capacity {
+			capacity = doubled
+		}
+		return make([]protocol.EntityTransform, count, capacity)
+	}
+	buffer = buffer[:count]
+	clear(buffer)
+	return buffer
 }
 
 func sameDesiredIDs(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {

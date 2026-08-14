@@ -25,23 +25,28 @@ import (
 
 func main() {
 	var (
-		tcpAddress    = flag.String("tcp", "127.0.0.1:17777", "Reliable TCP listen address")
-		udpAddress    = flag.String("udp", "127.0.0.1:17778", "Realtime UDP listen address")
-		tickRate      = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
-		snapshotRate  = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath     = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
-		combatPath    = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
-		clients       = flag.Int("clients", 500, "Expected ready clients before measurement starts")
-		scenarioText  = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
-		duration      = flag.Duration("duration", 60*time.Second, "Measurement window after all clients are ready")
-		readyTimeout  = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
-		shutdownGrace = flag.Duration("shutdown-grace", 2*time.Second, "Keep listeners alive after report so bots can close cleanly")
-		reportPath    = flag.String("report", "artifacts/loadlab-server.json", "Server JSON report path")
+		tcpAddress         = flag.String("tcp", "127.0.0.1:17777", "Reliable TCP listen address")
+		udpAddress         = flag.String("udp", "127.0.0.1:17778", "Realtime UDP listen address")
+		tickRate           = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
+		snapshotRate       = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath          = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
+		combatPath         = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		clients            = flag.Int("clients", 500, "Expected ready clients before measurement starts")
+		scenarioText       = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
+		duration           = flag.Duration("duration", 60*time.Second, "Measurement window after all clients are ready")
+		readyTimeout       = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
+		shutdownGrace      = flag.Duration("shutdown-grace", 2*time.Second, "Keep listeners alive after report so bots can close cleanly")
+		reportPath         = flag.String("report", "artifacts/loadlab-server.json", "Server JSON report path")
+		allocProfilePrefix = flag.String("alloc-profile-prefix", "", "Optional allocation profile path prefix; writes <prefix>-before.pprof and <prefix>-after.pprof")
+		allocProfileRate   = flag.Int("alloc-profile-rate", 64*1024, "Allocation profiler sampling rate in bytes")
 	)
 	flag.Parse()
 
 	if err := validateRates(*tickRate, *snapshotRate); err != nil { log.Fatal(err) }
 	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 || *shutdownGrace < 0 { log.Fatal("clients, duration and ready-timeout must be > 0; shutdown-grace must be >= 0") }
+	if *allocProfileRate <= 0 { log.Fatal("alloc-profile-rate must be > 0") }
+	profiler, err := newAllocProfiler(*allocProfilePrefix, *allocProfileRate); if err != nil { log.Fatalf("configure allocation profiler: %v", err) }
+	if profiler != nil { defer profiler.Close() }
 	scenario, err := loadlab.ParseScenario(*scenarioText); if err != nil { log.Fatal(err) }
 
 	loadedWorld, err := gameplayworld.LoadFile(*worldPath); if err != nil { log.Fatalf("load gameplay world %q: %v", *worldPath, err) }
@@ -62,18 +67,27 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM); defer stop()
 	collector := loadlab.NewServerCollector(*tickRate, *snapshotRate)
-	loopDone := make(chan error,1); go func(){ err:=loop.RunObserved(ctx,collector.RecordStep); if err!=nil{stop()}; loopDone<-err }()
+	slowTicks := newSlowTickCollector(defaultSlowTickLimit)
+	loopDone := make(chan error,1); go func(){
+		err:=loop.RunObserved(ctx,func(report worldruntime.StepReport){ collector.RecordStep(report); slowTicks.Record(report) })
+		if err!=nil{stop()}
+		loopDone<-err
+	}()
 	serveDone := make(chan error,1); go func(){ err:=server.Serve(ctx); if err!=nil{stop()}; serveDone<-err }()
 	go collectNetworkErrors(ctx,server.Errors(),collector)
 
 	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 combat_revision=%s scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, loadedCombat.Definition.Revision, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	if err := waitForClients(ctx,server,*clients,*readyTimeout); err != nil { stop(); <-serveDone; <-loopDone; log.Fatal(err) }
-	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset(); server.ResetNetworkMetrics()
+	if err := profiler.Write("before"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile before measurement: %v", err) }
+	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics()
 
 	measurementTimer:=time.NewTimer(*duration); completed:=false
 	select { case <-measurementTimer.C: completed=true; case <-ctx.Done(): measurementTimer.Stop() }
 	report:=withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics())
+	slowReport:=slowTicks.Finish()
+	if err := profiler.Write("after"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile after measurement: %v", err) }
 	if err:=loadlab.WriteReport(*reportPath,report); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write report: %v",err) }
+	if err:=writeSlowTickReport(slowTickReportPath(*reportPath),slowReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write slow tick report: %v",err) }
 	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d realtime_mbps=%.3f encode_avg_us=%.3f",*reportPath,report.Ticks,report.TickDuration.P99MS,report.Queue.MaxDepthBefore,report.Errors.DatagramTooLarge,report.Network.RealtimeMbitsPerSec,report.Network.EncodeAverageUS)
 
 	if completed && *shutdownGrace>0 { timer:=time.NewTimer(*shutdownGrace); select { case <-timer.C: case <-ctx.Done(): timer.Stop() } }

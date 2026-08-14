@@ -27,8 +27,20 @@ type Connection interface {
 	Close() error
 }
 
+// ImmediateRealtimeConnection 是可選的 ownership capability。
+//
+// 實作者保證 DeliveryRealtimeSequenced 的 TrySend 在成功回傳前，已完成 message 所需資料的
+// materialize / encode / copy，之後不再持有 caller 傳入 message 的 mutable backing storage。
+// 因此 caller 可在 TrySend 成功後立即重用 realtime snapshot scratch。
+// ReliableOrdered 不受此 capability 影響，仍可由 transport queue 非同步持有 Envelope。
+type ImmediateRealtimeConnection interface {
+	Connection
+	RealtimeConsumedBeforeReturn()
+}
+
 // QueueConnection 是 transport-neutral 的非阻塞 outbound 邊界。
 // Network writer 之後可分別消費 Reliable / Realtime queue。
+// 它會直接保存 Envelope，因此刻意不實作 ImmediateRealtimeConnection。
 type QueueConnection struct {
 	reliable  chan protocol.Envelope
 	realtime  chan protocol.Envelope
