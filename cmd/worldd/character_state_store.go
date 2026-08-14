@@ -14,9 +14,10 @@ const (
 )
 
 // persistCharacterStateOutboxBatch performs disk I/O outside the world owner.
-// Each intent first observes the current durable revision, then uses Store.Save CAS;
-// an external writer racing between Load and Save therefore causes a visible conflict
-// instead of a silent last-write-wins overwrite.
+// Each intent first observes the current durable revision, then uses Store.Save CAS.
+// A concurrent writer using the same Store instance between Load and Save is detected
+// as a revision conflict instead of being silently overwritten. The state directory is
+// intentionally single-writer per worldd process; cross-process locking is out of scope.
 func persistCharacterStateOutboxBatch(outbox *characterstate.Outbox, store *characterstate.Store) (int, error) {
 	intents := outbox.Pending(characterStateDrainBatch)
 	confirmed := 0
