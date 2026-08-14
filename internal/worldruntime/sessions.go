@@ -111,9 +111,6 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	}
 	r.characterIdentities.bindSession(request.Session)
 	r.replication.Register(request.Session.ID)
-	if request.Restore != nil && report != nil {
-		report.Metrics.CharacterStateRestoresApplied++
-	}
 }
 
 func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
