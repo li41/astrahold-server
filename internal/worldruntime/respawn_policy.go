@@ -60,6 +60,8 @@ func (r *Runtime) scheduleRespawnForDefeat(entityID world.EntityID, tick uint64,
 
 // applyDueRespawns 在 command phase 完成後、simulation Tick 前執行。
 // 同一 due tick 收到的 ClientMoveInput 仍先以 Defeated 規則 consume/zero；角色復活後必須等新的 input。
+// Due selection 本身不移除 pending：authoritative transition成功時由 applyRespawn Cancel；若 transition fault，
+// pending會留到下一 tick重試。只有 entity不存在或已由其他合法路徑復活時才視為 stale schedule並清除。
 func (r *Runtime) applyDueRespawns(tick uint64, report *StepReport) {
 	if r.respawnPolicy == nil {
 		return
@@ -69,6 +71,7 @@ func (r *Runtime) applyDueRespawns(tick uint64, report *StepReport) {
 	for _, scheduled := range due {
 		state, ok := r.characters.State(scheduled.EntityID)
 		if !ok || !state.Defeated {
+			r.respawnPolicy.Cancel(scheduled.EntityID)
 			continue
 		}
 		r.applyRespawn("respawn_policy", RespawnRequest{EntityID: scheduled.EntityID, Position: scheduled.Position}, report)
