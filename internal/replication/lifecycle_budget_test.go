@@ -51,9 +51,20 @@ func TestLifecycleSpawnBudgetMakesBoundedProgress(t *testing.T) {
 		t.Fatalf("third spawn stats=%+v", third.Stats)
 	}
 	svc.ConfirmSpawn(sid, 5)
+
+	// Reliable Spawn 已帶同一份 authoritative transform，因此 unchanged Entity 不應在
+	// all-known 後立刻再製造一份 realtime snapshot candidate。
 	fourth := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
-	if got := snapshotEntityIDs(fourth); !equalIDs(got, []world.EntityID{2, 3, 4, 5}) {
-		t.Fatalf("converged view snapshot ids=%v want=[2 3 4 5]", got)
+	if got := snapshotEntityIDs(fourth); len(got) != 0 {
+		t.Fatalf("unchanged spawn baseline repeated in realtime snapshot: %v", got)
+	}
+
+	// 真正的 transform generation 改變後，既有 dirty/cadence scheduler 必須正常恢復。
+	frame.Entities[1].Transform.Position.Z += 1
+	frame.TransformGenerations[1]++
+	fifth := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
+	if got := snapshotEntityIDs(fifth); !equalIDs(got, []world.EntityID{2}) {
+		t.Fatalf("dirty entity after spawn baseline ids=%v want=[2]", got)
 	}
 }
 
