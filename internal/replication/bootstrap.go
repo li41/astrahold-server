@@ -27,40 +27,46 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 	if !sameDesiredIDs(state.desiredIDs, frame, visibleIndices) {
 		rebuildDesiredTracks(state, frame, visibleIndices)
 	}
-	if !hasUnknownDesired(state) {
+	firstUnknown := firstUnknownDesired(state)
+	if firstUnknown < 0 {
 		return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, borrowSnapshotStorage, limits)
 	}
-	return s.buildBootstrapLifecycleFrame(state, selfID, lastProcessedInput, frame, visibleIndices, limits)
+	return s.buildBootstrapLifecycleFrame(state, selfID, lastProcessedInput, frame, visibleIndices, firstUnknown, limits)
 }
 
-func hasUnknownDesired(state *viewState) bool {
+func firstUnknownDesired(state *viewState) int {
 	for i := range state.tracks {
 		if !state.tracks[i].known {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
-func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
+func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, firstUnknown int, limits LifecycleLimits) Batch {
 	state.buildNumber++
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 
-	for i, index := range visibleIndices {
-		if i >= len(state.tracks) || index < 0 || index >= len(frame.Entities) {
+	// 從最早未完成的 desired track 開始；一旦 Spawn quantum 用完就立即停止。
+	// Deferred work 不應為了完整統計而先掃過一次，下一個 build 會從新的 firstUnknown 繼續。
+	for i := firstUnknown; i < len(visibleIndices) && i < len(state.tracks); i++ {
+		index := visibleIndices[i]
+		if index < 0 || index >= len(frame.Entities) {
 			continue
 		}
 		track := &state.tracks[i]
 		if track.known {
 			continue
 		}
-		e := frame.Entities[index]
 		batch.Stats.SpawnCandidates++
 		if !limits.allowSpawn(batch.Stats.SpawnSelected) {
-			batch.Stats.SpawnDeferred++
-			continue
+			// lifecycle-first path 的 Deferred 只表示「本 build 尚有更多工作」，
+			// 不為了取得完整 deferred cardinality 而掃完整份 AOI。
+			batch.Stats.SpawnDeferred = 1
+			break
 		}
+		e := frame.Entities[index]
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
 			Message: protocol.EntitySpawn{
