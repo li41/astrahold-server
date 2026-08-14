@@ -5,6 +5,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 var ErrCommandQueueFull = errors.New("worldruntime: command queue full")
@@ -29,6 +30,12 @@ type moveInputCommand struct {
 	input     protocol.ClientMoveInput
 }
 func (moveInputCommand) name() string { return "move_input" }
+
+type teleportCommand struct {
+	entityID world.EntityID
+	position world.Position
+}
+func (teleportCommand) name() string { return "teleport_entity" }
 
 type useActionCommand struct {
 	sessionID session.ID
