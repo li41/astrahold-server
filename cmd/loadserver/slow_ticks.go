@@ -27,7 +27,9 @@ type slowTickRecord struct {
 	CommandsDrained                    int     `json:"commands_drained"`
 	EntityActionsApplied               int     `json:"entity_actions_applied"`
 	ActionRejections                   int     `json:"action_rejections"`
+	DirtyVitalsGlobalBudget            int     `json:"dirty_vitals_global_budget"`
 	DirtyVitalsSelected                int     `json:"dirty_vitals_selected"`
+	DirtyVitalsGlobalBudgetExhausted   bool    `json:"dirty_vitals_global_budget_exhausted"`
 	SessionsReplicated                 int     `json:"sessions_replicated"`
 	OutboundMessages                   int     `json:"outbound_messages"`
 	SnapshotCandidates                 int     `json:"snapshot_candidates"`
@@ -49,8 +51,8 @@ type slowTickRecord struct {
 }
 
 type slowTickReport struct {
-	Ticks   []slowTickRecord  `json:"ticks"`
-	Combat  churnCombatMetrics `json:"combat"`
+	Ticks  []slowTickRecord   `json:"ticks"`
+	Combat churnCombatMetrics `json:"combat"`
 }
 
 type slowTickCollector struct {
@@ -84,6 +86,9 @@ func (c *slowTickCollector) Record(report worldruntime.StepReport) {
 	c.combat.ActionsApplied += uint64(m.EntityActionsApplied)
 	c.combat.DirtyVitalsSelected += uint64(m.DirtyVitalsSelected)
 	c.combat.ActionRejections += uint64(len(report.ActionRejections))
+	if m.DirtyVitalsSelected > c.combat.MaxDirtyVitalsSelectedPerTick {
+		c.combat.MaxDirtyVitalsSelectedPerTick = m.DirtyVitalsSelected
+	}
 	if c.limit <= 0 {
 		return
 	}
@@ -103,7 +108,9 @@ func (c *slowTickCollector) Record(report worldruntime.StepReport) {
 		CommandsDrained:                    m.CommandsDrained,
 		EntityActionsApplied:               m.EntityActionsApplied,
 		ActionRejections:                   len(report.ActionRejections),
+		DirtyVitalsGlobalBudget:            m.DirtyVitalsGlobalBudget,
 		DirtyVitalsSelected:                m.DirtyVitalsSelected,
+		DirtyVitalsGlobalBudgetExhausted:   m.DirtyVitalsGlobalBudgetExhausted,
 		SessionsReplicated:                 m.SessionsReplicated,
 		OutboundMessages:                   m.OutboundMessages,
 		SnapshotCandidates:                 m.SnapshotCandidates,
