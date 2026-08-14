@@ -239,7 +239,7 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 }
 
 // recordUDPFailureUnlessStopping 給 TCP shutdown 一個極短 bounded correlation window。
-// Server 關閉共享 UDP socket 與 peer TCP connection 時，Linux loopback 可能先回報 UDP ECONNREFUSED，
+// Server 關閉共享 UDP socket與 peer TCP connection 時，Linux loopback 可能先回報 UDP ECONNREFUSED，
 // TCP EOF 才隨後抵達並 cancel botCtx。若 TCP 在 window 內同步結束，該 UDP error 屬正常 shutdown；
 // 若 TCP 仍存活，仍照常記為真實 network error。send / receive 兩側都使用同一判定。
 func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollector) {
@@ -258,6 +258,13 @@ func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollec
 
 func sendMove(udp *net.UDPConn, token tcpudp.Token, codec transport.PayloadCodec, scenario Scenario, entityID world.EntityID, sequence uint32, elapsed time.Duration, collector *botCollector) error {
 	dx, dz := MovementDirection(scenario, entityID, elapsed)
+	// S3-E.9 mixed movement 以正式 WorldDynamicState 作語意啟動訊號：bootstrap 階段
+	// dynamicStates <= ready，所以 teleport-churn movers 維持零方向；第一個 objective update
+	// 透過 ReliableOrdered fan-out 後 dynamicStates > ready，才開始原本的 deterministic movement。
+	// 這避免 fixed warm-up sleep，也不讓 initial convergence 與 active AOI churn 混在一起。
+	if scenario == ScenarioTeleportChurn && s3e9MixedMovementEnabled && collector.dynamicStates.Load() <= collector.ready.Load() {
+		dx, dz = 0, 0
+	}
 	envelope := protocol.Envelope{
 		Delivery: protocol.DeliveryRealtimeSequenced,
 		Sequence: sequence,
