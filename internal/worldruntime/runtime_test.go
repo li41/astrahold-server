@@ -38,6 +38,7 @@ func makeRuntime(t *testing.T) (*Runtime, *simulation.World, *session.QueueConne
 	}
 	return rt, sim, conn
 }
+
 func TestStepProcessesCommandsMovesAndReplicates(t *testing.T) {
 	rt, sim, conn := makeRuntime(t)
 	report := rt.Step(1, 50*time.Millisecond)
@@ -48,21 +49,32 @@ func TestStepProcessesCommandsMovesAndReplicates(t *testing.T) {
 	if e.Transform.Position.X < 0.29 || e.Transform.Position.X > 0.31 {
 		t.Fatalf("expected x~0.3, got %f", e.Transform.Position.X)
 	}
-	reliable := 0
-drainReliable:
+
+	spawnCount := 0
+	vitalsCount := 0
+	drainReliable:
 	for {
 		select {
-		case <-conn.Reliable():
-			reliable++
+		case env := <-conn.Reliable():
+			switch message := env.Message.(type) {
+			case protocol.EntitySpawn:
+				spawnCount++
+			case protocol.EntityVitalsState:
+				vitalsCount++
+				if message.EntityID != 1 || message.HP != 1000 || message.MaxHP != 1000 || message.Defeated {
+					t.Fatalf("unexpected initial vitals: %#v", message)
+				}
+			}
 		default:
 			break drainReliable
 		}
 	}
-	if reliable != 2 {
-		t.Fatalf("expected two spawn messages, got %d", reliable)
+	if spawnCount != 2 || vitalsCount != 1 {
+		t.Fatalf("expected two spawns and one player vitals, got spawns=%d vitals=%d", spawnCount, vitalsCount)
 	}
+
 	var gotCorrection bool
-drainRealtime:
+	drainRealtime:
 	for {
 		select {
 		case env := <-conn.Realtime():
@@ -80,6 +92,7 @@ drainRealtime:
 		t.Fatal("expected correction")
 	}
 }
+
 func TestLoopUsesFixedTick(t *testing.T) {
 	rt, _, _ := makeRuntime(t)
 	loop, err := NewLoop(rt, 20)
