@@ -106,19 +106,22 @@ func TestResurrectionSequenceAndCooldownCommitOnlyOnSuccess(t *testing.T) {
 	if len(alive.ActionRejections) != 1 || !errors.Is(alive.ActionRejections[0].Err, character.ErrCharacterNotDefeated) {
 		t.Fatalf("alive target rejection=%#v", alive.ActionRejections)
 	}
-	s3, ok := rt.sessions.Get(3)
-	if !ok || s3.LastProcessedActionSequence() != 1 {
-		t.Fatalf("failed resurrection sequence=%#v ok=%v", s3, ok)
+	if err := rt.EnqueueUseAction(3, 1, protocol.ClientUseAction{ActionID: "resurrect", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	staleRejected := rt.Step(3, 50*time.Millisecond)
+	if len(staleRejected.CommandErrors) != 1 || !errors.Is(staleRejected.CommandErrors[0].Err, session.ErrStaleAction) {
+		t.Fatalf("rejected action sequence replay=%#v", staleRejected.CommandErrors)
 	}
 
-	// 下一個 sequence在同一 tick先看到 lethal transition，證明前一個 rejection沒有 Commit cooldown。
+	// 下一個 sequence在同一 tick先看到 lethal transition，證明前一個 gameplay rejection沒有 Commit cooldown。
 	if err := rt.EnqueueUseAction(1, 1, protocol.ClientUseAction{ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.EnqueueUseAction(3, 2, protocol.ClientUseAction{ActionID: "resurrect", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
 		t.Fatal(err)
 	}
-	success := rt.Step(3, 50*time.Millisecond)
+	success := rt.Step(4, 50*time.Millisecond)
 	if len(success.CommandErrors) != 0 || len(success.ActionRejections) != 0 || success.Metrics.EntityActionsApplied != 2 {
 		t.Fatalf("kill+resurrect=%#v", success)
 	}
@@ -129,18 +132,22 @@ func TestResurrectionSequenceAndCooldownCommitOnlyOnSuccess(t *testing.T) {
 	if _, ok := policy.Pending(2); ok {
 		t.Fatal("successful resurrection did not cancel pending")
 	}
-	if s3.LastProcessedActionSequence() != 2 {
-		t.Fatalf("successful resurrection sequence=%d", s3.LastProcessedActionSequence())
+	if err := rt.EnqueueUseAction(3, 2, protocol.ClientUseAction{ActionID: "resurrect", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	staleSuccess := rt.Step(5, 50*time.Millisecond)
+	if len(staleSuccess.CommandErrors) != 1 || !errors.Is(staleSuccess.CommandErrors[0].Err, session.ErrStaleAction) {
+		t.Fatalf("successful action sequence replay=%#v", staleSuccess.CommandErrors)
 	}
 
-	// basic attack在 tick 13剛好離開自身 cooldown；resurrection的10秒 cooldown仍有效。
+	// basic attack在 tick 14剛好離開自身 cooldown；resurrection的10秒 cooldown仍有效。
 	if err := rt.EnqueueUseAction(1, 2, protocol.ClientUseAction{ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.EnqueueUseAction(3, 3, protocol.ClientUseAction{ActionID: "resurrect", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
 		t.Fatal(err)
 	}
-	cooldown := rt.Step(13, 50*time.Millisecond)
+	cooldown := rt.Step(14, 50*time.Millisecond)
 	if len(cooldown.CommandErrors) != 0 || len(cooldown.ActionRejections) != 1 || !errors.Is(cooldown.ActionRejections[0].Err, combat.ErrActionCooldown) {
 		t.Fatalf("resurrection cooldown=%#v", cooldown)
 	}
@@ -151,8 +158,12 @@ func TestResurrectionSequenceAndCooldownCommitOnlyOnSuccess(t *testing.T) {
 	if _, ok := policy.Pending(2); !ok {
 		t.Fatal("cooldown-rejected resurrection incorrectly cancelled pending")
 	}
-	if s3.LastProcessedActionSequence() != 3 {
-		t.Fatalf("cooldown rejection did not consume sequence=%d", s3.LastProcessedActionSequence())
+	if err := rt.EnqueueUseAction(3, 3, protocol.ClientUseAction{ActionID: "resurrect", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	staleCooldown := rt.Step(15, 50*time.Millisecond)
+	if len(staleCooldown.CommandErrors) != 1 || !errors.Is(staleCooldown.CommandErrors[0].Err, session.ErrStaleAction) {
+		t.Fatalf("cooldown action sequence replay=%#v", staleCooldown.CommandErrors)
 	}
 }
 
