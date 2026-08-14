@@ -19,67 +19,154 @@ func (r *Runtime) markEntityVitalsDirty(entityID world.EntityID) {
 	if r.entityVitalsRevision[entityID] == 0 {
 		r.entityVitalsRevision[entityID] = 1
 	}
+	r.dirtyVitalsEntities[entityID] = struct{}{}
 }
 
 func (r *Runtime) removeEntityVitals(entityID world.EntityID) {
 	delete(r.entityVitalsRevision, entityID)
+	delete(r.dirtyVitalsEntities, entityID)
 	for _, delivered := range r.sessionVitalsRevision {
 		delete(delivered, entityID)
+	}
+	for _, pending := range r.sessionVitalsPending {
+		delete(pending, entityID)
 	}
 }
 
 func (r *Runtime) removeSessionVitals(id session.ID) {
 	delete(r.sessionVitalsRevision, id)
+	delete(r.sessionVitalsPending, id)
+}
+
+// queueEntityVitalsForSession 只在 Reliable Spawn 成功排入 outbound queue 後呼叫。
+// 這讓 initial vitals retry 與 lifecycle known truth 綁在一起，而不是每 tick 掃全世界 Character state。
+func (r *Runtime) queueEntityVitalsForSession(sessionID session.ID, entityID world.EntityID) {
+	pending := r.sessionVitalsPending[sessionID]
+	if pending == nil {
+		pending = make(map[world.EntityID]struct{})
+		r.sessionVitalsPending[sessionID] = pending
+	}
+	pending[entityID] = struct{}{}
+}
+
+func (r *Runtime) confirmEntityDespawnVitals(sessionID session.ID, entityID world.EntityID) {
+	if delivered := r.sessionVitalsRevision[sessionID]; delivered != nil {
+		delete(delivered, entityID)
+	}
+	if pending := r.sessionVitalsPending[sessionID]; pending != nil {
+		delete(pending, entityID)
+		if len(pending) == 0 {
+			delete(r.sessionVitalsPending, sessionID)
+		}
+	}
+}
+
+func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.EntityID]uint64 {
+	delivered := r.sessionVitalsRevision[sessionID]
+	if delivered == nil {
+		delivered = make(map[world.EntityID]uint64)
+		r.sessionVitalsRevision[sessionID] = delivered
+	}
+	return delivered
 }
 
 // replicateEntityVitals 將 Character full-state 視為可重送的 Reliable state，而不是一次性事件。
-// ErrBackpressure 只代表本 tick 延後，只有成功寫入 outbound queue 才更新 session revision。
+// S3-E.2 起只處理兩類工作：
+// 1. Reliable Spawn 成功後尚未送達的 initial full state。
+// 2. global entity vitals revision 真正變更的 dirty fan-out。
+// ErrBackpressure 只代表本 tick 延後；revision 只有成功寫入 outbound queue才前進。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
-	states := r.characters.States()
-	if len(states) == 0 {
+	// 先處理 lifecycle 建立的 initial / retry pending。steady-state 沒有 pending 時這段是 O(1)。
+	for sessionID, pending := range r.sessionVitalsPending {
+		s, ok := r.sessions.Get(sessionID)
+		if !ok {
+			delete(r.sessionVitalsPending, sessionID)
+			delete(r.sessionVitalsRevision, sessionID)
+			continue
+		}
+		delivered := r.ensureSessionVitalsDelivered(sessionID)
+		for entityID := range pending {
+			if !r.replication.Knows(sessionID, entityID) {
+				delete(pending, entityID)
+				delete(delivered, entityID)
+				continue
+			}
+			state, ok := r.characters.State(entityID)
+			if !ok {
+				delete(pending, entityID)
+				delete(delivered, entityID)
+				continue
+			}
+			revision := r.entityVitalsRevision[entityID]
+			if revision == 0 || delivered[entityID] >= revision {
+				delete(pending, entityID)
+				continue
+			}
+			if r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report) {
+				delivered[entityID] = revision
+				delete(pending, entityID)
+			}
+		}
+		if len(pending) == 0 {
+			delete(r.sessionVitalsPending, sessionID)
+		}
+	}
+
+	if len(r.dirtyVitalsEntities) == 0 {
 		return
 	}
 
-	activeSessions := make(map[session.ID]struct{})
-	for _, s := range r.sessions.List() {
-		activeSessions[s.ID] = struct{}{}
-		delivered := r.sessionVitalsRevision[s.ID]
-		if delivered == nil {
-			delivered = make(map[world.EntityID]uint64)
-			r.sessionVitalsRevision[s.ID] = delivered
+	// Dirty fan-out 是 O(Sessions × dirty entities)，而不是 O(Sessions × all characters) 每 tick。
+	// 若某 Session backpressure，該 entity 保留 dirty，下一 tick retry latest full state。
+	sessions := r.sessions.List()
+	for entityID := range r.dirtyVitalsEntities {
+		state, ok := r.characters.State(entityID)
+		if !ok {
+			delete(r.dirtyVitalsEntities, entityID)
+			continue
+		}
+		revision := r.entityVitalsRevision[entityID]
+		if revision == 0 {
+			delete(r.dirtyVitalsEntities, entityID)
+			continue
 		}
 
-		for entityID := range delivered {
+		allDelivered := true
+		for _, s := range sessions {
 			if !r.replication.Knows(s.ID, entityID) {
-				delete(delivered, entityID)
-			}
-		}
-
-		for _, state := range states {
-			if !r.replication.Knows(s.ID, state.EntityID) {
 				continue
 			}
-			revision := r.entityVitalsRevision[state.EntityID]
-			if revision == 0 || delivered[state.EntityID] >= revision {
+			delivered := r.ensureSessionVitalsDelivered(s.ID)
+			if delivered[entityID] >= revision {
 				continue
 			}
-			message := protocol.EntityVitalsState{EntityID:state.EntityID,HP:state.HP,MaxHP:state.MaxHP,Defeated:state.Defeated}
-			envelope := protocol.Envelope{Delivery:protocol.DeliveryReliableOrdered,Sequence:s.NextOutboundSequence(protocol.DeliveryReliableOrdered),ServerTick:tick,Message:message}
-			report.Metrics.OutboundMessages++
-			if err := s.Connection().TrySend(envelope); err != nil {
-				if errors.Is(err, session.ErrBackpressure) {
-					continue
+			if !r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report) {
+				allDelivered = false
+				continue
+			}
+			delivered[entityID] = revision
+			if pending := r.sessionVitalsPending[s.ID]; pending != nil {
+				delete(pending, entityID)
+				if len(pending) == 0 {
+					delete(r.sessionVitalsPending, s.ID)
 				}
-				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID,Delivery:envelope.Delivery,MessageType:message.Type(),Err:err})
-				continue
 			}
-			delivered[state.EntityID] = revision
+		}
+		if allDelivered {
+			delete(r.dirtyVitalsEntities, entityID)
 		}
 	}
+}
 
-	for id := range r.sessionVitalsRevision {
-		if _, ok := activeSessions[id]; !ok {
-			delete(r.sessionVitalsRevision, id)
+func (r *Runtime) trySendEntityVitals(s *session.Session, entityID world.EntityID, hp, maxHP uint32, defeated bool, tick uint64, report *StepReport) bool {
+	message := protocol.EntityVitalsState{EntityID:entityID,HP:hp,MaxHP:maxHP,Defeated:defeated}
+	envelope := protocol.Envelope{Delivery:protocol.DeliveryReliableOrdered,Sequence:s.NextOutboundSequence(protocol.DeliveryReliableOrdered),ServerTick:tick,Message:message}
+	report.Metrics.OutboundMessages++
+	if err := s.Connection().TrySend(envelope); err != nil {
+		if !errors.Is(err, session.ErrBackpressure) {
+			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID,Delivery:envelope.Delivery,MessageType:message.Type(),Err:err})
 		}
+		return false
 	}
+	return true
 }

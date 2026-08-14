@@ -14,6 +14,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if measure { totalStart = time.Now() }
 
 	report := StepReport{Tick:tick}
+	var stageStart time.Time
+	if measure { stageStart = time.Now() }
 	report.Metrics.CommandQueueDepthBefore = r.queue.depth()
 	commands := r.queue.drain(r.config.MaxCommandsPerTick)
 	report.Metrics.CommandsDrained = len(commands)
@@ -35,8 +37,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
 	}
+	if measure { report.Metrics.CommandDuration = time.Since(stageStart) }
 
-	var stageStart time.Time
 	if measure { stageStart = time.Now() }
 	report.TickErrors = r.world.Tick(float32(delta.Seconds()))
 	if measure { report.Metrics.SimulationDuration = time.Since(stageStart) }
@@ -48,21 +50,30 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if tick%r.config.SnapshotEveryTicks == 0 {
 		sessions := r.sessions.List()
 		report.Metrics.SessionsReplicated = len(sessions)
+
+		if measure { stageStart = time.Now() }
+		frame := r.replicationFrameBuilder.Build(r.world, tick)
+		if measure { report.Metrics.ReplicationFrameBuildDuration = time.Since(stageStart) }
+
 		for _, s := range sessions {
-			self, ok := r.world.Entity(s.EntityID)
+			self, _, ok := frame.Entity(s.EntityID)
 			if !ok {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command:"replicate",SessionID:s.ID,Err:ErrSessionEntityNotFound})
 				continue
 			}
 			if measure { stageStart = time.Now() }
-			visible, queryStats := r.world.QueryAOIWithStats(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
+			visible, queryStats := frame.Spatial.QueryRadiusInto(self.Transform.Position, s.AOIRadius, r.config.AOIOptions, r.replicationVisibleScratch)
+			r.replicationVisibleScratch = visible
 			if measure { report.Metrics.AOIDuration += time.Since(stageStart) }
 			report.Metrics.AOIQueries++
 			report.Metrics.AOICandidates += queryStats.CandidateEntities
 			report.Metrics.AOIVisible += queryStats.MatchedEntities
+			report.Metrics.AOISharedCandidateBuilds += queryStats.SharedCandidateBuilds
+			report.Metrics.AOISharedCandidateReuses += queryStats.SharedCandidateReuses
+			report.Metrics.AOIPhysicalCandidateScans += queryStats.SharedCandidateScans
 
 			if measure { stageStart = time.Now() }
-			batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
+			batch := r.replication.BuildFrame(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
 			if measure { report.Metrics.ReplicationBuildDuration += time.Since(stageStart) }
 			report.Metrics.OutboundMessages += len(batch.Messages)
 			report.Metrics.SnapshotCandidates += batch.Stats.SnapshotCandidates
@@ -91,9 +102,11 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		}
 	}
 
-	// Vitals 是 full Reliable state。若 outbound queue 暫時滿，只延後到下一 tick，
-	// 不把 backpressure 當成狀態遺失或不可恢復的 delivery error。
+	// Vitals 是 Reliable full state。S3-E.2 只處理 Spawn pending 與 global dirty fan-out；
+	// outbound queue 暫時滿只延後 latest full state，不放寬 convergence correctness。
+	if measure { stageStart = time.Now() }
 	r.replicateEntityVitals(tick, &report)
+	if measure { report.Metrics.VitalsReplicationDuration = time.Since(stageStart) }
 
 	report.Metrics.CommandQueueDepthAfter = r.queue.depth()
 	if measure { report.Metrics.TotalDuration = time.Since(totalStart) }
@@ -113,7 +126,9 @@ func confirmLifecycleDelivery(r *Runtime, sessionID session.ID, message protocol
 	switch value := message.(type) {
 	case protocol.EntitySpawn:
 		r.replication.ConfirmSpawn(sessionID, value.EntityID)
+		r.queueEntityVitalsForSession(sessionID, value.EntityID)
 	case protocol.EntityDespawn:
 		r.replication.ConfirmDespawn(sessionID, value.EntityID)
+		r.confirmEntityDespawnVitals(sessionID, value.EntityID)
 	}
 }

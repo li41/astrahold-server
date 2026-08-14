@@ -24,6 +24,9 @@ func TestServerCollectorSummarizesTickAOIAndReplication(t *testing.T) {
 			AOIQueries:              3,
 			AOICandidates:           18,
 			AOIVisible:              12,
+			AOISharedCandidateBuilds: 1,
+			AOISharedCandidateReuses: 2,
+			AOIPhysicalCandidateScans: 6,
 			OutboundMessages:        9,
 			SnapshotCandidates:      10,
 			SnapshotTransforms:      6,
@@ -33,6 +36,7 @@ func TestServerCollectorSummarizesTickAOIAndReplication(t *testing.T) {
 			SnapshotMidTransforms:   2,
 			SnapshotFarTransforms:   1,
 			SimulationDuration:      time.Millisecond,
+			ReplicationFrameBuildDuration: 500 * time.Microsecond,
 			AOIDuration:             2 * time.Millisecond,
 			ReplicationBuildDuration: time.Millisecond,
 			DeliveryDuration:        time.Millisecond,
@@ -45,6 +49,15 @@ func TestServerCollectorSummarizesTickAOIAndReplication(t *testing.T) {
 	}
 	if report.AOI.Queries != 3 || report.AOI.Candidates != 18 || report.AOI.Visible != 12 {
 		t.Fatalf("unexpected AOI report: %+v", report.AOI)
+	}
+	if report.AOI.SharedCandidateBuilds != 1 || report.AOI.SharedCandidateReuses != 2 || report.AOI.PhysicalCandidateScans != 6 {
+		t.Fatalf("unexpected shared AOI report: %+v", report.AOI)
+	}
+	if math.Abs(report.AOI.SharedReuseRatio-(2.0/3.0)) > 0.0001 {
+		t.Fatalf("shared reuse ratio=%f want=%f", report.AOI.SharedReuseRatio, 2.0/3.0)
+	}
+	if report.Stages.ReplicationFrameBuildAverageMS < 0.49 || report.Stages.ReplicationFrameBuildAverageMS > 0.51 {
+		t.Fatalf("frame build=%fms want about 0.5ms", report.Stages.ReplicationFrameBuildAverageMS)
 	}
 	if report.Replication.SessionsReplicated != 3 || report.Replication.OutboundMessages != 9 {
 		t.Fatalf("unexpected replication message report: %+v", report.Replication)

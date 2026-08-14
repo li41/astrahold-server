@@ -54,6 +54,9 @@ type StepMetrics struct {
 	AOIQueries int
 	AOICandidates int
 	AOIVisible int
+	AOISharedCandidateBuilds int
+	AOISharedCandidateReuses int
+	AOIPhysicalCandidateScans int
 	OutboundMessages int
 	SnapshotCandidates int
 	SnapshotTransforms int
@@ -62,11 +65,14 @@ type StepMetrics struct {
 	SnapshotNearTransforms int
 	SnapshotMidTransforms int
 	SnapshotFarTransforms int
+	CommandDuration time.Duration
 	SimulationDuration time.Duration
 	DynamicReplicationDuration time.Duration
+	ReplicationFrameBuildDuration time.Duration
 	AOIDuration time.Duration
 	ReplicationBuildDuration time.Duration
 	DeliveryDuration time.Duration
+	VitalsReplicationDuration time.Duration
 	TotalDuration time.Duration
 }
 
@@ -83,6 +89,8 @@ type Runtime struct {
 	world *simulation.World
 	sessions *session.Registry
 	replication *replication.Service
+	replicationFrameBuilder *simulation.ReplicationFrameBuilder
+	replicationVisibleScratch []int
 	characters *character.Service
 	queue *commandQueue
 	config Config
@@ -92,7 +100,9 @@ type Runtime struct {
 	dynamicRevision uint64
 	sessionDynamicRevision map[session.ID]uint64
 	entityVitalsRevision map[world.EntityID]uint64
+	dirtyVitalsEntities map[world.EntityID]struct{}
 	sessionVitalsRevision map[session.ID]map[world.EntityID]uint64
+	sessionVitalsPending map[session.ID]map[world.EntityID]struct{}
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -107,12 +117,15 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		world: w,
 		sessions: session.NewRegistry(),
 		replication: replication.NewService(config.ReplicationPolicy),
+		replicationFrameBuilder: simulation.NewReplicationFrameBuilder(),
 		characters: characters,
 		queue: newCommandQueue(config.CommandQueueCapacity),
 		config: config,
 		sessionDynamicRevision: make(map[session.ID]uint64),
 		entityVitalsRevision: make(map[world.EntityID]uint64),
+		dirtyVitalsEntities: make(map[world.EntityID]struct{}),
 		sessionVitalsRevision: make(map[session.ID]map[world.EntityID]uint64),
+		sessionVitalsPending: make(map[session.ID]map[world.EntityID]struct{}),
 	}
 	for _, option := range options { if option != nil { option(r) } }
 	if r.dynamic != nil { r.dynamicRevision = 1 }
