@@ -70,6 +70,16 @@ type ReplicationSummary struct {
 	DeferredCandidateRatio   float64 `json:"deferred_candidate_ratio"`
 }
 
+type LifecycleSummary struct {
+	SpawnCandidates      uint64 `json:"spawn_candidates"`
+	SpawnSelected        uint64 `json:"spawn_selected"`
+	SpawnDeferred        uint64 `json:"spawn_deferred"`
+	DespawnCandidates    uint64 `json:"despawn_candidates"`
+	DespawnSelected      uint64 `json:"despawn_selected"`
+	DespawnDeferred      uint64 `json:"despawn_deferred"`
+	BackpressureStops    uint64 `json:"backpressure_stops"`
+}
+
 type ErrorSummary struct {
 	CommandErrors        uint64            `json:"command_errors"`
 	BlockedMoves         uint64            `json:"blocked_moves"`
@@ -103,6 +113,7 @@ type ServerReport struct {
 	Queue              QueueSummary       `json:"queue"`
 	AOI                AOISummary         `json:"aoi"`
 	Replication        ReplicationSummary `json:"replication"`
+	Lifecycle          LifecycleSummary   `json:"lifecycle"`
 	Errors             ErrorSummary       `json:"errors"`
 	Memory             MemorySummary      `json:"memory"`
 }
@@ -146,6 +157,13 @@ type ServerCollector struct {
 	snapshotNearTransforms  uint64
 	snapshotMidTransforms   uint64
 	snapshotFarTransforms   uint64
+	spawnCandidates         uint64
+	spawnSelected           uint64
+	spawnDeferred           uint64
+	despawnCandidates       uint64
+	despawnSelected         uint64
+	despawnDeferred         uint64
+	lifecycleBackpressureStops uint64
 
 	commandErrors        uint64
 	blockedMoves         uint64
@@ -205,6 +223,13 @@ func (c *ServerCollector) Reset() {
 	c.snapshotNearTransforms = 0
 	c.snapshotMidTransforms = 0
 	c.snapshotFarTransforms = 0
+	c.spawnCandidates = 0
+	c.spawnSelected = 0
+	c.spawnDeferred = 0
+	c.despawnCandidates = 0
+	c.despawnSelected = 0
+	c.despawnDeferred = 0
+	c.lifecycleBackpressureStops = 0
 	c.commandErrors = 0
 	c.blockedMoves = 0
 	c.unexpectedTickErrors = 0
@@ -254,6 +279,13 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	c.snapshotNearTransforms += uint64(m.SnapshotNearTransforms)
 	c.snapshotMidTransforms += uint64(m.SnapshotMidTransforms)
 	c.snapshotFarTransforms += uint64(m.SnapshotFarTransforms)
+	c.spawnCandidates += uint64(m.SpawnCandidates)
+	c.spawnSelected += uint64(m.SpawnSelected)
+	c.spawnDeferred += uint64(m.SpawnDeferred)
+	c.despawnCandidates += uint64(m.DespawnCandidates)
+	c.despawnSelected += uint64(m.DespawnSelected)
+	c.despawnDeferred += uint64(m.DespawnDeferred)
+	c.lifecycleBackpressureStops += uint64(m.LifecycleBackpressureStops)
 	c.commandErrors += uint64(len(report.CommandErrors))
 	c.deliveryErrors += uint64(len(report.DeliveryErrors))
 	for _, item := range report.TickErrors {
@@ -379,6 +411,15 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 			SnapshotFarTransforms:   c.snapshotFarTransforms,
 			TransformsPerSession:    float64(c.snapshotTransforms) / sessions,
 			DeferredCandidateRatio:  float64(c.snapshotDeferred) / candidates,
+		},
+		Lifecycle: LifecycleSummary{
+			SpawnCandidates:   c.spawnCandidates,
+			SpawnSelected:     c.spawnSelected,
+			SpawnDeferred:     c.spawnDeferred,
+			DespawnCandidates: c.despawnCandidates,
+			DespawnSelected:   c.despawnSelected,
+			DespawnDeferred:   c.despawnDeferred,
+			BackpressureStops: c.lifecycleBackpressureStops,
 		},
 		Errors: ErrorSummary{
 			CommandErrors:        c.commandErrors,
