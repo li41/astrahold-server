@@ -40,7 +40,10 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 			}
 		}
 	} else if len(state.departed) > 0 {
-		prunePendingDeparted(state)
+		// desired 沒變時，pending departed 不可能重新進 AOI；ConfirmDespawn 又只會把
+		// 本 build 成功送出的 sorted prefix 從 known 移除。因此 retry 不需要每次重掃
+		// 整份尾段 + binary-search desired，只要剝掉已確認 prefix 即可。
+		pruneConfirmedDepartedPrefix(state)
 	}
 	if limits.MaxMessages < 0 {
 		return s.buildDeferredLifecycleFrame(state, selfID, lastProcessedInput, frame)
@@ -150,6 +153,8 @@ func rebuildPendingDeparted(state *viewState) {
 	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 }
 
+// prunePendingDeparted 只用在 desired membership 有變化時；此時 departed 可能重新進 AOI，
+// 所以必須完整檢查 known + desired。
 func prunePendingDeparted(state *viewState) {
 	write := 0
 	for _, id := range state.departed {
@@ -160,6 +165,29 @@ func prunePendingDeparted(state *viewState) {
 		write++
 	}
 	state.departed = state.departed[:write]
+}
+
+// pruneConfirmedDepartedPrefix 是 desired 不變時的 hot retry path。
+// buildBootstrapLifecycleFrame 永遠按 sorted departed 從頭 materialize；delivery 在第一個
+// backpressure 後停止後續 lifecycle，因此成功 ConfirmDespawn 形成連續 prefix。只剝這個 prefix
+// 就能保留完全相同的 retry/fairness semantics，而不掃未處理尾段。
+func pruneConfirmedDepartedPrefix(state *viewState) {
+	firstKnown := 0
+	for firstKnown < len(state.departed) {
+		if _, known := state.known[state.departed[firstKnown]]; known {
+			break
+		}
+		firstKnown++
+	}
+	if firstKnown == 0 {
+		return
+	}
+	if firstKnown == len(state.departed) {
+		state.departed = state.departed[:0]
+		return
+	}
+	copy(state.departed, state.departed[firstKnown:])
+	state.departed = state.departed[:len(state.departed)-firstKnown]
 }
 
 func firstUnknownDesired(state *viewState) int {
@@ -204,6 +232,11 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 
 	batch.Stats.DespawnCandidates = len(state.departed)
 	for i, id := range state.departed {
+		// 非 backpressure 的 delivery error 可能形成稀有 confirmed hole；該錯誤本身會使
+		// acceptance 失敗，但 build 仍避免對已不 known 的 ID 重送 duplicate Despawn。
+		if _, known := state.known[id]; !known {
+			continue
+		}
 		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
 		if !limits.allowMessage(totalLifecycle) || !limits.allowDespawn(batch.Stats.DespawnSelected) {
 			batch.Stats.DespawnDeferred = len(state.departed) - i
