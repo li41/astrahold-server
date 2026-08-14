@@ -31,6 +31,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		}
+		// S3-F.3 policy 若有啟用，死亡當下就綁定 checkpoint 與 due tick。
+		// 排程是後續 gameplay policy，不回滾已成立的 lethal combat transaction。
+		r.scheduleRespawnForDefeat(targetID, tick, report)
 	}
 	r.markEntityVitalsDirty(targetID)
 	report.Metrics.EntityActionsApplied++
