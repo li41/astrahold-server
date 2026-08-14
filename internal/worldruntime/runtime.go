@@ -27,6 +27,7 @@ type Config struct {
 	SnapshotEveryTicks   uint64
 	CharacterMaxHP       uint32
 	AOIOptions           spatial.QueryOptions
+	ReplicationPolicy    replication.Policy
 	CollectMetrics       bool
 }
 
@@ -37,6 +38,7 @@ func DefaultConfig() Config {
 		SnapshotEveryTicks: 2,
 		CharacterMaxHP: 1000,
 		AOIOptions: spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
+		ReplicationPolicy: replication.DefaultPolicy(),
 	}
 }
 
@@ -53,6 +55,13 @@ type StepMetrics struct {
 	AOICandidates int
 	AOIVisible int
 	OutboundMessages int
+	SnapshotCandidates int
+	SnapshotTransforms int
+	SnapshotDeferred int
+	SnapshotForcedRefreshes int
+	SnapshotNearTransforms int
+	SnapshotMidTransforms int
+	SnapshotFarTransforms int
 	SimulationDuration time.Duration
 	DynamicReplicationDuration time.Duration
 	AOIDuration time.Duration
@@ -97,7 +106,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	r := &Runtime{
 		world: w,
 		sessions: session.NewRegistry(),
-		replication: replication.NewService(),
+		replication: replication.NewService(config.ReplicationPolicy),
 		characters: characters,
 		queue: newCommandQueue(config.CommandQueueCapacity),
 		config: config,

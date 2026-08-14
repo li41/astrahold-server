@@ -42,8 +42,10 @@ func TestEntityVitalsBackpressureRetriesWithoutDeliveryError(t *testing.T) {
 	if err := rt.characters.Register(1); err != nil { t.Fatal(err) }
 	rt.ensureEntityVitalsRevision(1)
 
-	// Build 一次 view state，模擬 EntitySpawn 已建立 AOI knowledge。
+	// S3-E.1 起 Build 只表示「想送 Spawn」，只有 Reliable TrySend 成功後才是 lifecycle knowledge。
+	// 此測試專注 Vitals retry，因此直接確認 Spawn 已成功進 outbound queue。
 	rt.replication.Build(s.ID, 1, 0, 1, []world.EntityState{entity})
+	rt.replication.ConfirmSpawn(s.ID, entity.ID)
 
 	first := StepReport{}
 	rt.replicateEntityVitals(1, &first)
