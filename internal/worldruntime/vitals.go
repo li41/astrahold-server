@@ -73,15 +73,28 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 }
 
 // replicateEntityVitals 將 Character full-state 視為可重送的 Reliable state，而不是一次性事件。
-// S3-E.6 對 Spawn 建立的 initial full state 加 per-session work budget；成功才刪 pending，
-// 第一個 Reliable backpressure 後停止該 Session 本 tick 的 initial vitals 工作。
-// Dirty fan-out 保持原本 latest full-state retry semantics。
+// Initial full-state 同時受 per-session 32 與 global per-world-tick budget 約束；global budget
+// 以 Session round-robin 起點輪轉，避免固定低 ID 在持續 churn 中總是先取得 Vitals quantum。
+// Dirty gameplay fan-out 不共用這個 bootstrap budget，仍保留 latest full-state retry semantics。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
-	for sessionID, pending := range r.sessionVitalsPending {
-		s, ok := r.sessions.Get(sessionID)
-		if !ok {
-			delete(r.sessionVitalsPending, sessionID)
-			delete(r.sessionVitalsRevision, sessionID)
+	sessions := r.sessions.List()
+	report.Metrics.InitialVitalsGlobalBudget = r.config.MaxInitialVitalsPerTick
+	globalRemaining := r.config.MaxInitialVitalsPerTick
+	startIndex := 0
+	if len(sessions) > 0 {
+		startIndex = r.vitalsSessionCursor % len(sessions)
+		if startIndex < 0 {
+			startIndex = 0
+		}
+	}
+	budgetExhaustedNextCursor := -1
+
+	for order := 0; order < len(sessions); order++ {
+		index := (startIndex + order) % len(sessions)
+		s := sessions[index]
+		sessionID := s.ID
+		pending := r.sessionVitalsPending[sessionID]
+		if len(pending) == 0 {
 			continue
 		}
 		delivered := r.ensureSessionVitalsDelivered(sessionID)
@@ -103,7 +116,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				delete(pending, entityID)
 				continue
 			}
-			if selected >= maxInitialVitalsPerSessionTick {
+			if selected >= maxInitialVitalsPerSessionTick || globalRemaining <= 0 {
 				break
 			}
 			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
@@ -113,11 +126,34 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				continue
 			}
 			selected++
+			globalRemaining--
+			report.Metrics.InitialVitalsGlobalSelected++
 			delivered[entityID] = revision
 			delete(pending, entityID)
 		}
 		if len(pending) == 0 {
 			delete(r.sessionVitalsPending, sessionID)
+		}
+		if globalRemaining <= 0 {
+			report.Metrics.InitialVitalsGlobalBudgetExhausted = true
+			budgetExhaustedNextCursor = (index + 1) % len(sessions)
+			break
+		}
+	}
+
+	if len(sessions) > 0 {
+		if budgetExhaustedNextCursor >= 0 {
+			r.vitalsSessionCursor = budgetExhaustedNextCursor
+		} else {
+			r.vitalsSessionCursor = (startIndex + 1) % len(sessions)
+		}
+	}
+
+	// 若 Session 已離線但其 pending map 還沒被 remove command 清掉，做稀有 cleanup。
+	for sessionID := range r.sessionVitalsPending {
+		if _, ok := r.sessions.Get(sessionID); !ok {
+			delete(r.sessionVitalsPending, sessionID)
+			delete(r.sessionVitalsRevision, sessionID)
 		}
 	}
 
@@ -127,7 +163,6 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 
 	// Dirty fan-out 是 O(Sessions × dirty entities)，而不是 O(Sessions × all characters) 每 tick。
 	// 若某 Session backpressure，該 entity 保留 dirty，下一 tick retry latest full state。
-	sessions := r.sessions.List()
 	for entityID := range r.dirtyVitalsEntities {
 		state, ok := r.characters.State(entityID)
 		if !ok {
