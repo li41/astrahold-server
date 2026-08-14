@@ -1,0 +1,78 @@
+name: S3-E Scaling 500
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/loadbot/**'
+      - 'cmd/loadserver/**'
+      - 'internal/codec/**'
+      - 'internal/protocol/**'
+      - 'internal/replication/**'
+      - 'internal/loadlab/**'
+      - 'internal/spatial/**'
+      - 'internal/simulation/**'
+      - 'internal/worldruntime/**'
+      - 'internal/netadapter/tcpudp/**'
+      - '.github/workflows/s3e-scaling.yml'
+
+jobs:
+  gate-zerg-500:
+    if: startsWith(github.head_ref, 'agent/s3e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Build load tools
+        run: |
+          go build -o /tmp/astrahold-loadserver ./cmd/loadserver
+          go build -o /tmp/astrahold-loadbot ./cmd/loadbot
+      - name: Run 500-client Gate Zerg scaling regression
+        shell: bash
+        run: |
+          set -u
+          mkdir -p artifacts
+          /tmp/astrahold-loadserver \
+            -tcp 127.0.0.1:18777 \
+            -udp 127.0.0.1:18778 \
+            -clients 500 \
+            -scenario gate-zerg \
+            -duration 10s \
+            -shutdown-grace 2s \
+            -ready-timeout 60s \
+            -report artifacts/server.json \
+            > artifacts/server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 1
+
+          set +e
+          /tmp/astrahold-loadbot \
+            -tcp 127.0.0.1:18777 \
+            -clients 500 \
+            -scenario gate-zerg \
+            -input-rate 20 \
+            -ramp-up 5s \
+            -duration 17s \
+            -report artifacts/bots.json \
+            > artifacts/bots.log 2>&1
+          BOT_STATUS=$?
+          wait "$SERVER_PID"
+          SERVER_STATUS=$?
+          set -e
+
+          cat artifacts/server.json || true
+          cat artifacts/bots.json || true
+          test "$BOT_STATUS" -eq 0
+          test "$SERVER_STATUS" -eq 0
+          jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
+          jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
+          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
+      - name: Upload 500-client scaling reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3e-gate-zerg-500
+          path: artifacts/
