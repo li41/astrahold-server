@@ -30,19 +30,24 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 				prunePendingDeparted(state)
 			}
 		} else {
-			// 一般 membership change 才做 subset/removal 判斷與完整 dense rebuild。
-			membershipRemoved := desiredMembershipRemoved(state.desiredIDs, frame, visibleIndices)
+			hadPendingDeparted := len(state.departed) > 0
+			if !hadPendingDeparted {
+				// semantic-converged world 的 common churn path：old desired 與 new desired 都是
+				// stable EntityID order。直接做線性 diff，並只保留目前 known 的 removed IDs；
+				// 不再掃 known map、逐 ID binary-search 新 desired、最後再 sort。
+				rebuildPendingDepartedFromDesiredDiff(state, frame, visibleIndices)
+			}
 			rebuildDesiredTracks(state, frame, visibleIndices)
-			if membershipRemoved {
+			if hadPendingDeparted {
+				// 連續 churn 可能在前一批 Despawn 尚未 Confirm 時再次改 AOI。這是 rare path，
+				// 保留完整 known-vs-new-desired rebuild，確保舊 pending 不遺失、重新進 AOI 可撤銷。
 				rebuildPendingDeparted(state)
-			} else if len(state.departed) > 0 {
-				prunePendingDeparted(state)
 			}
 		}
 	} else if len(state.departed) > 0 {
 		// desired 沒變時，pending departed 不可能重新進 AOI；ConfirmDespawn 又只會把
 		// 本 build 成功送出的 sorted prefix 從 known 移除。因此 retry 不需要每次重掃
-		// 整份尾段 + binary-search desired，只要剝掉已確認 prefix 即可。
+		// 整份尾段 + binary-search desired，只要剝掉已確認 prefix即可。
 		pruneConfirmedDepartedPrefix(state)
 	}
 	if limits.MaxMessages < 0 {
@@ -118,29 +123,39 @@ func appendDesiredTracks(state *viewState, frame *simulation.ReplicationFrame, v
 	}
 }
 
-// desiredMembershipRemoved 利用 desired / frame 的 stable EntityID order 做 two-pointer subset 檢查。
-// true 代表至少一個舊 desired ID 不在新 AOI；只有這種 membership change 才需要掃 known 建 Despawn list。
-func desiredMembershipRemoved(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {
-	if len(previous) == 0 {
-		return false
-	}
-	previousIndex := 0
-	for _, frameIndex := range visibleIndices {
-		if frameIndex < 0 || frameIndex >= len(frame.Entities) {
-			continue
-		}
-		id := frame.Entities[frameIndex].ID
-		for previousIndex < len(previous) && previous[previousIndex] < id {
-			return true
-		}
-		if previousIndex < len(previous) && previous[previousIndex] == id {
-			previousIndex++
-			if previousIndex == len(previous) {
-				return false
+// rebuildPendingDepartedFromDesiredDiff 只用在「沒有舊 pending Despawn」的 membership change。
+// old desired 與 new visible 都依 EntityID 排序，因此 removed IDs 可 O(old+new) 線性產生，
+// 輸出天然排序，不需要 map full scan / binary search / sort。unknown old desired 不會 Despawn。
+func rebuildPendingDepartedFromDesiredDiff(state *viewState, frame *simulation.ReplicationFrame, visibleIndices []int) {
+	state.departed = state.departed[:0]
+	oldIndex := 0
+	newIndex := 0
+	for oldIndex < len(state.desiredIDs) {
+		oldID := state.desiredIDs[oldIndex]
+		for newIndex < len(visibleIndices) {
+			frameIndex := visibleIndices[newIndex]
+			if frameIndex < 0 || frameIndex >= len(frame.Entities) {
+				newIndex++
+				continue
 			}
+			newID := frame.Entities[frameIndex].ID
+			if newID < oldID {
+				newIndex++
+				continue
+			}
+			if newID == oldID {
+				oldIndex++
+				newIndex++
+				goto nextOld
+			}
+			break
 		}
+		if _, known := state.known[oldID]; known {
+			state.departed = append(state.departed, oldID)
+		}
+		oldIndex++
+	nextOld:
 	}
-	return previousIndex < len(previous)
 }
 
 func rebuildPendingDeparted(state *viewState) {
