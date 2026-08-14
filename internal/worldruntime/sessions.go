@@ -29,6 +29,7 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 			return
 		}
 	}
+	r.ensureEntityVitalsRevision(c.session.EntityID)
 	if err := r.sessions.Add(c.session); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:c.session.ID,Err:err})
 		return
@@ -43,6 +44,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 		return
 	}
 	r.replication.Remove(c.id)
+	r.removeSessionVitals(c.id)
 	_ = s.Connection().Close()
 }
 
@@ -64,7 +66,9 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:request.Session.ID,Err:err})
 		return
 	}
+	r.ensureEntityVitalsRevision(request.Entity.ID)
 	if err := r.sessions.Add(request.Session); err != nil {
+		r.removeEntityVitals(request.Entity.ID)
 		r.characters.Remove(request.Entity.ID)
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:request.Session.ID,Err:err})
@@ -80,6 +84,8 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 		return
 	}
 	r.replication.Remove(id)
+	r.removeSessionVitals(id)
+	r.removeEntityVitals(s.EntityID)
 	r.characters.Remove(s.EntityID)
 	r.world.Remove(s.EntityID)
 	_ = s.Connection().Close()
