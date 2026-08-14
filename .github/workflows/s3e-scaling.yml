@@ -30,7 +30,7 @@ jobs:
         run: |
           go build -o /tmp/astrahold-loadserver ./cmd/loadserver
           go build -o /tmp/astrahold-loadbot ./cmd/loadbot
-      - name: Run 500-client Gate Zerg scaling regression
+      - name: Run 500-client Gate Zerg convergence + steady-state regression
         shell: bash
         run: |
           set -u
@@ -43,6 +43,8 @@ jobs:
             -duration 10s \
             -shutdown-grace 2s \
             -ready-timeout 60s \
+            -convergence-timeout 30s \
+            -convergence-stable 250ms \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
           SERVER_PID=$!
@@ -55,7 +57,7 @@ jobs:
             -scenario gate-zerg \
             -input-rate 20 \
             -ramp-up 5s \
-            -duration 17s \
+            -duration 45s \
             -report artifacts/bots.json \
             > artifacts/bots.log 2>&1
           BOT_STATUS=$?
@@ -63,6 +65,7 @@ jobs:
           SERVER_STATUS=$?
           set -e
 
+          cat artifacts/server-convergence.json || true
           cat artifacts/server.json || true
           cat artifacts/bots.json || true
           test "$BOT_STATUS" -eq 0
@@ -73,8 +76,10 @@ jobs:
           # 至少還應包含同數量的 Vitals full state 與每個 Session 一份 Dynamic state。
           jq -e '.spawns == (.requested_clients * .requested_clients)' artifacts/bots.json >/dev/null
           jq -e '.reliable_messages >= ((.requested_clients * .requested_clients * 2) + .requested_clients)' artifacts/bots.json >/dev/null
-          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
-          # 20Hz world loop 的 capacity gate：p99 必須嚴格低於 50ms tick budget。
+          # Convergence phase 必須以 application lifecycle + Reliable transport 真正 drain 結束。
+          jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == .convergence.observation.world.known_desired and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
+          # 正式 capacity gate 只讀 semantic convergence 之後的 steady-state window。
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
           jq -e '.tick_duration.p99_ms < 50' artifacts/server.json >/dev/null
       - name: Upload 500-client scaling reports
         if: always()
