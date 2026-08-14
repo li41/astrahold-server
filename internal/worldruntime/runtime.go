@@ -7,6 +7,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
@@ -84,69 +85,71 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore                  int
-	CommandQueueDepthAfter                   int
-	CommandsDrained                         int
-	EntityActionsApplied                    int
-	DeathOutcomesRecorded                   int
-	DeathPenaltyTransactionsApplied         int
-	DeathPenaltyCheckpointForfeits          int
-	RespawnsScheduled                       int
-	RespawnPolicyDue                        int
-	RespawnsApplied                         int
-	ReviveProtectionsGranted                int
-	ReviveProtectionDamageBlocks            int
+	CommandQueueDepthBefore                   int
+	CommandQueueDepthAfter                    int
+	CommandsDrained                          int
+	EntityActionsApplied                     int
+	DeathOutcomesRecorded                    int
+	DeathOutcomeEventsEnqueued                int
+	DeathOutcomeEventEnqueueFailures          int
+	DeathPenaltyTransactionsApplied          int
+	DeathPenaltyCheckpointForfeits           int
+	RespawnsScheduled                        int
+	RespawnPolicyDue                         int
+	RespawnsApplied                          int
+	ReviveProtectionsGranted                 int
+	ReviveProtectionDamageBlocks             int
 	ReviveProtectionsCancelledByDamageAction int
-	DirtyVitalsGlobalBudget                 int
-	DirtyVitalsSelected                     int
-	DirtyVitalsGlobalBudgetExhausted        bool
-	DirtyVitalsEntities                     int
-	DirtyVitalsOldestDirtyAgeTicks          uint64
+	DirtyVitalsGlobalBudget                  int
+	DirtyVitalsSelected                      int
+	DirtyVitalsGlobalBudgetExhausted         bool
+	DirtyVitalsEntities                      int
+	DirtyVitalsOldestDirtyAgeTicks           uint64
 	DirtyVitalsOldestPendingRevisionAgeTicks uint64
-	DirtyVitalsOldestPendingEntityID        world.EntityID
-	DirtyVitalsOldestPendingSessionID       session.ID
-	DirtyVitalsEntityCompletions            int
-	DirtyVitalsMaxEntityCompletionTicks     uint64
-	DirtyVitalsMaxRevisionCompletionTicks   uint64
-	DirtyVitalsSessionCursorAdvances        int
-	DirtyVitalsSessionCursorWraps           int
-	SessionsReplicated                      int
-	AOIQueries                              int
-	AOICandidates                           int
-	AOIVisible                              int
-	AOISharedCandidateBuilds                int
-	AOISharedCandidateReuses                int
-	AOIPhysicalCandidateScans               int
-	OutboundMessages                        int
-	SnapshotCandidates                      int
-	SnapshotTransforms                      int
-	SnapshotDeferred                        int
-	SnapshotForcedRefreshes                 int
-	SnapshotNearTransforms                  int
-	SnapshotMidTransforms                   int
-	SnapshotFarTransforms                   int
-	SpawnCandidates                         int
-	SpawnSelected                           int
-	SpawnDeferred                           int
-	DespawnCandidates                       int
-	DespawnSelected                         int
-	DespawnDeferred                         int
-	LifecycleBackpressureStops              int
-	LifecycleGlobalBudget                   int
-	LifecycleGlobalSelected                 int
-	LifecycleGlobalBudgetExhausted          bool
-	InitialVitalsGlobalBudget               int
-	InitialVitalsGlobalSelected             int
-	InitialVitalsGlobalBudgetExhausted      bool
-	CommandDuration                         time.Duration
-	SimulationDuration                      time.Duration
-	DynamicReplicationDuration              time.Duration
-	ReplicationFrameBuildDuration           time.Duration
-	AOIDuration                             time.Duration
-	ReplicationBuildDuration                time.Duration
-	DeliveryDuration                        time.Duration
-	VitalsReplicationDuration               time.Duration
-	TotalDuration                           time.Duration
+	DirtyVitalsOldestPendingEntityID         world.EntityID
+	DirtyVitalsOldestPendingSessionID        session.ID
+	DirtyVitalsEntityCompletions             int
+	DirtyVitalsMaxEntityCompletionTicks      uint64
+	DirtyVitalsMaxRevisionCompletionTicks    uint64
+	DirtyVitalsSessionCursorAdvances         int
+	DirtyVitalsSessionCursorWraps            int
+	SessionsReplicated                       int
+	AOIQueries                               int
+	AOICandidates                            int
+	AOIVisible                               int
+	AOISharedCandidateBuilds                 int
+	AOISharedCandidateReuses                 int
+	AOIPhysicalCandidateScans                int
+	OutboundMessages                         int
+	SnapshotCandidates                       int
+	SnapshotTransforms                       int
+	SnapshotDeferred                         int
+	SnapshotForcedRefreshes                  int
+	SnapshotNearTransforms                   int
+	SnapshotMidTransforms                    int
+	SnapshotFarTransforms                    int
+	SpawnCandidates                          int
+	SpawnSelected                            int
+	SpawnDeferred                            int
+	DespawnCandidates                        int
+	DespawnSelected                          int
+	DespawnDeferred                          int
+	LifecycleBackpressureStops               int
+	LifecycleGlobalBudget                    int
+	LifecycleGlobalSelected                  int
+	LifecycleGlobalBudgetExhausted           bool
+	InitialVitalsGlobalBudget                int
+	InitialVitalsGlobalSelected              int
+	InitialVitalsGlobalBudgetExhausted       bool
+	CommandDuration                          time.Duration
+	SimulationDuration                       time.Duration
+	DynamicReplicationDuration               time.Duration
+	ReplicationFrameBuildDuration            time.Duration
+	AOIDuration                              time.Duration
+	ReplicationBuildDuration                 time.Duration
+	DeliveryDuration                         time.Duration
+	VitalsReplicationDuration                time.Duration
+	TotalDuration                            time.Duration
 }
 
 type StepReport struct {
@@ -178,6 +181,7 @@ type Runtime struct {
 	combat                    *combat.Service
 	respawnPolicy             *respawnpolicy.Service
 	deathPenalty              *deathpenalty.Service
+	deathOutbox               *deathoutcome.Outbox
 	deathRevision             map[world.EntityID]uint64
 	dynamicRevision           uint64
 	sessionDynamicRevision    map[session.ID]uint64
