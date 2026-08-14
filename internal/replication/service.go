@@ -44,8 +44,10 @@ type snapshotCandidate struct {
 }
 
 type viewState struct {
+	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
+	// AOI 可見但 Spawn backpressure 的 Entity 不可提前標成 known，否則 Client 會永久漏 Spawn。
 	known         map[world.EntityID]struct{}
-	scratch       map[world.EntityID]struct{}
+	desired       map[world.EntityID]struct{}
 	departed      []world.EntityID
 	lastSnapshot  map[world.EntityID]sentTransform
 	lastSentBuild map[world.EntityID]uint64
@@ -72,7 +74,7 @@ func NewService(policies ...Policy) *Service {
 func newViewState() *viewState {
 	return &viewState{
 		known:         make(map[world.EntityID]struct{}),
-		scratch:       make(map[world.EntityID]struct{}),
+		desired:       make(map[world.EntityID]struct{}),
 		lastSnapshot:  make(map[world.EntityID]sentTransform),
 		lastSentBuild: make(map[world.EntityID]uint64),
 	}
@@ -87,7 +89,8 @@ func (s *Service) Register(id session.ID) {
 
 func (s *Service) Remove(id session.ID) { delete(s.views, id) }
 
-// Knows 回報該 Session 是否已經收過 EntitySpawn，供低頻 Reliable entity state 做 AOI fan-out。
+// Knows 回報該 Session 是否已成功排入 EntitySpawn。
+// 這是 Reliable lifecycle knowledge，不等同於「目前 AOI 可見」。
 func (s *Service) Knows(sessionID session.ID, entityID world.EntityID) bool {
 	state := s.views[sessionID]
 	if state == nil {
@@ -95,6 +98,28 @@ func (s *Service) Knows(sessionID session.ID, entityID world.EntityID) bool {
 	}
 	_, ok := state.known[entityID]
 	return ok
+}
+
+// ConfirmSpawn 只在 EntitySpawn TrySend 成功後呼叫。
+// Spawn backpressure 時不呼叫，下一次 Build 會自然重送最新 full spawn state。
+func (s *Service) ConfirmSpawn(sessionID session.ID, entityID world.EntityID) {
+	state := s.views[sessionID]
+	if state == nil {
+		return
+	}
+	state.known[entityID] = struct{}{}
+}
+
+// ConfirmDespawn 只在 EntityDespawn TrySend 成功後呼叫。
+// 在成功前保留 known，讓下一次 Build 可重試 Despawn。
+func (s *Service) ConfirmDespawn(sessionID session.ID, entityID world.EntityID) {
+	state := s.views[sessionID]
+	if state == nil {
+		return
+	}
+	delete(state.known, entityID)
+	delete(state.lastSnapshot, entityID)
+	delete(state.lastSentBuild, entityID)
 }
 
 func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, tick uint64, visible []world.EntityState) Batch {
@@ -129,17 +154,23 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		break
 	}
 
-	clear(state.scratch)
+	clear(state.desired)
 	state.candidates = state.candidates[:0]
 	messageCapacity := 4 + (s.policy.MaxTransformsPerBuild+protocol.MaxSnapshotEntitiesPerChunk-1)/protocol.MaxSnapshotEntitiesPerChunk
 	batch := Batch{Messages: make([]Outbound, 0, messageCapacity)}
 
 	for i := range ordered {
 		e := ordered[i]
-		state.scratch[e.ID] = struct{}{}
+		state.desired[e.ID] = struct{}{}
 		tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		if _, ok := state.known[e.ID]; !ok {
-			batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryReliableOrdered, Message: protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr}})
+			batch.Messages = append(batch.Messages, Outbound{
+				Delivery: protocol.DeliveryReliableOrdered,
+				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
+			})
+			// Spawn 自己已包含 authoritative transform。直到 Reliable Spawn 成功前，
+			// 不把這個 Entity 放進 realtime snapshot，也不讓 Vitals 認為 Client 已知。
+			continue
 		}
 		if e.ID == selfID {
 			continue
@@ -176,15 +207,16 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 
 	state.departed = state.departed[:0]
 	for id := range state.known {
-		if _, ok := state.scratch[id]; !ok {
+		if _, ok := state.desired[id]; !ok {
 			state.departed = append(state.departed, id)
 		}
 	}
 	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 	for _, id := range state.departed {
-		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryReliableOrdered, Message: protocol.EntityDespawn{EntityID: id}})
-		delete(state.lastSnapshot, id)
-		delete(state.lastSentBuild, id)
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Message:  protocol.EntityDespawn{EntityID: id},
+		})
 	}
 
 	batch.Stats.SnapshotCandidates = len(state.candidates)
@@ -248,13 +280,29 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		if end > len(transforms) {
 			end = len(transforms)
 		}
-		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryRealtimeSequenced, Message: protocol.WorldSnapshot{Tick: tick, ChunkIndex: uint16(chunk), ChunkCount: uint16(chunkCount), Entities: transforms[start:end]}})
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryRealtimeSequenced,
+			Message: protocol.WorldSnapshot{
+				Tick:       tick,
+				ChunkIndex: uint16(chunk),
+				ChunkCount: uint16(chunkCount),
+				Entities:   transforms[start:end],
+			},
+		})
 	}
 
 	if hasSelf {
-		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryRealtimeSequenced, Message: protocol.PositionCorrection{Tick: tick, EntityID: selfTransform.EntityID, Position: selfTransform.Position, Yaw: selfTransform.Yaw, LastProcessedInputSequence: lastProcessedInput}})
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryRealtimeSequenced,
+			Message: protocol.PositionCorrection{
+				Tick:                       tick,
+				EntityID:                   selfTransform.EntityID,
+				Position:                   selfTransform.Position,
+				Yaw:                        selfTransform.Yaw,
+				LastProcessedInputSequence: lastProcessedInput,
+			},
+		})
 	}
 
-	state.known, state.scratch = state.scratch, state.known
 	return batch
 }
