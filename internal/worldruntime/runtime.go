@@ -81,8 +81,8 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore                 int
-	CommandQueueDepthAfter                  int
+	CommandQueueDepthBefore                  int
+	CommandQueueDepthAfter                   int
 	CommandsDrained                         int
 	EntityActionsApplied                    int
 	DirtyVitalsGlobalBudget                 int
@@ -147,9 +147,9 @@ type StepReport struct {
 }
 
 type dirtyVitalsProgress struct {
-	FirstTick      uint64
-	Revision       uint64
-	RevisionTick   uint64
+	FirstTick    uint64
+	Revision     uint64
+	RevisionTick uint64
 }
 
 type Runtime struct {
@@ -177,6 +177,7 @@ type Runtime struct {
 	lifecycleSessionCursor    int
 	vitalsSessionCursor       int
 	lifecycleChurnActive      bool
+	initialBootstrapState     uint8
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
