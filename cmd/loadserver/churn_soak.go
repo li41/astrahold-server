@@ -12,73 +12,75 @@ import (
 )
 
 type churnSoakRoundSummary struct {
-	Round                       int     `json:"round"`
-	Direction                   string  `json:"direction"`
-	TriggerToConvergedSeconds   float64 `json:"trigger_to_converged_seconds"`
-	ObservedNonConverged        bool    `json:"observed_non_converged"`
-	DesiredRelationships        int     `json:"desired_relationships"`
-	KnownDesired                int     `json:"known_desired"`
-	PendingSpawns               int     `json:"pending_spawns"`
-	PendingDespawns             int     `json:"pending_despawns"`
-	PendingVitalsEntities       int     `json:"pending_vitals_entities"`
-	DirtyVitalsEntities         int     `json:"dirty_vitals_entities"`
-	PendingDynamicSessions      int     `json:"pending_dynamic_sessions"`
-	ReliableQueued              int     `json:"reliable_queued"`
-	ReliableInFlight            int     `json:"reliable_in_flight"`
-	TickP99MS                   float64 `json:"tick_p99_ms"`
-	TickMaxMS                   float64 `json:"tick_max_ms"`
-	SpawnSelected               uint64  `json:"spawn_selected"`
-	DespawnSelected             uint64  `json:"despawn_selected"`
-	InitialVitalsSelected       uint64  `json:"initial_vitals_selected"`
-	CombatActionsApplied        uint64  `json:"combat_actions_applied"`
-	ActionRejections            uint64  `json:"action_rejections"`
-	DirtyVitalsSelected         uint64  `json:"dirty_vitals_selected"`
-	LifecycleBackpressureStops  uint64  `json:"lifecycle_backpressure_stops"`
-	MaxLifecycleSelectedPerTick int     `json:"max_lifecycle_selected_per_tick"`
-	MaxInitialVitalsPerTick     int     `json:"max_initial_vitals_selected_per_tick"`
-	TotalAllocBytes             uint64  `json:"total_alloc_bytes"`
-	Mallocs                     uint64  `json:"mallocs"`
-	HeapAllocBytes              uint64  `json:"heap_alloc_bytes"`
-	HeapSysBytes                uint64  `json:"heap_sys_bytes"`
-	NumGC                       uint32  `json:"num_gc"`
-	GCPauseTotalMS              float64 `json:"gc_pause_total_ms"`
-	CommandErrors               uint64  `json:"command_errors"`
-	UnexpectedTickErrors        uint64  `json:"unexpected_tick_errors"`
-	DeliveryErrors              uint64  `json:"delivery_errors"`
-	NetworkErrors               uint64  `json:"network_errors"`
-	DatagramTooLarge            uint64  `json:"datagram_too_large"`
+	Round                         int     `json:"round"`
+	Direction                     string  `json:"direction"`
+	TriggerToConvergedSeconds     float64 `json:"trigger_to_converged_seconds"`
+	ObservedNonConverged          bool    `json:"observed_non_converged"`
+	DesiredRelationships          int     `json:"desired_relationships"`
+	KnownDesired                  int     `json:"known_desired"`
+	PendingSpawns                 int     `json:"pending_spawns"`
+	PendingDespawns               int     `json:"pending_despawns"`
+	PendingVitalsEntities         int     `json:"pending_vitals_entities"`
+	DirtyVitalsEntities           int     `json:"dirty_vitals_entities"`
+	PendingDynamicSessions        int     `json:"pending_dynamic_sessions"`
+	ReliableQueued                int     `json:"reliable_queued"`
+	ReliableInFlight              int     `json:"reliable_in_flight"`
+	TickP99MS                     float64 `json:"tick_p99_ms"`
+	TickMaxMS                     float64 `json:"tick_max_ms"`
+	SpawnSelected                 uint64  `json:"spawn_selected"`
+	DespawnSelected               uint64  `json:"despawn_selected"`
+	InitialVitalsSelected         uint64  `json:"initial_vitals_selected"`
+	CombatActionsApplied          uint64  `json:"combat_actions_applied"`
+	ActionRejections              uint64  `json:"action_rejections"`
+	DirtyVitalsSelected           uint64  `json:"dirty_vitals_selected"`
+	MaxDirtyVitalsSelectedPerTick int     `json:"max_dirty_vitals_selected_per_tick"`
+	LifecycleBackpressureStops    uint64  `json:"lifecycle_backpressure_stops"`
+	MaxLifecycleSelectedPerTick   int     `json:"max_lifecycle_selected_per_tick"`
+	MaxInitialVitalsPerTick       int     `json:"max_initial_vitals_selected_per_tick"`
+	TotalAllocBytes               uint64  `json:"total_alloc_bytes"`
+	Mallocs                       uint64  `json:"mallocs"`
+	HeapAllocBytes                uint64  `json:"heap_alloc_bytes"`
+	HeapSysBytes                  uint64  `json:"heap_sys_bytes"`
+	NumGC                         uint32  `json:"num_gc"`
+	GCPauseTotalMS                float64 `json:"gc_pause_total_ms"`
+	CommandErrors                 uint64  `json:"command_errors"`
+	UnexpectedTickErrors          uint64  `json:"unexpected_tick_errors"`
+	DeliveryErrors                uint64  `json:"delivery_errors"`
+	NetworkErrors                 uint64  `json:"network_errors"`
+	DatagramTooLarge              uint64  `json:"datagram_too_large"`
 }
 
 type churnSoakSummary struct {
-	SchemaVersion                int                     `json:"schema_version"`
-	Scenario                     loadlab.Scenario        `json:"scenario"`
-	ExpectedClients              int                     `json:"expected_clients"`
-	Rounds                       int                     `json:"rounds"`
-	Round                        []churnSoakRoundSummary `json:"round"`
-	MaxTriggerToConvergedSeconds float64                 `json:"max_trigger_to_converged_seconds"`
-	MaxTickP99MS                 float64                 `json:"max_tick_p99_ms"`
-	MaxTickMS                    float64                 `json:"max_tick_ms"`
-	TotalSpawnSelected           uint64                  `json:"total_spawn_selected"`
-	TotalDespawnSelected         uint64                  `json:"total_despawn_selected"`
-	TotalInitialVitalsSelected   uint64                  `json:"total_initial_vitals_selected"`
-	TotalCombatActionsApplied    uint64                  `json:"total_combat_actions_applied"`
-	TotalActionRejections        uint64                  `json:"total_action_rejections"`
-	TotalDirtyVitalsSelected     uint64                  `json:"total_dirty_vitals_selected"`
-	TotalAllocBytes              uint64                  `json:"total_alloc_bytes"`
-	MaxRoundTotalAllocBytes      uint64                  `json:"max_round_total_alloc_bytes"`
-	MaxHeapAllocBytes            uint64                  `json:"max_heap_alloc_bytes"`
-	MaxHeapSysBytes              uint64                  `json:"max_heap_sys_bytes"`
-	FirstRoundHeapAllocBytes     uint64                  `json:"first_round_heap_alloc_bytes"`
-	LastRoundHeapAllocBytes      uint64                  `json:"last_round_heap_alloc_bytes"`
-	HeapAllocGrowthBytes         int64                   `json:"heap_alloc_growth_bytes"`
-	FirstRoundHeapSysBytes       uint64                  `json:"first_round_heap_sys_bytes"`
-	LastRoundHeapSysBytes        uint64                  `json:"last_round_heap_sys_bytes"`
-	HeapSysGrowthBytes           int64                   `json:"heap_sys_growth_bytes"`
-	TotalGC                      uint64                  `json:"total_gc"`
-	TotalGCPauseMS               float64                 `json:"total_gc_pause_ms"`
-	TotalLifecycleBackpressure   uint64                  `json:"total_lifecycle_backpressure_stops"`
-	MaxLifecycleSelectedPerTick  int                     `json:"max_lifecycle_selected_per_tick"`
-	MaxInitialVitalsSelectedTick int                     `json:"max_initial_vitals_selected_per_tick"`
+	SchemaVersion                   int                     `json:"schema_version"`
+	Scenario                        loadlab.Scenario        `json:"scenario"`
+	ExpectedClients                 int                     `json:"expected_clients"`
+	Rounds                          int                     `json:"rounds"`
+	Round                           []churnSoakRoundSummary `json:"round"`
+	MaxTriggerToConvergedSeconds    float64                 `json:"max_trigger_to_converged_seconds"`
+	MaxTickP99MS                    float64                 `json:"max_tick_p99_ms"`
+	MaxTickMS                       float64                 `json:"max_tick_ms"`
+	TotalSpawnSelected              uint64                  `json:"total_spawn_selected"`
+	TotalDespawnSelected            uint64                  `json:"total_despawn_selected"`
+	TotalInitialVitalsSelected      uint64                  `json:"total_initial_vitals_selected"`
+	TotalCombatActionsApplied       uint64                  `json:"total_combat_actions_applied"`
+	TotalActionRejections           uint64                  `json:"total_action_rejections"`
+	TotalDirtyVitalsSelected        uint64                  `json:"total_dirty_vitals_selected"`
+	MaxDirtyVitalsSelectedPerTick   int                     `json:"max_dirty_vitals_selected_per_tick"`
+	TotalAllocBytes                 uint64                  `json:"total_alloc_bytes"`
+	MaxRoundTotalAllocBytes         uint64                  `json:"max_round_total_alloc_bytes"`
+	MaxHeapAllocBytes               uint64                  `json:"max_heap_alloc_bytes"`
+	MaxHeapSysBytes                 uint64                  `json:"max_heap_sys_bytes"`
+	FirstRoundHeapAllocBytes        uint64                  `json:"first_round_heap_alloc_bytes"`
+	LastRoundHeapAllocBytes         uint64                  `json:"last_round_heap_alloc_bytes"`
+	HeapAllocGrowthBytes            int64                   `json:"heap_alloc_growth_bytes"`
+	FirstRoundHeapSysBytes          uint64                  `json:"first_round_heap_sys_bytes"`
+	LastRoundHeapSysBytes           uint64                  `json:"last_round_heap_sys_bytes"`
+	HeapSysGrowthBytes              int64                   `json:"heap_sys_growth_bytes"`
+	TotalGC                         uint64                  `json:"total_gc"`
+	TotalGCPauseMS                  float64                 `json:"total_gc_pause_ms"`
+	TotalLifecycleBackpressure      uint64                  `json:"total_lifecycle_backpressure_stops"`
+	MaxLifecycleSelectedPerTick     int                     `json:"max_lifecycle_selected_per_tick"`
+	MaxInitialVitalsSelectedPerTick int                     `json:"max_initial_vitals_selected_per_tick"`
 }
 
 func runTeleportChurnRounds(
@@ -162,7 +164,7 @@ func runTeleportChurnRounds(
 		}
 		reports = append(reports, report)
 		combatReports = append(combatReports, combatStats)
-		log.Printf("teleport churn round %d/%d converged: %.3fs p99=%.3fms combat=%d rejected=%d dirty_vitals=%d heap_alloc=%d heap_sys=%d gc=%d spawn=%d despawn=%d initial_vitals=%d", round, rounds, meta.TriggerToConvergedSeconds, report.TickDuration.P99MS, combatStats.ActionsApplied, combatStats.ActionRejections, combatStats.DirtyVitalsSelected, report.Memory.HeapAllocBytes, report.Memory.HeapSysBytes, report.Memory.NumGC, report.Lifecycle.SpawnSelected, report.Lifecycle.DespawnSelected, report.Lifecycle.InitialVitalsSelected)
+		log.Printf("teleport churn round %d/%d converged: %.3fs p99=%.3fms combat=%d rejected=%d dirty_vitals=%d dirty_vitals_max_tick=%d heap_alloc=%d heap_sys=%d gc=%d spawn=%d despawn=%d initial_vitals=%d", round, rounds, meta.TriggerToConvergedSeconds, report.TickDuration.P99MS, combatStats.ActionsApplied, combatStats.ActionRejections, combatStats.DirtyVitalsSelected, combatStats.MaxDirtyVitalsSelectedPerTick, report.Memory.HeapAllocBytes, report.Memory.HeapSysBytes, report.Memory.NumGC, report.Lifecycle.SpawnSelected, report.Lifecycle.DespawnSelected, report.Lifecycle.InitialVitalsSelected)
 	}
 
 	summary := buildChurnSoakSummary(scenario, clients, reports, combatReports)
@@ -187,41 +189,42 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 			combatStats = combatReports[i]
 		}
 		round := churnSoakRoundSummary{
-			Round:                       i + 1,
-			Direction:                   "swap",
-			TriggerToConvergedSeconds:   report.Convergence.TriggerToConvergedSeconds,
-			ObservedNonConverged:        report.Convergence.ObservedNonConverged,
-			DesiredRelationships:        world.DesiredRelationships,
-			KnownDesired:                world.KnownDesired,
-			PendingSpawns:               world.PendingSpawns,
-			PendingDespawns:             world.PendingDespawns,
-			PendingVitalsEntities:       world.PendingVitalsEntities,
-			DirtyVitalsEntities:         world.DirtyVitalsEntities,
-			PendingDynamicSessions:      world.PendingDynamicSessions,
-			ReliableQueued:              report.Convergence.Reliable.Queued,
-			ReliableInFlight:            report.Convergence.Reliable.InFlight,
-			TickP99MS:                   report.TickDuration.P99MS,
-			TickMaxMS:                   report.TickDuration.MaxMS,
-			SpawnSelected:               report.Lifecycle.SpawnSelected,
-			DespawnSelected:             report.Lifecycle.DespawnSelected,
-			InitialVitalsSelected:       report.Lifecycle.InitialVitalsSelected,
-			CombatActionsApplied:        combatStats.ActionsApplied,
-			ActionRejections:            combatStats.ActionRejections,
-			DirtyVitalsSelected:         combatStats.DirtyVitalsSelected,
-			LifecycleBackpressureStops:  report.Lifecycle.BackpressureStops,
-			MaxLifecycleSelectedPerTick: report.Lifecycle.MaxGlobalSelectedPerTick,
-			MaxInitialVitalsPerTick:     report.Lifecycle.MaxInitialVitalsSelectedPerTick,
-			TotalAllocBytes:             report.Memory.TotalAllocBytes,
-			Mallocs:                     report.Memory.Mallocs,
-			HeapAllocBytes:              report.Memory.HeapAllocBytes,
-			HeapSysBytes:                report.Memory.HeapSysBytes,
-			NumGC:                       report.Memory.NumGC,
-			GCPauseTotalMS:              report.Memory.GCPauseTotalMS,
-			CommandErrors:               report.Errors.CommandErrors,
-			UnexpectedTickErrors:        report.Errors.UnexpectedTickErrors,
-			DeliveryErrors:              report.Errors.DeliveryErrors,
-			NetworkErrors:               report.Errors.NetworkErrors,
-			DatagramTooLarge:            report.Errors.DatagramTooLarge,
+			Round:                         i + 1,
+			Direction:                     "swap",
+			TriggerToConvergedSeconds:     report.Convergence.TriggerToConvergedSeconds,
+			ObservedNonConverged:          report.Convergence.ObservedNonConverged,
+			DesiredRelationships:          world.DesiredRelationships,
+			KnownDesired:                  world.KnownDesired,
+			PendingSpawns:                 world.PendingSpawns,
+			PendingDespawns:               world.PendingDespawns,
+			PendingVitalsEntities:         world.PendingVitalsEntities,
+			DirtyVitalsEntities:           world.DirtyVitalsEntities,
+			PendingDynamicSessions:        world.PendingDynamicSessions,
+			ReliableQueued:                report.Convergence.Reliable.Queued,
+			ReliableInFlight:              report.Convergence.Reliable.InFlight,
+			TickP99MS:                     report.TickDuration.P99MS,
+			TickMaxMS:                     report.TickDuration.MaxMS,
+			SpawnSelected:                 report.Lifecycle.SpawnSelected,
+			DespawnSelected:               report.Lifecycle.DespawnSelected,
+			InitialVitalsSelected:         report.Lifecycle.InitialVitalsSelected,
+			CombatActionsApplied:          combatStats.ActionsApplied,
+			ActionRejections:              combatStats.ActionRejections,
+			DirtyVitalsSelected:           combatStats.DirtyVitalsSelected,
+			MaxDirtyVitalsSelectedPerTick: combatStats.MaxDirtyVitalsSelectedPerTick,
+			LifecycleBackpressureStops:    report.Lifecycle.BackpressureStops,
+			MaxLifecycleSelectedPerTick:   report.Lifecycle.MaxGlobalSelectedPerTick,
+			MaxInitialVitalsPerTick:       report.Lifecycle.MaxInitialVitalsSelectedPerTick,
+			TotalAllocBytes:               report.Memory.TotalAllocBytes,
+			Mallocs:                       report.Memory.Mallocs,
+			HeapAllocBytes:                report.Memory.HeapAllocBytes,
+			HeapSysBytes:                  report.Memory.HeapSysBytes,
+			NumGC:                         report.Memory.NumGC,
+			GCPauseTotalMS:                report.Memory.GCPauseTotalMS,
+			CommandErrors:                 report.Errors.CommandErrors,
+			UnexpectedTickErrors:          report.Errors.UnexpectedTickErrors,
+			DeliveryErrors:                report.Errors.DeliveryErrors,
+			NetworkErrors:                 report.Errors.NetworkErrors,
+			DatagramTooLarge:              report.Errors.DatagramTooLarge,
 		}
 		if (i+1)%2 == 0 {
 			round.Direction = "restore"
@@ -235,6 +238,9 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 		}
 		if round.TickMaxMS > summary.MaxTickMS {
 			summary.MaxTickMS = round.TickMaxMS
+		}
+		if round.MaxDirtyVitalsSelectedPerTick > summary.MaxDirtyVitalsSelectedPerTick {
+			summary.MaxDirtyVitalsSelectedPerTick = round.MaxDirtyVitalsSelectedPerTick
 		}
 		summary.TotalSpawnSelected += round.SpawnSelected
 		summary.TotalDespawnSelected += round.DespawnSelected
@@ -258,8 +264,8 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 		if round.MaxLifecycleSelectedPerTick > summary.MaxLifecycleSelectedPerTick {
 			summary.MaxLifecycleSelectedPerTick = round.MaxLifecycleSelectedPerTick
 		}
-		if round.MaxInitialVitalsPerTick > summary.MaxInitialVitalsSelectedTick {
-			summary.MaxInitialVitalsSelectedTick = round.MaxInitialVitalsPerTick
+		if round.MaxInitialVitalsPerTick > summary.MaxInitialVitalsSelectedPerTick {
+			summary.MaxInitialVitalsSelectedPerTick = round.MaxInitialVitalsPerTick
 		}
 	}
 	if len(summary.Round) > 0 {
