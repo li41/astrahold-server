@@ -71,17 +71,21 @@ type ReplicationSummary struct {
 }
 
 type LifecycleSummary struct {
-	SpawnCandidates          uint64 `json:"spawn_candidates"`
-	SpawnSelected            uint64 `json:"spawn_selected"`
-	SpawnDeferred            uint64 `json:"spawn_deferred"`
-	DespawnCandidates        uint64 `json:"despawn_candidates"`
-	DespawnSelected          uint64 `json:"despawn_selected"`
-	DespawnDeferred          uint64 `json:"despawn_deferred"`
-	BackpressureStops        uint64 `json:"backpressure_stops"`
-	GlobalBudgetPerSnapshot  int    `json:"global_budget_per_snapshot"`
-	GlobalSelected           uint64 `json:"global_selected"`
-	GlobalBudgetExhaustions  uint64 `json:"global_budget_exhaustions"`
-	MaxGlobalSelectedPerTick int    `json:"max_global_selected_per_tick"`
+	SpawnCandidates                    uint64 `json:"spawn_candidates"`
+	SpawnSelected                      uint64 `json:"spawn_selected"`
+	SpawnDeferred                      uint64 `json:"spawn_deferred"`
+	DespawnCandidates                  uint64 `json:"despawn_candidates"`
+	DespawnSelected                    uint64 `json:"despawn_selected"`
+	DespawnDeferred                    uint64 `json:"despawn_deferred"`
+	BackpressureStops                  uint64 `json:"backpressure_stops"`
+	GlobalBudgetPerSnapshot            int    `json:"global_budget_per_snapshot"`
+	GlobalSelected                     uint64 `json:"global_selected"`
+	GlobalBudgetExhaustions            uint64 `json:"global_budget_exhaustions"`
+	MaxGlobalSelectedPerTick           int    `json:"max_global_selected_per_tick"`
+	InitialVitalsBudgetPerTick         int    `json:"initial_vitals_budget_per_tick"`
+	InitialVitalsSelected              uint64 `json:"initial_vitals_selected"`
+	InitialVitalsBudgetExhaustions     uint64 `json:"initial_vitals_budget_exhaustions"`
+	MaxInitialVitalsSelectedPerTick    int    `json:"max_initial_vitals_selected_per_tick"`
 }
 
 type ErrorSummary struct {
@@ -143,35 +147,39 @@ type ServerCollector struct {
 	deliveryDuration              time.Duration
 	vitalsReplicationDuration     time.Duration
 
-	maxQueueBefore           int
-	maxQueueAfter            int
-	commands                 uint64
-	aoiQueries               uint64
-	aoiCandidates            uint64
-	aoiVisible               uint64
-	aoiSharedCandidateBuilds uint64
-	aoiSharedCandidateReuses uint64
-	aoiPhysicalCandidateScans uint64
-	sessions                 uint64
-	messages                 uint64
-	snapshotCandidates       uint64
-	snapshotTransforms       uint64
-	snapshotDeferred         uint64
-	snapshotForcedRefreshes  uint64
-	snapshotNearTransforms   uint64
-	snapshotMidTransforms    uint64
-	snapshotFarTransforms    uint64
-	spawnCandidates          uint64
-	spawnSelected            uint64
-	spawnDeferred            uint64
-	despawnCandidates        uint64
-	despawnSelected          uint64
-	despawnDeferred          uint64
-	lifecycleBackpressureStops       uint64
-	lifecycleGlobalBudget            int
-	lifecycleGlobalSelected          uint64
-	lifecycleGlobalBudgetExhaustions uint64
-	maxLifecycleGlobalSelected       int
+	maxQueueBefore                    int
+	maxQueueAfter                     int
+	commands                          uint64
+	aoiQueries                        uint64
+	aoiCandidates                     uint64
+	aoiVisible                        uint64
+	aoiSharedCandidateBuilds          uint64
+	aoiSharedCandidateReuses          uint64
+	aoiPhysicalCandidateScans         uint64
+	sessions                          uint64
+	messages                          uint64
+	snapshotCandidates                uint64
+	snapshotTransforms                uint64
+	snapshotDeferred                  uint64
+	snapshotForcedRefreshes           uint64
+	snapshotNearTransforms            uint64
+	snapshotMidTransforms             uint64
+	snapshotFarTransforms             uint64
+	spawnCandidates                   uint64
+	spawnSelected                     uint64
+	spawnDeferred                     uint64
+	despawnCandidates                 uint64
+	despawnSelected                   uint64
+	despawnDeferred                   uint64
+	lifecycleBackpressureStops        uint64
+	lifecycleGlobalBudget             int
+	lifecycleGlobalSelected           uint64
+	lifecycleGlobalBudgetExhaustions  uint64
+	maxLifecycleGlobalSelected        int
+	initialVitalsGlobalBudget         int
+	initialVitalsGlobalSelected       uint64
+	initialVitalsBudgetExhaustions    uint64
+	maxInitialVitalsGlobalSelected    int
 
 	commandErrors        uint64
 	blockedMoves         uint64
@@ -186,8 +194,6 @@ func NewServerCollector(tickRateHz, snapshotRateHz int) *ServerCollector {
 	return &ServerCollector{tickRateHz: tickRateHz, snapshotRate: snapshotRateHz}
 }
 
-// Reset 在所有預期 Client ready 後開始新的量測 window。
-// 不可用整個 struct assignment reset，因為 mu 可能正處於 locked 狀態。
 func (c *ServerCollector) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -242,6 +248,10 @@ func (c *ServerCollector) Reset() {
 	c.lifecycleGlobalSelected = 0
 	c.lifecycleGlobalBudgetExhaustions = 0
 	c.maxLifecycleGlobalSelected = 0
+	c.initialVitalsGlobalBudget = 0
+	c.initialVitalsGlobalSelected = 0
+	c.initialVitalsBudgetExhaustions = 0
+	c.maxInitialVitalsGlobalSelected = 0
 	c.commandErrors = 0
 	c.blockedMoves = 0
 	c.unexpectedTickErrors = 0
@@ -307,6 +317,16 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	}
 	if m.LifecycleGlobalBudgetExhausted {
 		c.lifecycleGlobalBudgetExhaustions++
+	}
+	if m.InitialVitalsGlobalBudget > c.initialVitalsGlobalBudget {
+		c.initialVitalsGlobalBudget = m.InitialVitalsGlobalBudget
+	}
+	c.initialVitalsGlobalSelected += uint64(m.InitialVitalsGlobalSelected)
+	if m.InitialVitalsGlobalSelected > c.maxInitialVitalsGlobalSelected {
+		c.maxInitialVitalsGlobalSelected = m.InitialVitalsGlobalSelected
+	}
+	if m.InitialVitalsGlobalBudgetExhausted {
+		c.initialVitalsBudgetExhaustions++
 	}
 	c.commandErrors += uint64(len(report.CommandErrors))
 	c.deliveryErrors += uint64(len(report.DeliveryErrors))
@@ -435,17 +455,21 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 			DeferredCandidateRatio:  float64(c.snapshotDeferred) / candidates,
 		},
 		Lifecycle: LifecycleSummary{
-			SpawnCandidates:          c.spawnCandidates,
-			SpawnSelected:            c.spawnSelected,
-			SpawnDeferred:            c.spawnDeferred,
-			DespawnCandidates:        c.despawnCandidates,
-			DespawnSelected:          c.despawnSelected,
-			DespawnDeferred:          c.despawnDeferred,
-			BackpressureStops:        c.lifecycleBackpressureStops,
-			GlobalBudgetPerSnapshot:  c.lifecycleGlobalBudget,
-			GlobalSelected:           c.lifecycleGlobalSelected,
-			GlobalBudgetExhaustions:  c.lifecycleGlobalBudgetExhaustions,
-			MaxGlobalSelectedPerTick: c.maxLifecycleGlobalSelected,
+			SpawnCandidates:                 c.spawnCandidates,
+			SpawnSelected:                   c.spawnSelected,
+			SpawnDeferred:                   c.spawnDeferred,
+			DespawnCandidates:               c.despawnCandidates,
+			DespawnSelected:                 c.despawnSelected,
+			DespawnDeferred:                 c.despawnDeferred,
+			BackpressureStops:               c.lifecycleBackpressureStops,
+			GlobalBudgetPerSnapshot:         c.lifecycleGlobalBudget,
+			GlobalSelected:                  c.lifecycleGlobalSelected,
+			GlobalBudgetExhaustions:         c.lifecycleGlobalBudgetExhaustions,
+			MaxGlobalSelectedPerTick:        c.maxLifecycleGlobalSelected,
+			InitialVitalsBudgetPerTick:      c.initialVitalsGlobalBudget,
+			InitialVitalsSelected:           c.initialVitalsGlobalSelected,
+			InitialVitalsBudgetExhaustions:  c.initialVitalsBudgetExhaustions,
+			MaxInitialVitalsSelectedPerTick: c.maxInitialVitalsGlobalSelected,
 		},
 		Errors: ErrorSummary{
 			CommandErrors:        c.commandErrors,
