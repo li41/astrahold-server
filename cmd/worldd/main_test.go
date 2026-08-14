@@ -6,6 +6,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 func TestReviveProtectionTicks(t *testing.T) {
@@ -46,7 +47,7 @@ func TestDrainDeathOutcomeBatchLogsAndConfirmsOldestEvents(t *testing.T) {
 	}
 	for entity := uint64(1); entity <= 2; entity++ {
 		if _, created, err := outbox.Enqueue(deathoutcome.Event{
-			EntityID:       worldEntityID(entity),
+			EntityID:       world.EntityID(entity),
 			DefeatRevision: 1,
 			Context:        respawnpolicy.DeathContextPvP,
 			DefeatedTick:   entity,
@@ -61,6 +62,3 @@ func TestDrainDeathOutcomeBatchLogsAndConfirmsOldestEvents(t *testing.T) {
 		t.Fatalf("depth=%d", outbox.Depth())
 	}
 }
-
-// world.EntityID 的 underlying type是 uint64；小 helper讓此測試不必額外耦合 world package API。
-func worldEntityID(value uint64) uint64 { return value }
