@@ -49,12 +49,15 @@ type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
 	// AOI 可見但 Spawn backpressure 的 Entity 不可提前標成 known，否則 Client 會永久漏 Spawn。
 	known                   map[world.EntityID]struct{}
-	desired                 map[world.EntityID]struct{}
+	// desiredIDs 是上一個 AOI desired view 的 stable EntityID order。
+	// steady-state membership 不變時不再 clear + rewrite 一個 500-entry map。
+	desiredIDs              []world.EntityID
 	departed                []world.EntityID
 	lastSnapshot            map[world.EntityID]sentTransform // legacy Build compatibility only
 	lastDeliveredGeneration map[world.EntityID]uint64
 	lastSentBuild           map[world.EntityID]uint64
 	candidates              []snapshotCandidate
+	messages                []Outbound
 	buildNumber             uint64
 }
 
@@ -77,7 +80,6 @@ func NewService(policies ...Policy) *Service {
 func newViewState() *viewState {
 	return &viewState{
 		known:                   make(map[world.EntityID]struct{}),
-		desired:                 make(map[world.EntityID]struct{}),
 		lastSnapshot:            make(map[world.EntityID]sentTransform),
 		lastDeliveredGeneration: make(map[world.EntityID]uint64),
 		lastSentBuild:           make(map[world.EntityID]uint64),
@@ -157,14 +159,14 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		}
 		frame.TransformGenerations[i] = generation
 	}
-	return s.buildFrame(state, sessionID, selfID, lastProcessedInput, &frame, visibleIndices)
+	return s.buildFrame(state, selfID, lastProcessedInput, &frame, visibleIndices)
 }
 
 // BuildFrame 使用 shared immutable frame 與 AOI index view。
 // production path 的 dirty 判斷只比較 generation，不重複比較 Position / Yaw。
 func (s *Service) BuildFrame(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
 	state := s.ensureView(sessionID)
-	return s.buildFrame(state, sessionID, selfID, lastProcessedInput, frame, visibleIndices)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices)
 }
 
 func (s *Service) ensureView(sessionID session.ID) *viewState {
@@ -176,7 +178,7 @@ func (s *Service) ensureView(sessionID session.ID) *viewState {
 	return state
 }
 
-func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
+func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
 	state.buildNumber++
 	tick := frame.Tick
 
@@ -193,10 +195,24 @@ func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID worl
 		}
 	}
 
-	clear(state.desired)
+	desiredChanged := !sameDesiredIDs(state.desiredIDs, frame, visibleIndices)
+	if desiredChanged {
+		if cap(state.desiredIDs) < len(visibleIndices) {
+			state.desiredIDs = make([]world.EntityID, len(visibleIndices))
+		} else {
+			state.desiredIDs = state.desiredIDs[:len(visibleIndices)]
+		}
+		for i, index := range visibleIndices {
+			if index >= 0 && index < len(frame.Entities) {
+				state.desiredIDs[i] = frame.Entities[index].ID
+			}
+		}
+	}
+
 	state.candidates = state.candidates[:0]
-	messageCapacity := 4 + (s.policy.MaxTransformsPerBuild+protocol.MaxSnapshotEntitiesPerChunk-1)/protocol.MaxSnapshotEntitiesPerChunk
-	batch := Batch{Messages: make([]Outbound, 0, messageCapacity)}
+	state.messages = state.messages[:0]
+	batch := Batch{Messages: state.messages}
+	hasUnknown := false
 
 	for _, index := range visibleIndices {
 		if index < 0 || index >= len(frame.Entities) {
@@ -204,9 +220,9 @@ func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID worl
 		}
 		e := frame.Entities[index]
 		generation := frame.TransformGenerations[index]
-		state.desired[e.ID] = struct{}{}
 		tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		if _, ok := state.known[e.ID]; !ok {
+			hasUnknown = true
 			batch.Messages = append(batch.Messages, Outbound{
 				Delivery: protocol.DeliveryReliableOrdered,
 				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
@@ -249,13 +265,17 @@ func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID worl
 		})
 	}
 
+	// Steady-state AOI membership 不變且所有 visible 都 known 時，不需要再掃整份 known map。
+	// 若 desired 改變、仍有未知 Spawn、或 known 數量大於 desired，才做 Reliable despawn diff。
 	state.departed = state.departed[:0]
-	for id := range state.known {
-		if _, ok := state.desired[id]; !ok {
-			state.departed = append(state.departed, id)
+	if desiredChanged || hasUnknown || len(state.known) > len(state.desiredIDs) {
+		for id := range state.known {
+			if !containsDesiredID(state.desiredIDs, id) {
+				state.departed = append(state.departed, id)
+			}
 		}
+		sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 	}
-	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 	for _, id := range state.departed {
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
@@ -294,6 +314,7 @@ func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID worl
 	}
 	batch.Stats.SnapshotSelected = selectedCount
 	batch.Stats.SnapshotDeferred = len(state.candidates) - selectedCount
+	// transforms 不能跨 build reuse：TrySend 後 transport writer 仍可能非同步持有 WorldSnapshot slice。
 	transforms := make([]protocol.EntityTransform, selectedCount)
 	for i := 0; i < selectedCount; i++ {
 		candidate := state.candidates[i]
@@ -349,5 +370,23 @@ func (s *Service) buildFrame(state *viewState, sessionID session.ID, selfID worl
 		})
 	}
 
+	state.messages = batch.Messages
 	return batch
+}
+
+func sameDesiredIDs(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {
+	if len(previous) != len(visibleIndices) {
+		return false
+	}
+	for i, index := range visibleIndices {
+		if index < 0 || index >= len(frame.Entities) || previous[i] != frame.Entities[index].ID {
+			return false
+		}
+	}
+	return true
+}
+
+func containsDesiredID(ids []world.EntityID, id world.EntityID) bool {
+	index := sort.Search(len(ids), func(i int) bool { return ids[i] >= id })
+	return index < len(ids) && ids[index] == id
 }
