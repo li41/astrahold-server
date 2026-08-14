@@ -14,6 +14,14 @@ type readWindowKey struct {
 	maxZ int32
 }
 
+// ReadFrameQueryStats 保留 AOI logical candidate 指標，另外量測實際 shared candidate work。
+type ReadFrameQueryStats struct {
+	QueryStats
+	SharedCandidateBuilds int
+	SharedCandidateReuses int
+	SharedCandidateScans  int
+}
+
 // ReadFrame 是 replication pass 使用的 immutable spatial view。
 // entities 與 cell membership 在 Reset 後直到下一次 Reset 都不再變動；
 // candidateCache 只做同一個 frame 內的 query-window memoization，
@@ -50,10 +58,10 @@ func (f *ReadFrame) Reset(cellSize float32, entities []world.EntityState) {
 // QueryRadiusInto 只重用 shared cell candidate view；精確 Layer / height / radius
 // filtering 仍逐 Session 執行，讓未來 visibility policy 可以獨立擴充。
 // dst 可由 caller 重用，避免每個 Session 配置新的 visible slice。
-func (f *ReadFrame) QueryRadiusInto(center world.Position, radius float32, options QueryOptions, dst []int) ([]int, QueryStats) {
+func (f *ReadFrame) QueryRadiusInto(center world.Position, radius float32, options QueryOptions, dst []int) ([]int, ReadFrameQueryStats) {
 	dst = dst[:0]
 	if radius < 0 || f.cellSize <= 0 {
-		return dst, QueryStats{}
+		return dst, ReadFrameQueryStats{}
 	}
 
 	minX := f.cellCoord(center.X - radius)
@@ -61,7 +69,7 @@ func (f *ReadFrame) QueryRadiusInto(center world.Position, radius float32, optio
 	minZ := f.cellCoord(center.Z - radius)
 	maxZ := f.cellCoord(center.Z + radius)
 	key := readWindowKey{minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ}
-	stats := QueryStats{VisitedCells: int(maxX-minX+1) * int(maxZ-minZ+1)}
+	stats := ReadFrameQueryStats{QueryStats: QueryStats{VisitedCells: int(maxX-minX+1) * int(maxZ-minZ+1)}}
 
 	candidates, reused := f.candidateCache[key]
 	if reused {
