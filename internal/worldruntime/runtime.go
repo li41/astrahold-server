@@ -21,6 +21,11 @@ var (
 	ErrJoinEntityMismatch    = errors.New("worldruntime: join session/entity mismatch")
 )
 
+type TeleportRequest struct {
+	EntityID world.EntityID
+	Position world.Position
+}
+
 type Config struct {
 	CommandQueueCapacity       int
 	MaxCommandsPerTick         int
@@ -194,8 +199,17 @@ func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.Cli
 	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
 }
 
-// EnqueueTeleport 將 server-authoritative teleport 排入 world owner command queue。
-// 它不新增 wire message；位置改變仍透過既有 PositionCorrection / lifecycle replication 對 Client 收斂。
+// EnqueueTeleport 將單一 server-authoritative teleport 排入 world owner command queue。
 func (r *Runtime) EnqueueTeleport(entityID world.EntityID, position world.Position) error {
 	return r.queue.tryPush(teleportCommand{entityID: entityID, position: position})
+}
+
+// EnqueueTeleportBatch 將整批 transition 視為一個 owner command。
+// caller 的 slice 會先複製，避免跨 goroutine mutation；整批會在同一 world tick、simulation 前套用。
+func (r *Runtime) EnqueueTeleportBatch(requests []TeleportRequest) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	owned := append([]TeleportRequest(nil), requests...)
+	return r.queue.tryPush(teleportBatchCommand{requests: owned})
 }
