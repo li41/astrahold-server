@@ -1,6 +1,10 @@
 package loadlab
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/li41/astrahold-server/internal/world"
+)
 
 func TestS3E9MixedFixtureHotPairsAreBalancedAcrossClusters(t *testing.T) {
 	pairs, err := TeleportChurnCombatPairs(500, 48)
@@ -33,8 +37,8 @@ func TestS3E9MixedFixtureHotPairsAreBalancedAcrossClusters(t *testing.T) {
 func TestS3E9MixedFixtureInterleavesMoversAndStationaryObservers(t *testing.T) {
 	stationary := 0
 	moving := 0
-	for entityID := uint64(1); entityID <= 500; entityID++ {
-		if S3E9MixedStationaryEntity(worldEntityID(entityID)) {
+	for entityID := world.EntityID(1); entityID <= 500; entityID++ {
+		if S3E9MixedStationaryEntity(entityID) {
 			stationary++
 		} else {
 			moving++
@@ -44,6 +48,3 @@ func TestS3E9MixedFixtureInterleavesMoversAndStationaryObservers(t *testing.T) {
 		t.Fatalf("stationary=%d moving=%d want=250/250", stationary, moving)
 	}
 }
-
-// worldEntityID keeps this fixture assertion explicit without coupling the production helper to raw uint64 callers.
-func worldEntityID(value uint64) world.EntityID { return world.EntityID(value) }
