@@ -61,6 +61,12 @@ func (r *Runtime) applyRespawn(name string, request RespawnRequest, report *Step
 		return
 	}
 
+	// 手動 server respawn 與 policy due 共用同一 primitive；成功後一律清掉舊 pending，
+	// 避免之後同一 death schedule 再次觸發第二次 respawn。
+	if r.respawnPolicy != nil {
+		r.respawnPolicy.Cancel(request.EntityID)
+	}
+
 	// Respawn 同時改 vitals 與 AOI position。Dirty Vitals 先保留，但在下一次正常 snapshot
 	// 完成 desired membership rebuild 前不得 fan-out，避免 stale-known observer 先看到復活狀態。
 	r.markEntityVitalsDirty(request.EntityID)
