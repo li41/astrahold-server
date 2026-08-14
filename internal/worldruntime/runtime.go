@@ -54,6 +54,9 @@ type StepMetrics struct {
 	AOIQueries int
 	AOICandidates int
 	AOIVisible int
+	AOISharedCandidateBuilds int
+	AOISharedCandidateReuses int
+	AOIPhysicalCandidateScans int
 	OutboundMessages int
 	SnapshotCandidates int
 	SnapshotTransforms int
@@ -64,6 +67,7 @@ type StepMetrics struct {
 	SnapshotFarTransforms int
 	SimulationDuration time.Duration
 	DynamicReplicationDuration time.Duration
+	ReplicationFrameBuildDuration time.Duration
 	AOIDuration time.Duration
 	ReplicationBuildDuration time.Duration
 	DeliveryDuration time.Duration
@@ -83,6 +87,8 @@ type Runtime struct {
 	world *simulation.World
 	sessions *session.Registry
 	replication *replication.Service
+	replicationFrameBuilder *simulation.ReplicationFrameBuilder
+	replicationVisibleScratch []int
 	characters *character.Service
 	queue *commandQueue
 	config Config
@@ -107,6 +113,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		world: w,
 		sessions: session.NewRegistry(),
 		replication: replication.NewService(config.ReplicationPolicy),
+		replicationFrameBuilder: simulation.NewReplicationFrameBuilder(),
 		characters: characters,
 		queue: newCommandQueue(config.CommandQueueCapacity),
 		config: config,
