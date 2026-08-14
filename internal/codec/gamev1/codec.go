@@ -1,4 +1,4 @@
-// Package gamev1 提供 Protocol v3 的混合 Payload Codec。
+// Package gamev1 提供 Protocol v6 使用的混合 Payload Codec。
 //
 // Reliable control message 仍委派給 jsonv1，方便 Godot Thin Client 開發；
 // Realtime movement / snapshot / correction 則使用固定欄位 binary，降低 payload 與 allocation。
