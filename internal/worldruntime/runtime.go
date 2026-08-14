@@ -81,50 +81,60 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore            int
-	CommandQueueDepthAfter             int
-	CommandsDrained                    int
-	EntityActionsApplied               int
-	DirtyVitalsGlobalBudget            int
-	DirtyVitalsSelected                int
-	DirtyVitalsGlobalBudgetExhausted   bool
-	SessionsReplicated                 int
-	AOIQueries                         int
-	AOICandidates                      int
-	AOIVisible                         int
-	AOISharedCandidateBuilds           int
-	AOISharedCandidateReuses           int
-	AOIPhysicalCandidateScans          int
-	OutboundMessages                   int
-	SnapshotCandidates                 int
-	SnapshotTransforms                 int
-	SnapshotDeferred                   int
-	SnapshotForcedRefreshes            int
-	SnapshotNearTransforms             int
-	SnapshotMidTransforms              int
-	SnapshotFarTransforms              int
-	SpawnCandidates                    int
-	SpawnSelected                      int
-	SpawnDeferred                      int
-	DespawnCandidates                  int
-	DespawnSelected                    int
-	DespawnDeferred                    int
-	LifecycleBackpressureStops         int
-	LifecycleGlobalBudget              int
-	LifecycleGlobalSelected            int
-	LifecycleGlobalBudgetExhausted     bool
-	InitialVitalsGlobalBudget          int
-	InitialVitalsGlobalSelected        int
-	InitialVitalsGlobalBudgetExhausted bool
-	CommandDuration                    time.Duration
-	SimulationDuration                 time.Duration
-	DynamicReplicationDuration         time.Duration
-	ReplicationFrameBuildDuration      time.Duration
-	AOIDuration                        time.Duration
-	ReplicationBuildDuration           time.Duration
-	DeliveryDuration                   time.Duration
-	VitalsReplicationDuration          time.Duration
-	TotalDuration                      time.Duration
+	CommandQueueDepthBefore                 int
+	CommandQueueDepthAfter                  int
+	CommandsDrained                         int
+	EntityActionsApplied                    int
+	DirtyVitalsGlobalBudget                 int
+	DirtyVitalsSelected                     int
+	DirtyVitalsGlobalBudgetExhausted        bool
+	DirtyVitalsEntities                     int
+	DirtyVitalsOldestDirtyAgeTicks          uint64
+	DirtyVitalsOldestPendingRevisionAgeTicks uint64
+	DirtyVitalsOldestPendingEntityID        world.EntityID
+	DirtyVitalsOldestPendingSessionID       session.ID
+	DirtyVitalsEntityCompletions            int
+	DirtyVitalsMaxEntityCompletionTicks     uint64
+	DirtyVitalsMaxRevisionCompletionTicks   uint64
+	DirtyVitalsSessionCursorAdvances        int
+	DirtyVitalsSessionCursorWraps           int
+	SessionsReplicated                      int
+	AOIQueries                              int
+	AOICandidates                           int
+	AOIVisible                              int
+	AOISharedCandidateBuilds                int
+	AOISharedCandidateReuses                int
+	AOIPhysicalCandidateScans               int
+	OutboundMessages                        int
+	SnapshotCandidates                      int
+	SnapshotTransforms                      int
+	SnapshotDeferred                        int
+	SnapshotForcedRefreshes                 int
+	SnapshotNearTransforms                  int
+	SnapshotMidTransforms                   int
+	SnapshotFarTransforms                   int
+	SpawnCandidates                         int
+	SpawnSelected                           int
+	SpawnDeferred                           int
+	DespawnCandidates                       int
+	DespawnSelected                         int
+	DespawnDeferred                         int
+	LifecycleBackpressureStops              int
+	LifecycleGlobalBudget                   int
+	LifecycleGlobalSelected                 int
+	LifecycleGlobalBudgetExhausted          bool
+	InitialVitalsGlobalBudget               int
+	InitialVitalsGlobalSelected             int
+	InitialVitalsGlobalBudgetExhausted      bool
+	CommandDuration                         time.Duration
+	SimulationDuration                      time.Duration
+	DynamicReplicationDuration              time.Duration
+	ReplicationFrameBuildDuration           time.Duration
+	AOIDuration                             time.Duration
+	ReplicationBuildDuration                time.Duration
+	DeliveryDuration                        time.Duration
+	VitalsReplicationDuration               time.Duration
+	TotalDuration                           time.Duration
 }
 
 type StepReport struct {
@@ -134,6 +144,12 @@ type StepReport struct {
 	TickErrors       []simulation.TickError
 	DeliveryErrors   []DeliveryError
 	Metrics          StepMetrics
+}
+
+type dirtyVitalsProgress struct {
+	FirstTick      uint64
+	Revision       uint64
+	RevisionTick   uint64
 }
 
 type Runtime struct {
@@ -155,6 +171,7 @@ type Runtime struct {
 	dirtyVitalsScratch        []world.EntityID
 	dirtyVitalsNextEntity     world.EntityID
 	dirtyVitalsNextSession    map[world.EntityID]session.ID
+	dirtyVitalsProgress       map[world.EntityID]dirtyVitalsProgress
 	sessionVitalsRevision     map[session.ID]map[world.EntityID]uint64
 	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
 	lifecycleSessionCursor    int
@@ -218,6 +235,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		entityVitalsRevision:    make(map[world.EntityID]uint64),
 		dirtyVitalsEntities:     make(map[world.EntityID]struct{}),
 		dirtyVitalsNextSession:  make(map[world.EntityID]session.ID),
+		dirtyVitalsProgress:     make(map[world.EntityID]dirtyVitalsProgress),
 		sessionVitalsRevision:   make(map[session.ID]map[world.EntityID]uint64),
 		sessionVitalsPending:    make(map[session.ID]map[world.EntityID]struct{}),
 	}
