@@ -6,7 +6,7 @@ Astrahold 的全新權威 MMORPG Server Core。
 
 ## 現階段狀態
 
-目前已完成 **S3-D Gate Siege Interaction**。
+目前已完成 **S3-D.3 Character Combat Target**。
 
 ```text
 World Position (XYZ + Layer)
@@ -21,30 +21,32 @@ Fixed 20 Hz World Loop
         ↓
 Session / Input + Action Sequence
         ↓
+Generic Combat Action
+        ├── Gate Target
+        └── Entity Target
+        ↓
+Server-owned Gameplay State
+        ├── Gate HP / Destroyed / Blocker
+        └── Character HP / Defeated
+        ↓
 Replication
         ↓
-Protocol v4 + World Identity
+Protocol v6 + World Identity
         ↓
 TCP Reliable + UDP Realtime
         ↓
 GameV1 Compact Realtime Codec
         ↓
 MTU-safe Snapshot Chunks
-        ↓
-Gameplay World schema v2
-        ↓
-Ground L0 → Ramp L1 → Wall L2
-        ↓
-Gate Siege Domain
-        ↓
-Attack Intent → HP → Destroyed → Blocker Open
 ```
 
-S3-C.5 / S3-C.6 已先建立 Siege Load Lab 並修掉第一個明確 scaling blocker：24 人 Full AOI JSON Snapshot 就會超過 1200-byte UDP budget。Protocol v3 將高頻 Move / Snapshot / Correction 改為 compact binary 與 MTU-safe chunks，100-client Gate Zerg 的 `datagram_too_large` 已由 8000 次降為 0，Server 8 秒 allocation 約下降 47%。
+S3-C.5 / S3-C.6 已建立 Siege Load Lab 並修掉第一個明確 scaling blocker：24 人 Full AOI JSON Snapshot 就會超過 1200-byte UDP budget。Protocol v3 將高頻 Move / Snapshot / Correction 改為 compact binary 與 MTU-safe chunks，100-client Gate Zerg 的 `datagram_too_large` 已由 8000 次降為 0，Server 8 秒 allocation 約下降 47%。
 
-S3-D 再把第一個真正 Siege gameplay loop 接進同一套權威架構：Client 只送 `ClientAttackGate(gate_id)`，Server 驗證 Layer / Range / LOS / Cooldown，成功才扣 Gate HP；HP=0 時在同一個 world-owner tick 關閉 Gate blocker，並以 Reliable `WorldDynamicState` 同步 HP / Destroyed / blocker state。
+S3-D 建立第一個真正 Siege gameplay loop；S3-D.1 建立 Combat Action / Damage source；S3-D.2 將 Gate-specific intent 收斂成 generic `ClientUseAction`；S3-D.3 再讓同一個 action contract 真正作用於 Character target，Server 權威管理 HP / Defeated，Client 只送 action 與 target identity。
 
-下一個 gameplay 基礎是 **S3-D.1 Combat Action / Damage Foundation**；Replication Tier / dirty / delta 等大規模 fan-out 優化仍留在 S3-E。
+S3-D.3 的 100-client regression 也抓到 Reliable Vitals 在大量初始 Spawn 時的 backpressure。最終設計以 per-session revision / dirty retry 解決，沒有放大 queue，也沒有關掉 regression gate。
+
+下一個主要 milestone 是 **S3-E Siege Replication Scaling**；Gameplay World `gate.attack` legacy schema cleanup 保留為獨立 migration debt，不與 Character Combat correctness 綁在同一階段。
 
 ## 與 Myriad Throne 的關係
 
@@ -64,6 +66,9 @@ S3-D 再把第一個真正 Siege gameplay loop 接進同一套權威架構：Cli
 - [`docs/S3C5_SIEGE_LOAD_LAB.md`](docs/S3C5_SIEGE_LOAD_LAB.md)
 - [`docs/S3C6_REALTIME_REPLICATION.md`](docs/S3C6_REALTIME_REPLICATION.md)
 - [`docs/S3D_GATE_SIEGE.md`](docs/S3D_GATE_SIEGE.md)
+- [`docs/S3D1_COMBAT_ACTIONS.md`](docs/S3D1_COMBAT_ACTIONS.md)
+- [`docs/S3D2_ACTION_INTENT.md`](docs/S3D2_ACTION_INTENT.md)
+- [`docs/S3D3_CHARACTER_COMBAT.md`](docs/S3D3_CHARACTER_COMBAT.md)
 
 ## 世界模型
 
@@ -93,7 +98,7 @@ Astrahold 維持兩條核心規則：
 
 每個 World / Zone 目前維持 **單一 simulation owner goroutine**，以換取 deterministic ordering、清楚 ownership 與容易驗證的 gameplay state。
 
-S3-C.5 / S3-C.6 的 100-client Gate Zerg 中，20Hz Tick p99 約 8～9ms，仍遠低於 50ms budget，因此目前沒有數據支持拆 Cell Actor。
+S3-C.5 ～ S3-D.3 的 100-client Gate Zerg 仍遠低於 20Hz 的 50ms Tick budget，因此目前沒有數據支持拆 Cell Actor。
 
 若未來 single owner 成為實際瓶頸，平行化優先序：
 
@@ -132,17 +137,60 @@ Movement input sequence 的唯一來源是 Frame / Envelope，不在 payload 重
 
 ## Gameplay Action Sequence
 
-S3-D 起，Movement 與低頻 gameplay action 是不同 semantic stream：
+Movement 與低頻 gameplay action 是不同 semantic stream：
 
 ```text
 UDP Move
 → Session input sequence
 
-TCP Gate Attack
+TCP ClientUseAction
 → Session action sequence
 ```
 
-Gate attack 的 sequence 表示「這個 intent 已處理」，不是「一定成功造成傷害」。即使因距離、Layer、LOS 或 cooldown 被拒絕，同一 action sequence 也不可重播。
+Action sequence 表示「這個 intent 已被 Server 處理」，不是「一定成功造成傷害」。即使因 target、距離、Layer、LOS 或 cooldown 被拒絕，同一 action sequence 也不可重播。
+
+## Generic Combat Action
+
+正式 Combat 數值由 `config/combat-actions.json` 的版本化 Action Catalog 提供：
+
+```text
+basic-attack
+├── targets = gate / entity
+├── range = 4.5m
+├── base_damage = 100
+├── damage_type = physical
+└── cooldown = 0.5s
+```
+
+Client 只送：
+
+```text
+ClientUseAction
+├── action_id
+├── target_kind
+└── target_id
+```
+
+Client 不提供 damage、range、cooldown、hit result、HP、Destroyed 或 Defeated。
+
+權威 transaction：
+
+```text
+Session action sequence
+        ↓
+Combat.Prepare
+├── action exists
+├── target kind allowed
+└── cooldown ready
+        ↓
+Target Domain Validation / Apply
+        ├── Gate
+        └── Character
+        ↓
+Combat.Commit
+```
+
+只有 target domain 成功套用 action 後才消耗 cooldown。
 
 ## Gameplay World / Shared Proxy
 
@@ -175,50 +223,20 @@ Layer 2 = Front Wall Walk (Y = 8m)
 
 Portal 是世界拓樸契約；Blocker 是 Navigation / LOS proxy；Gate 是 Siege domain state。Gate 只透過 `blocker_id` 引用 blocker，不把 HP 塞進 Navigation。
 
-未來 World Compiler 由單一 canonical world source 同時輸出 Server Gameplay Proxy 與 Godot 對應資料。
+Gameplay World schema v2 目前仍保留早期 `gate.attack` 欄位作 migration debt；**production damage / range / cooldown 的正式來源已是 Combat Action Catalog**。未來 schema cleanup 應獨立處理。
 
-## S3-D Gate Siege Domain
+## Gate Siege Domain
 
-S3-D prototype `main-gate`：
-
-```text
-Max HP            1000
-Attack range       4.5 m
-Prototype damage   100
-Cooldown           0.5 s
-```
-
-這些數值由 Server Gameplay World 載入。Client 不提供 damage、range、cooldown 或 destroyed 判定。
-
-權威驗證順序：
+Gate domain 擁有：
 
 ```text
-ClientAttackGate(gate_id)
-        ↓
-Reliable Gateway
-        ↓
-Bounded Command Queue
-        ↓
-Session action sequence
-        ↓
-Authoritative player Position
-        ↓
-Gate exists / alive
-        ↓
-Layer
-        ↓
-Range to nearest Gate blocker bounds
-        ↓
-Blocker enabled
-        ↓
-Server LOS
-        ↓
-Cooldown
-        ↓
-Server-side damage
+Gate ID
+Blocker ID
+Max HP / HP
+Destroyed
 ```
 
-普通 LOS 會被關閉的 Gate blocker 擋住；攻擊 Gate 本體時只忽略**目標 Gate blocker 自己**，其他 blocker 仍照常遮蔽。
+Gate target 權威驗證包含：Gate exists / alive、Layer、range to blocker bounds、blocker enabled、Server LOS。攻擊 Gate 本體時 LOS 只忽略**目標 Gate blocker 自己**，其他 blocker 仍照常遮蔽。
 
 致命一擊在同一個 world-owner tick 內完成：
 
@@ -236,22 +254,82 @@ Reliable WorldDynamicState
 
 Blocker disable 失敗時不提交 HP=0，避免 Siege state 與 Navigation state 分裂。
 
-### Gameplay rejection != Server fault
+完整規約：[`docs/S3D_GATE_SIEGE.md`](docs/S3D_GATE_SIEGE.md)。
+
+## Character Combat Domain
+
+S3-D.3 新增獨立 Character vitals owner：
+
+```text
+Character State
+├── EntityID
+├── HP
+├── MaxHP
+└── Defeated
+```
+
+Character HP 不放進 `world.EntityState`，也不混進 Navigation 或 transform snapshot。
+
+Entity target 權威驗證：
+
+```text
+target_id parse
+→ target exists
+→ target != self
+→ Character exists / alive
+→ same Layer
+→ XYZ range
+→ Server LOS
+→ Character.ReduceHP
+→ mark Vitals dirty
+```
+
+目前 Defeated 只代表 authoritative combat state；death animation、corpse lifecycle、respawn、resurrection、PvP legality 等留給後續 gameplay milestone。
+
+完整規約：[`docs/S3D3_CHARACTER_COMBAT.md`](docs/S3D3_CHARACTER_COMBAT.md)。
+
+## Reliable Entity Vitals
+
+`EntityVitalsState` 是 **Reliable full state**，不是一次性 damage event：
+
+```text
+EntityVitalsState
+├── EntityID
+├── HP
+├── MaxHP
+└── Defeated
+```
+
+只對已經透過 AOI `EntitySpawn` 知道該 Entity 的 Session fan-out。離開 AOI 會清 delivered revision；重新進入 / Spawn 時重新送完整 vitals。
+
+Backpressure 語意：
+
+```text
+TrySend success
+→ session vitals revision 前進
+
+TrySend ErrBackpressure
+→ revision 不前進
+→ 下一 tick retry latest full state
+```
+
+S3-D.3 第一版在 100-client regression 曾觀察到 36 次 initial-vitals Reliable backpressure；最終修正沒有擴大 queue，而是用 revision / dirty retry 恢復可靠狀態語意。最終 24 / 100 Load Lab 均 PASS。
+
+## Gameplay rejection != Server fault
 
 以下屬於正常 gameplay rejection：
 
-- unknown Gate
-- Gate 已摧毀
+- unknown / invalid target
+- self target
+- Gate 已摧毀 / Character 已 Defeated
 - Layer 不符
 - 超出距離
-- LOS 被其他 blocker 阻擋
+- LOS 被 blocker 阻擋
 - cooldown 尚未結束
 
-這些記錄在 `ActionRejections`，不污染 `CommandErrors`。Session / Entity 遺失、Siege 未配置、Gate / blocker state 不一致等才屬 runtime/configuration fault。
+這些記錄在 `ActionRejections`，不污染 `CommandErrors`。Session / Entity ownership 遺失、Combat/Siege 未配置、state inconsistency 等才屬 runtime/configuration fault。
 
-完整規約：[`docs/S3D_GATE_SIEGE.md`](docs/S3D_GATE_SIEGE.md)。
-
-## Protocol v4 / Transport
+## Protocol v6 / Transport
 
 ```text
 Gameplay Message
@@ -267,16 +345,17 @@ Transport Adapter
 
 任何 wire-incompatible contract 變更都必須升 Protocol Version；錯版 Client 在 Frame 邊界直接拒絕。
 
-目前為 **Protocol v4**：
+目前為 **Protocol v6**：
 
 ```text
 ReliableOrdered / TCP
 → SessionWelcome
 → Spawn / Despawn
 → WorldDynamicState
-→ ClientAttackGate
-→ 其他低頻重要事件
-→ JSON bridge（開發期）
+→ ClientUseAction
+→ EntityVitalsState
+→ 其他低頻重要狀態
+→ strict JSON bridge（開發期）
 
 Realtime / UDP
 → ClientMoveInput
@@ -285,7 +364,7 @@ Realtime / UDP
 → GameV1 compact binary
 ```
 
-Protocol v4 沒有改動 v3 的 realtime compact payload；它新增 Gate Siege reliable control contract 與 Gate dynamic state。
+Protocol v6 沒有改動 S3-C.6 的 realtime compact payload。它在 generic Action contract 上新增 `entity` target 與 Reliable Character vitals state。
 
 開發 Transport 的 TCP 尚未使用 TLS，預設只綁 `127.0.0.1`；這不是 Internet-facing security boundary。
 
@@ -378,7 +457,7 @@ vertical-siege
 | Completed snapshots | 幾乎無 steady-state | **9,970** |
 | Bot decode/network error | 0 / 0 | **0 / 0** |
 
-S3-C.6 解決的是 **MTU correctness**，不是 500 人 Full AOI bandwidth。S3-D 的 24 / 100 Load Lab regression 必須繼續維持全綠。
+S3-C.6 解決的是 **MTU correctness**，不是 500 人 Full AOI bandwidth。S3-D.3 已在同一套 24 / 100 Load Lab 上維持 regression 全綠。
 
 ### Regression Gate
 
@@ -477,6 +556,8 @@ astrahold-server/
 │   ├── worldd/
 │   ├── loadserver/
 │   └── loadbot/
+├── config/
+│   └── combat-actions.json
 ├── internal/
 │   ├── world/
 │   ├── spatial/
@@ -491,6 +572,8 @@ astrahold-server/
 │   ├── gateway/
 │   ├── session/
 │   ├── replication/
+│   ├── combat/
+│   ├── character/
 │   ├── siege/
 │   ├── worldruntime/
 │   ├── loadlab/
@@ -552,23 +635,36 @@ astrahold-server/
 - Protocol v4
 - Gameplay World schema v2 / Gate definition
 - Gate HP / State
-- Reliable `ClientAttackGate`
 - Server Layer / Range / LOS / cooldown validation
 - HP=0 → `main-gate` blocker disabled
 - Reliable Gate HP / Destroyed dynamic state
 - Godot Gate HP / destroyed debug presentation
+
+### S3-D.1 — Combat Action / Damage Foundation ✅
+
+- Combat Action Catalog
+- Server-owned Damage Source
+- Prepare / target apply / Commit cooldown transaction
+
+### S3-D.2 — Generic Action Intent ✅
+
+- Protocol v5 `ClientUseAction`
+- Gate-specific wire intent 移除
+- Combat Catalog 成為 production damage / range / cooldown source
+- independent action sequence
+
+### S3-D.3 — Character Combat Target ✅
+
+- Protocol v6 `target_kind=entity`
+- Character HP / MaxHP / Defeated owner
+- self / Layer / Range / LOS / Defeated validation
+- Reliable `EntityVitalsState`
+- AOI-aware full-state vitals fan-out
+- backpressure revision / dirty retry
+- Godot HP / DEFEATED debug presentation
 - 24 / 100 Load Lab regression
 
-### S3-D.1 — Combat Action / Damage Foundation（下一步）
-
-- [ ] 共用 Combat Action intent
-- [ ] authoritative action timing / cooldown seam
-- [ ] Damage source / result model
-- [ ] Gate prototype damage 改走共用 Damage pipeline
-- [ ] Character target 與 Siege objective 共用 validation seam
-- [ ] 保留 Gate / Navigation ownership 分離
-
-### S3-E — Siege Replication Scaling
+### S3-E — Siege Replication Scaling（下一步）
 
 - [ ] Replication Tier / Network LOD
 - [ ] AOI ViewList / Dirty Tracking
@@ -627,8 +723,9 @@ TCP 127.0.0.1:7777
 UDP 127.0.0.1:7778
 World 20 Hz
 Snapshot 10 Hz
-Protocol v4
+Protocol v6
 Gameplay World castle-sandbox@s3d-001
+Combat Catalog s3d3-001
 ```
 
 目前核心盡量只使用 Go 標準函式庫；效能改動必須由 Load Lab / profiling 數據驅動。

@@ -1,0 +1,38 @@
+package jsonv1
+
+import (
+	"encoding/json"
+
+	"github.com/li41/astrahold-server/internal/protocol"
+)
+
+func (Codec) Marshal(message protocol.Message) ([]byte, error) {
+	switch m := message.(type) {
+	case protocol.ClientMoveInput:
+		return json.Marshal(clientMoveInput{DX:m.DirectionX,DZ:m.DirectionZ})
+	case *protocol.ClientMoveInput:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientMoveInput{DX:m.DirectionX,DZ:m.DirectionZ})
+	case protocol.ClientUseAction:
+		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID})
+	case *protocol.ClientUseAction:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID})
+	case protocol.SessionWelcome:
+		return json.Marshal(sessionWelcome{SessionID:m.SessionID,EntityID:uint64(m.EntityID),RealtimePort:m.RealtimePort,RealtimeToken:m.RealtimeToken,TickRateHz:m.TickRateHz,SnapshotRateHz:m.SnapshotRateHz,WorldID:m.World.WorldID,WorldRevision:m.World.Revision,GameplaySHA256:m.World.GameplaySHA256})
+	case protocol.EntitySpawn:
+		return json.Marshal(toEntitySpawn(m))
+	case protocol.EntityDespawn:
+		return json.Marshal(entityDespawn{EntityID:uint64(m.EntityID)})
+	case protocol.WorldSnapshot:
+		out:=worldSnapshot{Tick:m.Tick,Entities:make([]entityTransform,len(m.Entities))};for i:=range m.Entities{out.Entities[i]=toEntityTransform(m.Entities[i])};return json.Marshal(out)
+	case protocol.PositionCorrection:
+		return json.Marshal(positionCorrection{Tick:m.Tick,EntityID:uint64(m.EntityID),Position:toPosition(m.Position),Yaw:m.Yaw,LastProcessedInputSequence:m.LastProcessedInputSequence})
+	case protocol.WorldDynamicState:
+		out:=worldDynamicState{Revision:m.Revision,Blockers:make([]worldBlockerState,len(m.Blockers)),Gates:make([]worldGateState,len(m.Gates))};for i,b:=range m.Blockers{out.Blockers[i]=worldBlockerState{ID:b.ID,Enabled:b.Enabled}};for i,g:=range m.Gates{out.Gates[i]=worldGateState{ID:g.ID,HP:g.HP,MaxHP:g.MaxHP,Destroyed:g.Destroyed}};return json.Marshal(out)
+	case protocol.EntityVitalsState:
+		return json.Marshal(entityVitalsState{EntityID:uint64(m.EntityID),HP:m.HP,MaxHP:m.MaxHP,Defeated:m.Defeated})
+	default:
+		return nil, ErrUnsupportedMessage
+	}
+}
