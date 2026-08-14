@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/combat"
-	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -26,5 +25,3 @@ func (r *Runtime) prepareAndDispatchAction(name string, command useActionCommand
 	}
 	r.dispatchPreparedAction(name, command, prepared, tick, delta, report)
 }
-
-var _ session.ID
