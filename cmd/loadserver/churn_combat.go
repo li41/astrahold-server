@@ -1,9 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"strconv"
-	"sync"
 
 	"github.com/li41/astrahold-server/internal/loadlab"
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -11,41 +11,16 @@ import (
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
+var churnCombatPairsPerGroup = flag.Int(
+	"churn-combat-pairs-per-group",
+	0,
+	"Deterministic basic-attack pairs per teleport cluster in each churn round; 0 disables combat overlap",
+)
+
 type churnCombatMetrics struct {
 	ActionsApplied      uint64 `json:"combat_actions_applied"`
 	ActionRejections    uint64 `json:"action_rejections"`
 	DirtyVitalsSelected uint64 `json:"dirty_vitals_selected"`
-}
-
-type churnCombatTracker struct {
-	mu     sync.Mutex
-	active bool
-	stats  churnCombatMetrics
-}
-
-func (t *churnCombatTracker) Reset() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.active = true
-	t.stats = churnCombatMetrics{}
-}
-
-func (t *churnCombatTracker) Record(report worldruntime.StepReport) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if !t.active {
-		return
-	}
-	t.stats.ActionsApplied += uint64(report.Metrics.EntityActionsApplied)
-	t.stats.DirtyVitalsSelected += uint64(report.Metrics.DirtyVitalsSelected)
-	t.stats.ActionRejections += uint64(len(report.ActionRejections))
-}
-
-func (t *churnCombatTracker) Finish() churnCombatMetrics {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.active = false
-	return t.stats
 }
 
 func enqueueChurnCombatActions(runtime *worldruntime.Runtime, round int, pairs []loadlab.EntityCombatPair) error {
