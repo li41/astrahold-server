@@ -25,11 +25,12 @@ type DurationSummary struct {
 }
 
 type StageSummary struct {
-	SimulationAverageMS         float64 `json:"simulation_average_ms"`
-	DynamicReplicationAverageMS float64 `json:"dynamic_replication_average_ms"`
-	AOIAverageMS                float64 `json:"aoi_average_ms"`
-	ReplicationBuildAverageMS   float64 `json:"replication_build_average_ms"`
-	DeliveryAverageMS           float64 `json:"delivery_average_ms"`
+	SimulationAverageMS             float64 `json:"simulation_average_ms"`
+	DynamicReplicationAverageMS     float64 `json:"dynamic_replication_average_ms"`
+	ReplicationFrameBuildAverageMS  float64 `json:"replication_frame_build_average_ms"`
+	AOIAverageMS                    float64 `json:"aoi_average_ms"`
+	ReplicationBuildAverageMS       float64 `json:"replication_build_average_ms"`
+	DeliveryAverageMS               float64 `json:"delivery_average_ms"`
 }
 
 type QueueSummary struct {
@@ -40,12 +41,16 @@ type QueueSummary struct {
 }
 
 type AOISummary struct {
-	Queries            uint64  `json:"queries"`
-	Candidates         uint64  `json:"candidates"`
-	Visible            uint64  `json:"visible"`
-	CandidatesPerQuery float64 `json:"candidates_per_query"`
-	VisiblePerQuery    float64 `json:"visible_per_query"`
-	CandidateToVisible float64 `json:"candidate_to_visible_ratio"`
+	Queries                 uint64  `json:"queries"`
+	Candidates              uint64  `json:"candidates"`
+	Visible                 uint64  `json:"visible"`
+	CandidatesPerQuery      float64 `json:"candidates_per_query"`
+	VisiblePerQuery         float64 `json:"visible_per_query"`
+	CandidateToVisible      float64 `json:"candidate_to_visible_ratio"`
+	SharedCandidateBuilds   uint64  `json:"shared_candidate_builds"`
+	SharedCandidateReuses   uint64  `json:"shared_candidate_reuses"`
+	PhysicalCandidateScans  uint64  `json:"physical_candidate_scans"`
+	SharedReuseRatio        float64 `json:"shared_reuse_ratio"`
 }
 
 type ReplicationSummary struct {
@@ -112,11 +117,12 @@ type ServerCollector struct {
 	tickDurations []time.Duration
 	ticks         uint64
 
-	simulationDuration         time.Duration
-	dynamicReplicationDuration time.Duration
-	aoiDuration                time.Duration
-	replicationBuildDuration   time.Duration
-	deliveryDuration           time.Duration
+	simulationDuration             time.Duration
+	dynamicReplicationDuration     time.Duration
+	replicationFrameBuildDuration  time.Duration
+	aoiDuration                    time.Duration
+	replicationBuildDuration       time.Duration
+	deliveryDuration               time.Duration
 
 	maxQueueBefore int
 	maxQueueAfter  int
@@ -124,6 +130,9 @@ type ServerCollector struct {
 	aoiQueries     uint64
 	aoiCandidates  uint64
 	aoiVisible     uint64
+	aoiSharedCandidateBuilds  uint64
+	aoiSharedCandidateReuses  uint64
+	aoiPhysicalCandidateScans uint64
 	sessions       uint64
 	messages       uint64
 	snapshotCandidates      uint64
@@ -168,6 +177,7 @@ func (c *ServerCollector) Reset() {
 	c.ticks = 0
 	c.simulationDuration = 0
 	c.dynamicReplicationDuration = 0
+	c.replicationFrameBuildDuration = 0
 	c.aoiDuration = 0
 	c.replicationBuildDuration = 0
 	c.deliveryDuration = 0
@@ -177,6 +187,9 @@ func (c *ServerCollector) Reset() {
 	c.aoiQueries = 0
 	c.aoiCandidates = 0
 	c.aoiVisible = 0
+	c.aoiSharedCandidateBuilds = 0
+	c.aoiSharedCandidateReuses = 0
+	c.aoiPhysicalCandidateScans = 0
 	c.sessions = 0
 	c.messages = 0
 	c.snapshotCandidates = 0
@@ -207,6 +220,7 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	c.tickDurations = append(c.tickDurations, m.TotalDuration)
 	c.simulationDuration += m.SimulationDuration
 	c.dynamicReplicationDuration += m.DynamicReplicationDuration
+	c.replicationFrameBuildDuration += m.ReplicationFrameBuildDuration
 	c.aoiDuration += m.AOIDuration
 	c.replicationBuildDuration += m.ReplicationBuildDuration
 	c.deliveryDuration += m.DeliveryDuration
@@ -220,6 +234,9 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	c.aoiQueries += uint64(m.AOIQueries)
 	c.aoiCandidates += uint64(m.AOICandidates)
 	c.aoiVisible += uint64(m.AOIVisible)
+	c.aoiSharedCandidateBuilds += uint64(m.AOISharedCandidateBuilds)
+	c.aoiSharedCandidateReuses += uint64(m.AOISharedCandidateReuses)
+	c.aoiPhysicalCandidateScans += uint64(m.AOIPhysicalCandidateScans)
 	c.sessions += uint64(m.SessionsReplicated)
 	c.messages += uint64(m.OutboundMessages)
 	c.snapshotCandidates += uint64(m.SnapshotCandidates)
@@ -294,6 +311,10 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 	if candidates == 0 {
 		candidates = 1
 	}
+	sharedLookups := float64(c.aoiSharedCandidateBuilds + c.aoiSharedCandidateReuses)
+	if sharedLookups == 0 {
+		sharedLookups = 1
+	}
 
 	networkOps := make(map[string]uint64, len(c.networkByOperation))
 	for key, value := range c.networkByOperation {
@@ -310,11 +331,12 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 		Ticks:              ticks,
 		TickDuration:       summarizeDurations(c.tickDurations),
 		Stages: StageSummary{
-			SimulationAverageMS:         durationMS(c.simulationDuration) / tickFloat,
-			DynamicReplicationAverageMS: durationMS(c.dynamicReplicationDuration) / tickFloat,
-			AOIAverageMS:                durationMS(c.aoiDuration) / tickFloat,
-			ReplicationBuildAverageMS:   durationMS(c.replicationBuildDuration) / tickFloat,
-			DeliveryAverageMS:           durationMS(c.deliveryDuration) / tickFloat,
+			SimulationAverageMS:            durationMS(c.simulationDuration) / tickFloat,
+			DynamicReplicationAverageMS:    durationMS(c.dynamicReplicationDuration) / tickFloat,
+			ReplicationFrameBuildAverageMS: durationMS(c.replicationFrameBuildDuration) / tickFloat,
+			AOIAverageMS:                   durationMS(c.aoiDuration) / tickFloat,
+			ReplicationBuildAverageMS:      durationMS(c.replicationBuildDuration) / tickFloat,
+			DeliveryAverageMS:              durationMS(c.deliveryDuration) / tickFloat,
 		},
 		Queue: QueueSummary{
 			MaxDepthBefore:         c.maxQueueBefore,
@@ -323,12 +345,16 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 			CommandsAveragePerTick: float64(c.commands) / tickFloat,
 		},
 		AOI: AOISummary{
-			Queries:            c.aoiQueries,
-			Candidates:         c.aoiCandidates,
-			Visible:            c.aoiVisible,
-			CandidatesPerQuery: float64(c.aoiCandidates) / queries,
-			VisiblePerQuery:    float64(c.aoiVisible) / queries,
-			CandidateToVisible: float64(c.aoiCandidates) / visible,
+			Queries:                c.aoiQueries,
+			Candidates:             c.aoiCandidates,
+			Visible:                c.aoiVisible,
+			CandidatesPerQuery:     float64(c.aoiCandidates) / queries,
+			VisiblePerQuery:        float64(c.aoiVisible) / queries,
+			CandidateToVisible:     float64(c.aoiCandidates) / visible,
+			SharedCandidateBuilds:  c.aoiSharedCandidateBuilds,
+			SharedCandidateReuses:  c.aoiSharedCandidateReuses,
+			PhysicalCandidateScans: c.aoiPhysicalCandidateScans,
+			SharedReuseRatio:       float64(c.aoiSharedCandidateReuses) / sharedLookups,
 		},
 		Replication: ReplicationSummary{
 			SessionsReplicated:      c.sessions,
