@@ -48,21 +48,30 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if tick%r.config.SnapshotEveryTicks == 0 {
 		sessions := r.sessions.List()
 		report.Metrics.SessionsReplicated = len(sessions)
+
+		if measure { stageStart = time.Now() }
+		frame := r.replicationFrameBuilder.Build(r.world, tick)
+		if measure { report.Metrics.ReplicationFrameBuildDuration = time.Since(stageStart) }
+
 		for _, s := range sessions {
-			self, ok := r.world.Entity(s.EntityID)
+			self, _, ok := frame.Entity(s.EntityID)
 			if !ok {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command:"replicate",SessionID:s.ID,Err:ErrSessionEntityNotFound})
 				continue
 			}
 			if measure { stageStart = time.Now() }
-			visible, queryStats := r.world.QueryAOIWithStats(self.Transform.Position, s.AOIRadius, r.config.AOIOptions)
+			visible, queryStats := frame.Spatial.QueryRadiusInto(self.Transform.Position, s.AOIRadius, r.config.AOIOptions, r.replicationVisibleScratch)
+			r.replicationVisibleScratch = visible
 			if measure { report.Metrics.AOIDuration += time.Since(stageStart) }
 			report.Metrics.AOIQueries++
 			report.Metrics.AOICandidates += queryStats.CandidateEntities
 			report.Metrics.AOIVisible += queryStats.MatchedEntities
+			report.Metrics.AOISharedCandidateBuilds += queryStats.SharedCandidateBuilds
+			report.Metrics.AOISharedCandidateReuses += queryStats.SharedCandidateReuses
+			report.Metrics.AOIPhysicalCandidateScans += queryStats.SharedCandidateScans
 
 			if measure { stageStart = time.Now() }
-			batch := r.replication.Build(s.ID, s.EntityID, s.LastProcessedInputSequence(), tick, visible)
+			batch := r.replication.BuildFrame(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
 			if measure { report.Metrics.ReplicationBuildDuration += time.Since(stageStart) }
 			report.Metrics.OutboundMessages += len(batch.Messages)
 			report.Metrics.SnapshotCandidates += batch.Stats.SnapshotCandidates
