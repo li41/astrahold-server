@@ -85,6 +85,7 @@ type StepMetrics struct {
 	CommandQueueDepthAfter                   int
 	CommandsDrained                         int
 	EntityActionsApplied                    int
+	RespawnsApplied                         int
 	DirtyVitalsGlobalBudget                 int
 	DirtyVitalsSelected                     int
 	DirtyVitalsGlobalBudgetExhausted        bool
@@ -172,6 +173,7 @@ type Runtime struct {
 	dirtyVitalsNextEntity     world.EntityID
 	dirtyVitalsNextSession    map[world.EntityID]session.ID
 	dirtyVitalsProgress       map[world.EntityID]dirtyVitalsProgress
+	respawnVitalsPhases       map[world.EntityID]respawnVitalsPhase
 	sessionVitalsRevision     map[session.ID]map[world.EntityID]uint64
 	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
 	lifecycleSessionCursor    int
@@ -237,6 +239,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		dirtyVitalsEntities:     make(map[world.EntityID]struct{}),
 		dirtyVitalsNextSession:  make(map[world.EntityID]session.ID),
 		dirtyVitalsProgress:     make(map[world.EntityID]dirtyVitalsProgress),
+		respawnVitalsPhases:     make(map[world.EntityID]respawnVitalsPhase),
 		sessionVitalsRevision:   make(map[session.ID]map[world.EntityID]uint64),
 		sessionVitalsPending:    make(map[session.ID]map[world.EntityID]struct{}),
 	}

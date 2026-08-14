@@ -40,6 +40,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyTeleport(cmd.name(), c, &report)
 		case teleportBatchCommand:
 			r.applyTeleportBatch(cmd.name(), c, &report)
+		case respawnCommand:
+			r.applyRespawn(cmd.name(), c.request, &report)
 		case useActionCommand:
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
@@ -232,6 +234,12 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		}
 	}
 
+	if snapshotRan {
+		// Respawn position 可能同時改變 AOI membership；只有完整 normal snapshot 已讓每個
+		// Session rebuild desired view 後，revived Vitals 才能解除第一層 ordering barrier。
+		r.reconcileRespawnVitalsAfterSnapshot()
+	}
+
 	if measure {
 		stageStart = time.Now()
 	}
@@ -256,16 +264,5 @@ func isLifecycleMessage(message protocol.Message) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func confirmLifecycleDelivery(r *Runtime, sessionID session.ID, message protocol.Message) {
-	switch value := message.(type) {
-	case protocol.EntitySpawn:
-		r.replication.ConfirmSpawn(sessionID, value.EntityID)
-		r.queueEntityVitalsForSession(sessionID, value.EntityID)
-	case protocol.EntityDespawn:
-		r.replication.ConfirmDespawn(sessionID, value.EntityID)
-		r.confirmEntityDespawnVitals(sessionID, value.EntityID)
 	}
 }
