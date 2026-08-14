@@ -12,6 +12,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/deathpenalty"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
@@ -32,6 +33,7 @@ func main() {
 		worldPath                    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
 		combatPath                   = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
 		respawnPolicyPath            = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
+		deathPenaltyPath             = flag.String("death-penalty", "config/death-penalty.json", "Server death penalty policy JSON path")
 		postReviveProtectionSeconds = flag.Float64("post-revive-protection-seconds", 3.0, "Server-side damage protection after respawn/resurrection; 0 disables")
 	)
 	flag.Parse()
@@ -66,6 +68,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("build respawn policy service: %v", err)
 	}
+	loadedDeathPenalty, err := deathpenalty.LoadFile(*deathPenaltyPath)
+	if err != nil {
+		log.Fatalf("load death penalty policy %q: %v", *deathPenaltyPath, err)
+	}
+	deathPenaltyService, err := deathpenalty.NewService(loadedDeathPenalty.Definition)
+	if err != nil {
+		log.Fatalf("build death penalty service: %v", err)
+	}
 	pveRespawnDelay, _ := respawnService.DelayTicks(respawnpolicy.DeathContextPvE)
 	pvpRespawnDelay, _ := respawnService.DelayTicks(respawnpolicy.DeathContextPvP)
 	siegeRespawnDelay, _ := respawnService.DelayTicks(respawnpolicy.DeathContextSiege)
@@ -86,6 +96,7 @@ func main() {
 		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
 		worldruntime.WithCombatService(combatService),
 		worldruntime.WithRespawnPolicy(respawnService),
+		worldruntime.WithDeathPenalty(deathPenaltyService),
 	)
 	loop, err := worldruntime.NewLoop(runtime, *tickRate)
 	if err != nil {
@@ -110,7 +121,7 @@ func main() {
 	go func() { loopDone <- loop.RunObserved(ctx, logStepReport) }()
 	go logNetworkErrors(ctx, server.Errors())
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	if err := server.Serve(ctx); err != nil {
 		stop()
