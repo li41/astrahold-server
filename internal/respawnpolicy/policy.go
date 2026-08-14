@@ -152,13 +152,13 @@ type Scheduled struct {
 
 // Service 只由 WorldRuntime owner goroutine mutate；外部 subsystem 必須透過 Runtime command queue。
 type Service struct {
-	revision      string
-	delayTicks    uint64
-	defaultPoint  string
-	points        map[string]SpawnPoint
-	checkpoints   map[world.EntityID]string
-	pending       map[world.EntityID]Scheduled
-	dueScratch    []Scheduled
+	revision     string
+	delayTicks   uint64
+	defaultPoint string
+	points       map[string]SpawnPoint
+	checkpoints  map[world.EntityID]string
+	pending      map[world.EntityID]Scheduled
+	dueScratch   []Scheduled
 }
 
 func NewService(definition Definition, tickRateHz int) (*Service, error) {
@@ -186,9 +186,9 @@ func NewService(definition Definition, tickRateHz int) (*Service, error) {
 	}, nil
 }
 
-func (s *Service) Revision() string { return s.revision }
-func (s *Service) DelayTicks() uint64 { return s.delayTicks }
-func (s *Service) SpawnPointCount() int { return len(s.points) }
+func (s *Service) Revision() string      { return s.revision }
+func (s *Service) DelayTicks() uint64    { return s.delayTicks }
+func (s *Service) SpawnPointCount() int  { return len(s.points) }
 
 func (s *Service) SetCheckpoint(entityID world.EntityID, spawnPointID string) error {
 	if entityID == 0 {
@@ -242,6 +242,8 @@ func (s *Service) Pending(entityID world.EntityID) (Scheduled, bool) {
 	return value, ok
 }
 
+// Cancel 是 pending respawn 的 progress-confirm primitive。只有 authoritative respawn成功、
+// 明確手動取消或 entity離開世界後才應呼叫；Due selection 本身不前進 truth。
 func (s *Service) Cancel(entityID world.EntityID) {
 	delete(s.pending, entityID)
 }
@@ -251,7 +253,8 @@ func (s *Service) Remove(entityID world.EntityID) {
 	delete(s.checkpoints, entityID)
 }
 
-// Due 回傳並移除目前已到期的 respawn；排序固定為 DueTick / EntityID，維持 deterministic owner ordering。
+// Due 回傳目前已到期的 respawn，但不刪除 pending。排序固定為 DueTick / EntityID，
+// 維持 deterministic owner ordering；成功的 S3-F.2 authoritative transition會呼叫 Cancel確認進度。
 func (s *Service) Due(tick uint64) []Scheduled {
 	s.dueScratch = s.dueScratch[:0]
 	for _, scheduled := range s.pending {
@@ -265,9 +268,6 @@ func (s *Service) Due(tick uint64) []Scheduled {
 		}
 		return s.dueScratch[i].DueTick < s.dueScratch[j].DueTick
 	})
-	for _, scheduled := range s.dueScratch {
-		delete(s.pending, scheduled.EntityID)
-	}
 	return s.dueScratch
 }
 
