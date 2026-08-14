@@ -35,6 +35,13 @@ func TestServerCollectorSummarizesTickAOIAndReplication(t *testing.T) {
 			SnapshotNearTransforms:  3,
 			SnapshotMidTransforms:   2,
 			SnapshotFarTransforms:   1,
+			SpawnCandidates:         8,
+			SpawnSelected:           6,
+			SpawnDeferred:           2,
+			DespawnCandidates:       7,
+			DespawnSelected:         5,
+			DespawnDeferred:         2,
+			LifecycleBackpressureStops: 1,
 			SimulationDuration:      time.Millisecond,
 			ReplicationFrameBuildDuration: 500 * time.Microsecond,
 			AOIDuration:             2 * time.Millisecond,
@@ -73,6 +80,10 @@ func TestServerCollectorSummarizesTickAOIAndReplication(t *testing.T) {
 	}
 	if math.Abs(report.Replication.DeferredCandidateRatio-0.4) > 0.0001 {
 		t.Fatalf("deferred ratio=%f want=0.4", report.Replication.DeferredCandidateRatio)
+	}
+	if report.Lifecycle.SpawnCandidates != 8 || report.Lifecycle.SpawnSelected != 6 || report.Lifecycle.SpawnDeferred != 2 ||
+		report.Lifecycle.DespawnCandidates != 7 || report.Lifecycle.DespawnSelected != 5 || report.Lifecycle.DespawnDeferred != 2 || report.Lifecycle.BackpressureStops != 1 {
+		t.Fatalf("unexpected lifecycle report: %+v", report.Lifecycle)
 	}
 	if report.Errors.BlockedMoves != 1 {
 		t.Fatalf("blocked moves = %d, want 1", report.Errors.BlockedMoves)
