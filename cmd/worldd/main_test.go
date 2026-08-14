@@ -3,6 +3,10 @@ package main
 import (
 	"math"
 	"testing"
+
+	"github.com/li41/astrahold-server/internal/deathoutcome"
+	"github.com/li41/astrahold-server/internal/respawnpolicy"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 func TestReviveProtectionTicks(t *testing.T) {
@@ -33,5 +37,28 @@ func TestReviveProtectionTicksRejectsInvalidSeconds(t *testing.T) {
 		if _, err := reviveProtectionTicks(value, 20); err == nil {
 			t.Fatalf("value=%v should fail", value)
 		}
+	}
+}
+
+func TestDrainDeathOutcomeBatchLogsAndConfirmsOldestEvents(t *testing.T) {
+	outbox, err := deathoutcome.NewOutbox(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for entity := uint64(1); entity <= 2; entity++ {
+		if _, created, err := outbox.Enqueue(deathoutcome.Event{
+			EntityID:       world.EntityID(entity),
+			DefeatRevision: 1,
+			Context:        respawnpolicy.DeathContextPvP,
+			DefeatedTick:   entity,
+		}); err != nil || !created {
+			t.Fatalf("enqueue entity=%d created=%v err=%v", entity, created, err)
+		}
+	}
+	if got := drainDeathOutcomeBatch(outbox); got != 2 {
+		t.Fatalf("drained=%d", got)
+	}
+	if outbox.Depth() != 0 {
+		t.Fatalf("depth=%d", outbox.Depth())
 	}
 }

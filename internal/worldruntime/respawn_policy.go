@@ -78,15 +78,18 @@ func (r *Runtime) applySetRespawnCheckpoint(name string, command setRespawnCheck
 
 // scheduleRespawnForDefeat 只在 Character alive -> defeated transition 成功後呼叫。
 // Policy 在死亡當下綁定 context、checkpoint與 due tick；排程失敗不回滾已成立的 combat damage。
-func (r *Runtime) scheduleRespawnForDefeat(entityID world.EntityID, tick uint64, context respawnpolicy.DeathContext, report *StepReport) {
+// 回傳值供 Death Outcome event保存「死亡當下」已綁定的 immutable respawn truth。
+func (r *Runtime) scheduleRespawnForDefeat(entityID world.EntityID, tick uint64, context respawnpolicy.DeathContext, report *StepReport) (respawnpolicy.Scheduled, bool) {
 	if r.respawnPolicy == nil {
-		return
+		return respawnpolicy.Scheduled{}, false
 	}
-	if _, err := r.respawnPolicy.Schedule(entityID, tick, context); err != nil {
+	scheduled, err := r.respawnPolicy.Schedule(entityID, tick, context)
+	if err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "schedule_respawn", Err: err})
-		return
+		return respawnpolicy.Scheduled{}, false
 	}
 	report.Metrics.RespawnsScheduled++
+	return scheduled, true
 }
 
 // classifyDeathContext 只使用 Server-owned authoritative entity kind。
