@@ -16,12 +16,12 @@ type churnSoakRoundSummary struct {
 	Direction                   string  `json:"direction"`
 	TriggerToConvergedSeconds   float64 `json:"trigger_to_converged_seconds"`
 	ObservedNonConverged        bool    `json:"observed_non_converged"`
-	DesiredRelationships        uint64  `json:"desired_relationships"`
-	KnownDesired                uint64  `json:"known_desired"`
-	PendingSpawns               uint64  `json:"pending_spawns"`
-	PendingDespawns             uint64  `json:"pending_despawns"`
-	PendingVitalsEntities       uint64  `json:"pending_vitals_entities"`
-	PendingDynamicSessions      uint64  `json:"pending_dynamic_sessions"`
+	DesiredRelationships        int     `json:"desired_relationships"`
+	KnownDesired                int     `json:"known_desired"`
+	PendingSpawns               int     `json:"pending_spawns"`
+	PendingDespawns             int     `json:"pending_despawns"`
+	PendingVitalsEntities       int     `json:"pending_vitals_entities"`
+	PendingDynamicSessions      int     `json:"pending_dynamic_sessions"`
 	ReliableQueued              int     `json:"reliable_queued"`
 	ReliableInFlight            int     `json:"reliable_in_flight"`
 	TickP99MS                   float64 `json:"tick_p99_ms"`
@@ -46,32 +46,32 @@ type churnSoakRoundSummary struct {
 }
 
 type churnSoakSummary struct {
-	SchemaVersion                 int                     `json:"schema_version"`
-	Scenario                      loadlab.Scenario        `json:"scenario"`
-	ExpectedClients               int                     `json:"expected_clients"`
-	Rounds                        int                     `json:"rounds"`
-	Round                         []churnSoakRoundSummary `json:"round"`
-	MaxTriggerToConvergedSeconds  float64                 `json:"max_trigger_to_converged_seconds"`
-	MaxTickP99MS                  float64                 `json:"max_tick_p99_ms"`
-	MaxTickMS                     float64                 `json:"max_tick_ms"`
-	TotalSpawnSelected            uint64                  `json:"total_spawn_selected"`
-	TotalDespawnSelected          uint64                  `json:"total_despawn_selected"`
-	TotalInitialVitalsSelected    uint64                  `json:"total_initial_vitals_selected"`
-	TotalAllocBytes               uint64                  `json:"total_alloc_bytes"`
-	MaxRoundTotalAllocBytes       uint64                  `json:"max_round_total_alloc_bytes"`
-	MaxHeapAllocBytes             uint64                  `json:"max_heap_alloc_bytes"`
-	MaxHeapSysBytes               uint64                  `json:"max_heap_sys_bytes"`
-	FirstRoundHeapAllocBytes      uint64                  `json:"first_round_heap_alloc_bytes"`
-	LastRoundHeapAllocBytes       uint64                  `json:"last_round_heap_alloc_bytes"`
-	HeapAllocGrowthBytes          int64                   `json:"heap_alloc_growth_bytes"`
-	FirstRoundHeapSysBytes        uint64                  `json:"first_round_heap_sys_bytes"`
-	LastRoundHeapSysBytes         uint64                  `json:"last_round_heap_sys_bytes"`
-	HeapSysGrowthBytes            int64                   `json:"heap_sys_growth_bytes"`
-	TotalGC                       uint64                  `json:"total_gc"`
-	TotalGCPauseMS                float64                 `json:"total_gc_pause_ms"`
-	TotalLifecycleBackpressure    uint64                  `json:"total_lifecycle_backpressure_stops"`
-	MaxLifecycleSelectedPerTick   int                     `json:"max_lifecycle_selected_per_tick"`
-	MaxInitialVitalsSelectedTick  int                     `json:"max_initial_vitals_selected_per_tick"`
+	SchemaVersion                int                     `json:"schema_version"`
+	Scenario                     loadlab.Scenario        `json:"scenario"`
+	ExpectedClients              int                     `json:"expected_clients"`
+	Rounds                       int                     `json:"rounds"`
+	Round                        []churnSoakRoundSummary `json:"round"`
+	MaxTriggerToConvergedSeconds float64                 `json:"max_trigger_to_converged_seconds"`
+	MaxTickP99MS                 float64                 `json:"max_tick_p99_ms"`
+	MaxTickMS                    float64                 `json:"max_tick_ms"`
+	TotalSpawnSelected           uint64                  `json:"total_spawn_selected"`
+	TotalDespawnSelected         uint64                  `json:"total_despawn_selected"`
+	TotalInitialVitalsSelected   uint64                  `json:"total_initial_vitals_selected"`
+	TotalAllocBytes              uint64                  `json:"total_alloc_bytes"`
+	MaxRoundTotalAllocBytes      uint64                  `json:"max_round_total_alloc_bytes"`
+	MaxHeapAllocBytes            uint64                  `json:"max_heap_alloc_bytes"`
+	MaxHeapSysBytes              uint64                  `json:"max_heap_sys_bytes"`
+	FirstRoundHeapAllocBytes     uint64                  `json:"first_round_heap_alloc_bytes"`
+	LastRoundHeapAllocBytes      uint64                  `json:"last_round_heap_alloc_bytes"`
+	HeapAllocGrowthBytes         int64                   `json:"heap_alloc_growth_bytes"`
+	FirstRoundHeapSysBytes       uint64                  `json:"first_round_heap_sys_bytes"`
+	LastRoundHeapSysBytes        uint64                  `json:"last_round_heap_sys_bytes"`
+	HeapSysGrowthBytes           int64                   `json:"heap_sys_growth_bytes"`
+	TotalGC                      uint64                  `json:"total_gc"`
+	TotalGCPauseMS               float64                 `json:"total_gc_pause_ms"`
+	TotalLifecycleBackpressure   uint64                  `json:"total_lifecycle_backpressure_stops"`
+	MaxLifecycleSelectedPerTick  int                     `json:"max_lifecycle_selected_per_tick"`
+	MaxInitialVitalsSelectedTick int                     `json:"max_initial_vitals_selected_per_tick"`
 }
 
 func runTeleportChurnRounds(
@@ -129,7 +129,6 @@ func runTeleportChurnRounds(
 		if err := writeSlowTickReport(slowTickReportPath(roundPath), slowReport); err != nil {
 			return convergenceMetadata{}, fmt.Errorf("write churn round %d slow tick report: %w", round, err)
 		}
-		// 保留 S3-E.7 單輪 artifact 路徑，讓既有 workflow / tooling 不需改名。
 		if round == 1 {
 			legacyPath := churnReportPath(reportPath)
 			if err := loadlab.WriteReport(legacyPath, report); err != nil {
