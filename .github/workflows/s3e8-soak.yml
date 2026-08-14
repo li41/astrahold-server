@@ -83,15 +83,18 @@ jobs:
 
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/soak-server-convergence.json >/dev/null
 
-          # S3-E.8 第一個 hard requirement：既有 S3-E.7 單輪 gate 必須對每一輪都成立。
+          # S3-E.8 把 S3-E.7 單輪 hard gate 套到每一輪；任何一輪 starvation/tail 都使 job 失敗。
           jq -e '.rounds == 8 and (.round | length) == 8 and .max_tick_p99_ms < 50 and .max_trigger_to_converged_seconds < 2.75' artifacts/soak-server-churn-soak.json >/dev/null
           jq -e 'all(.round[]; .observed_non_converged == true and .desired_relationships == 125000 and .known_desired == 125000 and .pending_spawns == 0 and .pending_despawns == 0 and .pending_vitals_entities == 0 and .pending_dynamic_sessions == 0 and .reliable_queued == 0 and .reliable_in_flight == 0)' artifacts/soak-server-churn-soak.json >/dev/null
           jq -e 'all(.round[]; .tick_p99_ms < 50 and .trigger_to_converged_seconds < 2.75 and .spawn_selected >= 62500 and .despawn_selected >= 62500)' artifacts/soak-server-churn-soak.json >/dev/null
-          jq -e 'all(.round[]; .max_lifecycle_selected_per_tick <= 6000 and .max_initial_vitals_selected_per_tick <= 2500)' artifacts/soak-server-churn-soak.json >/dev/null
+          # Churn base Vitals budget=2,500/world-tick，但 S3-E.8 將 Initial Vitals 與 snapshot tick 錯峰；
+          # 20Hz world / 10Hz snapshot 下 contract 是 snapshot tick=0、intermediate tick<=5,000，
+          # 每100ms cycle 的總 capacity 與原本 2,500/tick 相同。
+          jq -e 'all(.round[]; .max_lifecycle_selected_per_tick <= 6000 and .max_initial_vitals_selected_per_tick <= 5000)' artifacts/soak-server-churn-soak.json >/dev/null
           jq -e 'all(.round[]; .command_errors == 0 and .unexpected_tick_errors == 0 and .delivery_errors == 0 and .network_errors == 0 and .datagram_too_large == 0)' artifacts/soak-server-churn-soak.json >/dev/null
           jq -e '.total_spawn_selected >= 500000 and .total_despawn_selected >= 500000 and .total_initial_vitals_selected >= 500000' artifacts/soak-server-churn-soak.json >/dev/null
 
-          # Memory/GC high-water 先收 baseline，不先用未量測過的 growth threshold 自我驗證。
+          # Memory/GC high-water 先收 baseline，不用未經重複驗證的 arbitrary leak threshold 自我驗證。
           jq -e '.max_heap_alloc_bytes > 0 and .max_heap_sys_bytes > 0 and .total_alloc_bytes > 0' artifacts/soak-server-churn-soak.json >/dev/null
 
           jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50' artifacts/soak-server.json >/dev/null
