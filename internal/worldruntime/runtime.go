@@ -82,6 +82,8 @@ type StepMetrics struct {
 	CommandQueueDepthBefore            int
 	CommandQueueDepthAfter             int
 	CommandsDrained                    int
+	EntityActionsApplied               int
+	DirtyVitalsSelected                int
 	SessionsReplicated                 int
 	AOIQueries                         int
 	AOICandidates                      int
