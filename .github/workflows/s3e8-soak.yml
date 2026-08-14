@@ -101,8 +101,10 @@ jobs:
           jq -e 'all(.round[]; .command_errors == 0 and .unexpected_tick_errors == 0 and .delivery_errors == 0 and .network_errors == 0 and .datagram_too_large == 0)' artifacts/soak-server-churn-soak.json >/dev/null
           jq -e '.total_spawn_selected >= 500000 and .total_despawn_selected >= 500000 and .total_initial_vitals_selected >= 500000' artifacts/soak-server-churn-soak.json >/dev/null
 
-          # Memory/GC high-water 先收 baseline，不用未經重複驗證的 arbitrary leak threshold 自我驗證。
-          jq -e '.max_heap_alloc_bytes > 0 and .max_heap_sys_bytes > 0 and .total_alloc_bytes > 0' artifacts/soak-server-churn-soak.json >/dev/null
+          # 兩次 exact 500×8 baseline 的 max HeapSys=110-114MB、round1→round8 HeapSys growth=6.7-12.5MB、
+          # max single-round allocation=64-65MB、total GC=10-11。HeapAlloc本身受 GC phase影響，只鎖 absolute high-water；
+          # retained footprint用較穩定的 HeapSys high-water + 8-round growth判定。
+          jq -e '.max_heap_alloc_bytes < 128000000 and .max_heap_sys_bytes < 134217728 and .heap_sys_growth_bytes < 32000000 and .max_round_total_alloc_bytes < 80000000 and .total_gc <= 16' artifacts/soak-server-churn-soak.json >/dev/null
 
           jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50' artifacts/soak-server.json >/dev/null
       - name: Upload S3-E.8 soak reports
