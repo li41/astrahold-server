@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/gameplayworld"
-	"github.com/li41/astrahold-server/internal/world"
 )
 
 func TestLoadIsStrictAndValidatesDefaultSpawnPoint(t *testing.T) {
@@ -96,6 +95,17 @@ func TestScheduleBindsCheckpointAtDefeatAndDueIsDeterministic(t *testing.T) {
 	if len(due) != 2 || due[0].EntityID != 3 || due[1].EntityID != 7 {
 		t.Fatalf("due order=%#v", due)
 	}
+	// Due selection 不等於 transition 成功；pending 必須保留，直到 authoritative respawn確認。
+	if _, ok := service.Pending(3); !ok {
+		t.Fatal("due selection prematurely removed entity 3")
+	}
+	if _, ok := service.Pending(7); !ok {
+		t.Fatal("due selection prematurely removed entity 7")
+	}
+	service.Cancel(3)
+	if _, ok := service.Pending(3); ok {
+		t.Fatal("cancel did not confirm pending removal")
+	}
 }
 
 func TestCheckpointRejectsUnknownPointAndRemoveClearsState(t *testing.T) {
@@ -158,5 +168,3 @@ func testGameplayDefinition() gameplayworld.Definition {
 		}},
 	}
 }
-
-var _ = world.EntityID(0)
