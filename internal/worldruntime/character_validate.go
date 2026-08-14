@@ -10,18 +10,48 @@ import (
 
 func (r *Runtime) validateEntityTarget(actor world.EntityState, prepared combat.PreparedAction) (world.EntityID, error) {
 	rawID, err := strconv.ParseUint(prepared.Target.ID, 10, 64)
-	if err != nil || rawID == 0 { return 0, ErrInvalidEntityTarget }
+	if err != nil || rawID == 0 {
+		return 0, ErrInvalidEntityTarget
+	}
 	targetID := world.EntityID(rawID)
-	if targetID == actor.ID { return 0, ErrSelfTarget }
+	if targetID == actor.ID {
+		return 0, ErrSelfTarget
+	}
 	target, ok := r.world.Entity(targetID)
-	if !ok { return 0, ErrInvalidEntityTarget }
+	if !ok {
+		return 0, ErrInvalidEntityTarget
+	}
 	state, ok := r.characters.State(targetID)
-	if !ok { return 0, character.ErrCharacterNotFound }
-	if state.Defeated { return 0, character.ErrCharacterDefeated }
-	if actor.Transform.Position.Layer != target.Transform.Position.Layer { return 0, ErrEntityWrongLayer }
+	if !ok {
+		return 0, character.ErrCharacterNotFound
+	}
+
+	switch prepared.Definition.Effect {
+	case combat.EffectResurrect:
+		if target.Kind != world.EntityPlayer {
+			return 0, ErrResurrectionTargetNotPlayer
+		}
+		if !state.Defeated {
+			return 0, character.ErrCharacterNotDefeated
+		}
+	default:
+		if state.Defeated {
+			return 0, character.ErrCharacterDefeated
+		}
+	}
+
+	if actor.Transform.Position.Layer != target.Transform.Position.Layer {
+		return 0, ErrEntityWrongLayer
+	}
 	rangeSq := prepared.Definition.Range * prepared.Definition.Range
-	if actor.Transform.Position.DistanceSquared(target.Transform.Position) > rangeSq { return 0, ErrEntityOutOfRange }
-	if r.dynamic == nil { return 0, ErrDynamicWorldUnavailable }
-	if !r.dynamic.HasLineOfSight(actor.Transform.Position, target.Transform.Position) { return 0, ErrEntityNoLineOfSight }
+	if actor.Transform.Position.DistanceSquared(target.Transform.Position) > rangeSq {
+		return 0, ErrEntityOutOfRange
+	}
+	if r.dynamic == nil {
+		return 0, ErrDynamicWorldUnavailable
+	}
+	if !r.dynamic.HasLineOfSight(actor.Transform.Position, target.Transform.Position) {
+		return 0, ErrEntityNoLineOfSight
+	}
 	return targetID, nil
 }

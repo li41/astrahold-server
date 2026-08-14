@@ -1,14 +1,23 @@
 {
-  "schema_version": 1,
-  "revision": "s3d3-001",
+  "schema_version": 2,
+  "revision": "s3f5-001",
   "actions": [
     {
       "id": "basic-attack",
+      "effect": "damage",
       "targets": ["gate", "entity"],
       "range": 4.5,
       "base_damage": 100,
       "damage_type": "physical",
       "cooldown_seconds": 0.5
+    },
+    {
+      "id": "resurrect",
+      "effect": "resurrect",
+      "targets": ["entity"],
+      "range": 4.5,
+      "revive_hp_percent": 30,
+      "cooldown_seconds": 10.0
     }
   ]
 }

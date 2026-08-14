@@ -24,25 +24,48 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: ErrSessionEntityNotFound})
 		return false
 	}
-	state, err := r.characters.ReduceHP(targetID, prepared.Damage.Amount)
-	if err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+
+	switch prepared.Definition.Effect {
+	case combat.EffectResurrect:
+		if _, err := r.characters.RevivePercent(targetID, prepared.Definition.ReviveHPPercent); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			return false
+		}
+		// Resurrection 是原地 vitals transition，不搬動 authoritative transform，也不重置
+		// input/action sequence 或任何既有 combat cooldown。Defeat 時 movement input 已歸零，
+		// 因此復活後仍需新的 ClientMoveInput 才會移動。
+		if r.respawnPolicy != nil {
+			r.respawnPolicy.Cancel(targetID)
+		}
+		r.markEntityVitalsDirty(targetID)
+		report.Metrics.EntityActionsApplied++
+		return true
+
+	case combat.EffectDamage:
+		state, err := r.characters.ReduceHP(targetID, prepared.Damage.Amount)
+		if err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			return false
+		}
+		if state.Defeated {
+			// Movement input 是 persistent authoritative state。若只拒絕未來 ClientMoveInput，
+			// lethal hit 前最後一個方向仍會在 simulation tick 繼續推動角色，因此 defeat transition
+			// 必須在同一個 world-owner command phase立即把既有 input清零。
+			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			}
+			// Respawn policy只屬於 player lifecycle。Death context由 authoritative actor/target kind推導，
+			// Client不提供 PvE/PvP/Siege分類，也不能指定對應目的地或 delay。
+			if target.Kind == world.EntityPlayer {
+				r.scheduleRespawnForDefeat(targetID, tick, classifyDeathContext(actor, target), report)
+			}
+		}
+		r.markEntityVitalsDirty(targetID)
+		report.Metrics.EntityActionsApplied++
+		return true
+
+	default:
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: combat.ErrInvalidDefinition})
 		return false
 	}
-	if state.Defeated {
-		// Movement input 是 persistent authoritative state。若只拒絕未來 ClientMoveInput，
-		// lethal hit 前最後一個方向仍會在 simulation tick 繼續推動角色，因此 defeat transition
-		// 必須在同一個 world-owner command phase立即把既有 input清零。
-		if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
-		}
-		// Respawn policy只屬於 player lifecycle。Death context由 authoritative actor/target kind推導，
-		// Client不提供 PvE/PvP/Siege分類，也不能指定對應目的地或 delay。
-		if target.Kind == world.EntityPlayer {
-			r.scheduleRespawnForDefeat(targetID, tick, classifyDeathContext(actor, target), report)
-		}
-	}
-	r.markEntityVitalsDirty(targetID)
-	report.Metrics.EntityActionsApplied++
-	return true
 }
