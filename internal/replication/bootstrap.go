@@ -162,8 +162,18 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 		}
 		e := frame.Entities[index]
 		generation := frame.TransformGenerations[index]
+
+		// Reliable Spawn 本身已攜帶這一代 authoritative transform。unknown track 在 TrySend
+		// 成功前仍不會進 realtime scheduler，但先同步 rare membership-rebuild mirror，避免
+		// mass join desired 持續成長時重建 tracks 後把已 materialize/即將確認的 transform
+		// 全部降回 generation=0，進而在 bootstrap 尾端製造十萬級 dirty candidates。
+		// 若 TrySend 失敗，known 仍為 false；下一次 retry 會用最新 generation 覆寫 mirror，
+		// 因此 lifecycle truth 仍只由 ConfirmSpawn 成功決定。
 		track.lastDeliveredGeneration = generation
 		track.lastSentBuild = state.buildNumber
+		state.lastDeliveredGeneration[e.ID] = generation
+		state.lastSentBuild[e.ID] = state.buildNumber
+
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
 			Message: protocol.EntitySpawn{
