@@ -70,10 +70,9 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 	return delivered
 }
 
-// staggeredInitialVitalsBudget 保留每個 snapshot cycle 的總吞吐，但把 initial Vitals
-// 從 snapshot tick 搬到中間的 world ticks。Spawn 只會在 snapshot tick 新增 pending Vitals，
-// 因此這能避免 lifecycle Delivery + Vitals Encode 同時吃掉同一個 50ms tick budget。
-func staggeredInitialVitalsBudget(base int, tick, snapshotEvery uint64) int {
+// staggeredWorkBudget 把原本每個 world tick 的 work budget 搬離 snapshot tick，同時保留
+// 一個完整 snapshot cycle 的理論 capacity。snapshotEvery=2 時，base 2500 -> [0,5000]。
+func staggeredWorkBudget(base int, tick, snapshotEvery uint64) int {
 	if base <= 0 {
 		return 0
 	}
@@ -83,23 +82,23 @@ func staggeredInitialVitalsBudget(base int, tick, snapshotEvery uint64) int {
 	if tick%snapshotEvery == 0 {
 		return 0
 	}
-	// 原本每個 cycle 理論 capacity = base * snapshotEvery。
-	// 現在由其餘 snapshotEvery-1 個 ticks 平均承擔；向上取整避免吞吐下降。
 	numerator := base * int(snapshotEvery)
 	denominator := int(snapshotEvery - 1)
 	return (numerator + denominator - 1) / denominator
 }
 
-// Initial Vitals 與 lifecycle 使用同一種 phase-sensitive budgeting，並與 snapshot tick 錯峰：
-// pure bootstrap / mixed churn 都保留原本每個 snapshot cycle 的理論吞吐，但 snapshot tick
-// 不做 initial Vitals；中間 world tick 使用對應放大後的 budget。Dirty gameplay Vitals 不受此限制。
+// Initial Vitals 與 lifecycle 使用 phase-sensitive budgeting，並與 snapshot tick 錯峰。
+// Global 與 per-session budget 都套同一比例，否則雖然 global cycle capacity 不變，單一
+// Session 仍會從每50ms最多32筆退化成每100ms最多32筆，拖長 semantic convergence。
+// Dirty gameplay Vitals 不受這個 initial-state budget 限制。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	sessions := r.sessions.List()
-	baseBudget := r.config.MaxInitialVitalsPerTick
+	baseGlobalBudget := r.config.MaxInitialVitalsPerTick
 	if r.lifecycleChurnActive {
-		baseBudget = r.config.MaxChurnInitialVitalsPerTick
+		baseGlobalBudget = r.config.MaxChurnInitialVitalsPerTick
 	}
-	globalBudget := staggeredInitialVitalsBudget(baseBudget, tick, r.config.SnapshotEveryTicks)
+	globalBudget := staggeredWorkBudget(baseGlobalBudget, tick, r.config.SnapshotEveryTicks)
+	perSessionBudget := staggeredWorkBudget(maxInitialVitalsPerSessionTick, tick, r.config.SnapshotEveryTicks)
 	report.Metrics.InitialVitalsGlobalBudget = globalBudget
 	globalRemaining := globalBudget
 	startIndex := 0
@@ -138,7 +137,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				delete(pending, entityID)
 				continue
 			}
-			if selected >= maxInitialVitalsPerSessionTick || globalRemaining <= 0 {
+			if selected >= perSessionBudget || globalRemaining <= 0 {
 				break
 			}
 			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
