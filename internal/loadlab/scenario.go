@@ -192,16 +192,18 @@ func validateTeleportChurnLayout(layout scenarioLayout, totalClients int) error 
 
 func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gameplayworld.BoundsXZ) {
 	ground := layout.ground.Bounds
+	// 西南群放在城外開放地；東北群放在城內、但避開 x=29.5 side wall 與 z=34.5 rear wall。
+	// castle-sandbox 的兩個 box 最近距離 sqrt(42^2 + 58^2) ~= 71.6m > 64m AOI radius。
 	return gameplayworld.BoundsXZ{
 		MinX: ground.MinX + 2,
-		MaxX: ground.MinX + 18,
+		MaxX: ground.MinX + 14,
 		MinZ: ground.MinZ + 2,
-		MaxZ: ground.MinZ + 18,
+		MaxZ: ground.MinZ + 14,
 	}, gameplayworld.BoundsXZ{
-		MinX: ground.MaxX - 18,
-		MaxX: ground.MaxX - 2,
+		MinX: ground.MaxX - 24,
+		MaxX: ground.MaxX - 12,
 		MinZ: ground.MaxZ - 18,
-		MaxZ: ground.MaxZ - 2,
+		MaxZ: ground.MaxZ - 6,
 	}
 }
 
