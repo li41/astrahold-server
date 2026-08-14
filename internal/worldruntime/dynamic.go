@@ -12,12 +12,12 @@ import (
 var ErrDynamicWorldUnavailable = errors.New("worldruntime: dynamic world unavailable")
 
 // DynamicWorld 是 WorldRuntime 對動態 Gameplay Proxy 的最小需求。
-// Siege/Gate domain 只透過此 contract 操作 blocker/LOS，不依賴 navigation implementation。
 type DynamicWorld interface {
 	SetBlockerEnabled(id string, enabled bool) error
 	BlockerEnabled(id string) (bool, error)
 	BlockerDefinition(id string) (gameplayworld.Blocker, error)
 	BlockerStates() []gameplayworld.BlockerState
+	HasLineOfSight(from, to world.Position) bool
 	HasLineOfSightIgnoringBlocker(from, to world.Position, ignoreBlockerID string) bool
 }
 
@@ -88,16 +88,9 @@ func (r *Runtime) replicateDynamicState(tick uint64, report *StepReport) {
 		if r.sessionDynamicRevision[s.ID] >= r.dynamicRevision {
 			continue
 		}
-		envelope := protocol.Envelope{
-			Delivery:   protocol.DeliveryReliableOrdered,
-			Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
-			ServerTick: tick,
-			Message:    message,
-		}
+		envelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: message}
 		if err := s.Connection().TrySend(envelope); err != nil {
-			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-				SessionID: s.ID, Delivery: envelope.Delivery, MessageType: message.Type(), Err: err,
-			})
+			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: message.Type(), Err: err})
 			continue
 		}
 		r.sessionDynamicRevision[s.ID] = r.dynamicRevision

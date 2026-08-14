@@ -32,13 +32,20 @@ func (s *Service) Register(id session.ID) {
 	if _, ok := s.views[id]; ok {
 		return
 	}
-	s.views[id] = &viewState{
-		known:   make(map[world.EntityID]struct{}),
-		scratch: make(map[world.EntityID]struct{}),
-	}
+	s.views[id] = &viewState{known: make(map[world.EntityID]struct{}), scratch: make(map[world.EntityID]struct{})}
 }
 
 func (s *Service) Remove(id session.ID) { delete(s.views, id) }
+
+// Knows 回報該 Session 是否已經收過 EntitySpawn，供低頻 Reliable entity state 做 AOI fan-out。
+func (s *Service) Knows(sessionID session.ID, entityID world.EntityID) bool {
+	state := s.views[sessionID]
+	if state == nil {
+		return false
+	}
+	_, ok := state.known[entityID]
+	return ok
+}
 
 func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, tick uint64, visible []world.EntityState) Batch {
 	state := s.views[sessionID]
@@ -47,8 +54,6 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		s.views[sessionID] = state
 	}
 
-	// Spatial.QueryRadius 已保證 EntityID 穩定排序。Replication 仍保留 defensive fallback，
-	// 讓單元測試或未來其他 caller 傳入非排序資料時不改變可靠事件順序。
 	ordered := visible
 	if !sort.SliceIsSorted(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID }) {
 		ordered = append([]world.EntityState(nil), visible...)
@@ -64,18 +69,10 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 	for i := range ordered {
 		e := ordered[i]
 		state.scratch[e.ID] = struct{}{}
-		tr := protocol.EntityTransform{
-			EntityID: e.ID,
-			Tick:     tick,
-			Position: e.Transform.Position,
-			Yaw:      e.Transform.Yaw,
-		}
+		tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		transforms[i] = tr
 		if _, ok := state.known[e.ID]; !ok {
-			batch.Messages = append(batch.Messages, Outbound{
-				Delivery: protocol.DeliveryReliableOrdered,
-				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
-			})
+			batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryReliableOrdered, Message: protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr}})
 		}
 		if e.ID == selfID {
 			selfTransform = tr
@@ -91,10 +88,7 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 	}
 	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 	for _, id := range state.departed {
-		batch.Messages = append(batch.Messages, Outbound{
-			Delivery: protocol.DeliveryReliableOrdered,
-			Message:  protocol.EntityDespawn{EntityID: id},
-		})
+		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryReliableOrdered, Message: protocol.EntityDespawn{EntityID: id}})
 	}
 
 	chunkCount := (len(transforms) + protocol.MaxSnapshotEntitiesPerChunk - 1) / protocol.MaxSnapshotEntitiesPerChunk
@@ -107,28 +101,11 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		if end > len(transforms) {
 			end = len(transforms)
 		}
-		batch.Messages = append(batch.Messages, Outbound{
-			Delivery: protocol.DeliveryRealtimeSequenced,
-			Message: protocol.WorldSnapshot{
-				Tick:       tick,
-				ChunkIndex: uint16(chunk),
-				ChunkCount: uint16(chunkCount),
-				Entities:   transforms[start:end],
-			},
-		})
+		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryRealtimeSequenced, Message: protocol.WorldSnapshot{Tick: tick, ChunkIndex: uint16(chunk), ChunkCount: uint16(chunkCount), Entities: transforms[start:end]}})
 	}
 
 	if hasSelf {
-		batch.Messages = append(batch.Messages, Outbound{
-			Delivery: protocol.DeliveryRealtimeSequenced,
-			Message: protocol.PositionCorrection{
-				Tick:                       tick,
-				EntityID:                   selfTransform.EntityID,
-				Position:                   selfTransform.Position,
-				Yaw:                        selfTransform.Yaw,
-				LastProcessedInputSequence: lastProcessedInput,
-			},
-		})
+		batch.Messages = append(batch.Messages, Outbound{Delivery: protocol.DeliveryRealtimeSequenced, Message: protocol.PositionCorrection{Tick: tick, EntityID: selfTransform.EntityID, Position: selfTransform.Position, Yaw: selfTransform.Yaw, LastProcessedInputSequence: lastProcessedInput}})
 	}
 
 	state.known, state.scratch = state.scratch, state.known

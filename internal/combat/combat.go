@@ -19,7 +19,8 @@ const SchemaVersion uint16 = 1
 type TargetKind string
 
 const (
-	TargetGate TargetKind = "gate"
+	TargetGate   TargetKind = "gate"
+	TargetEntity TargetKind = "entity"
 )
 
 type DamageType string
@@ -161,8 +162,6 @@ func NewService(definitions []ActionDefinition) (*Service, error) {
 	return &Service{actions: actions, nextUseTick: make(map[cooldownKey]uint64)}, nil
 }
 
-// Prepare 驗證 action catalog、target capability 與 cooldown，但不消耗 cooldown。
-// Target-specific range / LOS / alive validation 由對應 domain 完成；成功套用後才 Commit。
 func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target Target, tick uint64) (PreparedAction, error) {
 	action, ok := s.actions[actionID]
 	if !ok {
@@ -187,7 +186,6 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 	}, nil
 }
 
-// Commit 只可在 target domain 已成功套用 action 後呼叫。
 func (s *Service) Commit(action PreparedAction, tick uint64, delta time.Duration) {
 	key := cooldownKey{entityID: action.ActorEntityID, actionID: action.Definition.ID}
 	s.nextUseTick[key] = tick + cooldownTicks(action.Definition.CooldownSeconds, delta)
@@ -204,7 +202,7 @@ func containsTarget(targets []TargetKind, target TargetKind) bool {
 
 func validTargetKind(kind TargetKind) bool {
 	switch kind {
-	case TargetGate:
+	case TargetGate, TargetEntity:
 		return true
 	default:
 		return false
