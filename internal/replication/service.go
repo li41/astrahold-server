@@ -418,6 +418,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 			if !containsDesiredID(state.desiredIDs, id) {
 				state.departed = append(state.departed, id)
 			}
+		}
 		sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 	}
 	batch.Stats.DespawnCandidates = len(state.departed)
