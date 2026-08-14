@@ -17,6 +17,12 @@ type Outbound struct {
 }
 
 type BuildStats struct {
+	SpawnCandidates         int
+	SpawnSelected           int
+	SpawnDeferred           int
+	DespawnCandidates       int
+	DespawnSelected         int
+	DespawnDeferred         int
 	SnapshotCandidates      int
 	SnapshotSelected        int
 	SnapshotDeferred        int
@@ -25,6 +31,22 @@ type BuildStats struct {
 	NearSelected            int
 	MidSelected             int
 	FarSelected             int
+}
+
+// LifecycleLimits 將可重建的 Reliable lifecycle materialization 限制在固定 work quantum。
+// 0 代表 unlimited，保留既有 Build / BuildFrame compatibility semantics；production Runtime
+// 會傳入正值，將 mass join / teleport / AOI churn 的 Spawn / Despawn 工作攤到多個 snapshot build。
+type LifecycleLimits struct {
+	MaxSpawns   int
+	MaxDespawns int
+}
+
+func (l LifecycleLimits) allowSpawn(selected int) bool {
+	return l.MaxSpawns <= 0 || selected < l.MaxSpawns
+}
+
+func (l LifecycleLimits) allowDespawn(selected int) bool {
+	return l.MaxDespawns <= 0 || selected < l.MaxDespawns
 }
 
 type Batch struct {
@@ -76,7 +98,7 @@ func (h *snapshotCandidateHeap) Pop() any {
 
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
-	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity 查 map。
+	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity查 map。
 	known map[world.EntityID]struct{}
 
 	// desiredIDs / tracks 與 shared frame 的 stable EntityID order 對齊。
@@ -86,8 +108,8 @@ type viewState struct {
 
 	departed                   []world.EntityID
 	lastSnapshot               map[world.EntityID]sentTransform // legacy Build compatibility only
-	lastDeliveredGeneration    map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
-	lastSentBuild              map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
+	lastDeliveredGeneration    map[world.EntityID]uint64        // legacy Build compatibility + rare membership rebuild
+	lastSentBuild              map[world.EntityID]uint64        // legacy Build compatibility + rare membership rebuild
 	candidates                 []snapshotCandidate
 	selectedCandidates         []snapshotCandidate
 	messages                   []Outbound
@@ -201,14 +223,14 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		}
 		frame.TransformGenerations[i] = generation
 	}
-	return s.buildFrame(state, selfID, lastProcessedInput, &frame, visibleIndices, false)
+	return s.buildFrame(state, selfID, lastProcessedInput, &frame, visibleIndices, false, LifecycleLimits{})
 }
 
 // BuildFrame 使用 shared immutable frame 與 AOI index view。
 // 回傳的 WorldSnapshot Entities 擁有獨立 backing storage，可交給會非同步保存 Envelope 的 Connection。
 func (s *Service) BuildFrame(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
 	state := s.ensureView(sessionID)
-	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, false)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, false, LifecycleLimits{})
 }
 
 // BuildFrameBorrowed 只可搭配 session.ImmediateRealtimeConnection。
@@ -216,7 +238,20 @@ func (s *Service) BuildFrame(sessionID session.ID, selfID world.EntityID, lastPr
 // 讓每個 Realtime TrySend 成功返回並完成同步 materialization。
 func (s *Service) BuildFrameBorrowed(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
 	state := s.ensureView(sessionID)
-	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, true)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, true, LifecycleLimits{})
+}
+
+// BuildFrameWithLifecycleLimits 與 BuildFrame 相同，但限制本次 build 會 materialize 的
+// Reliable Spawn / Despawn 數量。未選中的 lifecycle state 仍留在 desired/known truth，下一次 build 重試。
+func (s *Service) BuildFrameWithLifecycleLimits(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
+	state := s.ensureView(sessionID)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, false, limits)
+}
+
+// BuildFrameBorrowedWithLifecycleLimits 是 production ImmediateRealtimeConnection 的 bounded lifecycle path。
+func (s *Service) BuildFrameBorrowedWithLifecycleLimits(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
+	state := s.ensureView(sessionID)
+	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices, true, limits)
 }
 
 func (s *Service) ensureView(sessionID session.ID) *viewState {
@@ -228,7 +263,7 @@ func (s *Service) ensureView(sessionID session.ID) *viewState {
 	return state
 }
 
-func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool) Batch {
+func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool, lifecycleLimits LifecycleLimits) Batch {
 	state.buildNumber++
 	tick := frame.Tick
 
@@ -265,11 +300,17 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 
 		if !track.known {
 			hasUnknown = true
-			tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
-			batch.Messages = append(batch.Messages, Outbound{
-				Delivery: protocol.DeliveryReliableOrdered,
-				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
-			})
+			batch.Stats.SpawnCandidates++
+			if lifecycleLimits.allowSpawn(batch.Stats.SpawnSelected) {
+				tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
+				batch.Messages = append(batch.Messages, Outbound{
+					Delivery: protocol.DeliveryReliableOrdered,
+					Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
+				})
+				batch.Stats.SpawnSelected++
+			} else {
+				batch.Stats.SpawnDeferred++
+			}
 			// Spawn 自己已包含 authoritative transform。直到 Reliable Spawn 成功前，
 			// 不把這個 Entity 放進 realtime snapshot，也不讓 Vitals 認為 Client 已知。
 			continue
@@ -319,11 +360,17 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		}
 		sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
 	}
+	batch.Stats.DespawnCandidates = len(state.departed)
 	for _, id := range state.departed {
+		if !lifecycleLimits.allowDespawn(batch.Stats.DespawnSelected) {
+			batch.Stats.DespawnDeferred++
+			continue
+		}
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
 			Message:  protocol.EntityDespawn{EntityID: id},
 		})
+		batch.Stats.DespawnSelected++
 	}
 
 	batch.Stats.SnapshotCandidates = len(state.candidates)
@@ -385,7 +432,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryRealtimeSequenced,
 			Message: protocol.WorldSnapshot{
-				Tick:        tick,
+				Tick:       tick,
 				ChunkIndex: uint16(chunk),
 				ChunkCount: uint16(chunkCount),
 				Entities:   transforms[start:end],
@@ -410,8 +457,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	return batch
 }
 
-// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，
-// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
+// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，n// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
 func selectSnapshotCandidates(buffer []snapshotCandidate, candidates []snapshotCandidate, budget int) []snapshotCandidate {
 	if budget <= 0 || len(candidates) <= budget {
 		return candidates

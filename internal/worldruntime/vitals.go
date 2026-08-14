@@ -8,6 +8,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+const maxInitialVitalsPerSessionTick = 32
+
 func (r *Runtime) ensureEntityVitalsRevision(entityID world.EntityID) {
 	if r.entityVitalsRevision[entityID] == 0 {
 		r.entityVitalsRevision[entityID] = 1
@@ -71,12 +73,10 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 }
 
 // replicateEntityVitals 將 Character full-state 視為可重送的 Reliable state，而不是一次性事件。
-// S3-E.2 起只處理兩類工作：
-// 1. Reliable Spawn 成功後尚未送達的 initial full state。
-// 2. global entity vitals revision 真正變更的 dirty fan-out。
-// ErrBackpressure 只代表本 tick 延後；revision 只有成功寫入 outbound queue才前進。
+// S3-E.6 對 Spawn 建立的 initial full state 加 per-session work budget；成功才刪 pending，
+// 第一個 Reliable backpressure 後停止該 Session 本 tick 的 initial vitals 工作。
+// Dirty fan-out 保持原本 latest full-state retry semantics。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
-	// 先處理 lifecycle 建立的 initial / retry pending。steady-state 沒有 pending 時這段是 O(1)。
 	for sessionID, pending := range r.sessionVitalsPending {
 		s, ok := r.sessions.Get(sessionID)
 		if !ok {
@@ -85,6 +85,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 			continue
 		}
 		delivered := r.ensureSessionVitalsDelivered(sessionID)
+		selected := 0
 		for entityID := range pending {
 			if !r.replication.Knows(sessionID, entityID) {
 				delete(pending, entityID)
@@ -102,10 +103,18 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				delete(pending, entityID)
 				continue
 			}
-			if r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report) {
-				delivered[entityID] = revision
-				delete(pending, entityID)
+			if selected >= maxInitialVitalsPerSessionTick {
+				break
 			}
+			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
+				if errors.Is(err, session.ErrBackpressure) {
+					break
+				}
+				continue
+			}
+			selected++
+			delivered[entityID] = revision
+			delete(pending, entityID)
 		}
 		if len(pending) == 0 {
 			delete(r.sessionVitalsPending, sessionID)
@@ -140,7 +149,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 			if delivered[entityID] >= revision {
 				continue
 			}
-			if !r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report) {
+			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
 				allDelivered = false
 				continue
 			}
@@ -158,15 +167,15 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	}
 }
 
-func (r *Runtime) trySendEntityVitals(s *session.Session, entityID world.EntityID, hp, maxHP uint32, defeated bool, tick uint64, report *StepReport) bool {
-	message := protocol.EntityVitalsState{EntityID:entityID,HP:hp,MaxHP:maxHP,Defeated:defeated}
-	envelope := protocol.Envelope{Delivery:protocol.DeliveryReliableOrdered,Sequence:s.NextOutboundSequence(protocol.DeliveryReliableOrdered),ServerTick:tick,Message:message}
+func (r *Runtime) trySendEntityVitals(s *session.Session, entityID world.EntityID, hp, maxHP uint32, defeated bool, tick uint64, report *StepReport) error {
+	message := protocol.EntityVitalsState{EntityID: entityID, HP: hp, MaxHP: maxHP, Defeated: defeated}
+	envelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: message}
 	report.Metrics.OutboundMessages++
 	if err := s.Connection().TrySend(envelope); err != nil {
 		if !errors.Is(err, session.ErrBackpressure) {
-			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID,Delivery:envelope.Delivery,MessageType:message.Type(),Err:err})
+			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: message.Type(), Err: err})
 		}
-		return false
+		return err
 	}
-	return true
+	return nil
 }
