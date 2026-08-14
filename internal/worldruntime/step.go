@@ -36,6 +36,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
+		case teleportCommand:
+			r.applyTeleport(cmd.name(), c, &report)
 		case useActionCommand:
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
