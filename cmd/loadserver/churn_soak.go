@@ -29,6 +29,9 @@ type churnSoakRoundSummary struct {
 	SpawnSelected               uint64  `json:"spawn_selected"`
 	DespawnSelected             uint64  `json:"despawn_selected"`
 	InitialVitalsSelected       uint64  `json:"initial_vitals_selected"`
+	CombatActionsApplied        uint64  `json:"combat_actions_applied"`
+	ActionRejections            uint64  `json:"action_rejections"`
+	DirtyVitalsSelected         uint64  `json:"dirty_vitals_selected"`
 	LifecycleBackpressureStops  uint64  `json:"lifecycle_backpressure_stops"`
 	MaxLifecycleSelectedPerTick int     `json:"max_lifecycle_selected_per_tick"`
 	MaxInitialVitalsPerTick     int     `json:"max_initial_vitals_selected_per_tick"`
@@ -57,6 +60,9 @@ type churnSoakSummary struct {
 	TotalSpawnSelected           uint64                  `json:"total_spawn_selected"`
 	TotalDespawnSelected         uint64                  `json:"total_despawn_selected"`
 	TotalInitialVitalsSelected   uint64                  `json:"total_initial_vitals_selected"`
+	TotalCombatActionsApplied    uint64                  `json:"total_combat_actions_applied"`
+	TotalActionRejections        uint64                  `json:"total_action_rejections"`
+	TotalDirtyVitalsSelected     uint64                  `json:"total_dirty_vitals_selected"`
 	TotalAllocBytes              uint64                  `json:"total_alloc_bytes"`
 	MaxRoundTotalAllocBytes      uint64                  `json:"max_round_total_alloc_bytes"`
 	MaxHeapAllocBytes            uint64                  `json:"max_heap_alloc_bytes"`
@@ -78,10 +84,12 @@ func runTeleportChurnRounds(
 	ctx context.Context,
 	rounds int,
 	swapRequests, restoreRequests []worldruntime.TeleportRequest,
+	combatPairs []loadlab.EntityCombatPair,
 	worldRuntime *worldruntime.Runtime,
 	collector *loadlab.ServerCollector,
 	slowTicks *slowTickCollector,
 	convergence *convergenceTracker,
+	combatTracker *churnCombatTracker,
 	server *tcpudp.Server,
 	scenario loadlab.Scenario,
 	clients int,
@@ -93,6 +101,7 @@ func runTeleportChurnRounds(
 	}
 
 	reports := make([]phasedServerReport, 0, rounds)
+	combatReports := make([]churnCombatMetrics, 0, rounds)
 	var latest convergenceMetadata
 	for round := 1; round <= rounds; round++ {
 		requests := swapRequests
@@ -105,16 +114,24 @@ func runTeleportChurnRounds(
 		collector.Reset()
 		slowTicks.Reset()
 		server.ResetNetworkMetrics()
+		combatTracker.Reset()
 		convergence.Start()
 		started := time.Now()
 		if err := worldRuntime.EnqueueTeleportBatch(requests); err != nil {
 			convergence.Stop()
+			combatTracker.Finish()
 			return convergenceMetadata{}, fmt.Errorf("enqueue teleport churn round %d: %w", round, err)
 		}
+		if err := enqueueChurnCombatActions(worldRuntime, round, combatPairs); err != nil {
+			convergence.Stop()
+			combatTracker.Finish()
+			return convergenceMetadata{}, err
+		}
 		transition := fmt.Sprintf("teleport-churn-%02d-%s", round, direction)
-		log.Printf("teleport churn round %d/%d triggered: direction=%s moved=%d timeout=%s stable=%s", round, rounds, direction, len(requests), timeout.String(), stableFor.String())
+		log.Printf("teleport churn round %d/%d triggered: direction=%s moved=%d combat_actions=%d timeout=%s stable=%s", round, rounds, direction, len(requests), len(combatPairs), timeout.String(), stableFor.String())
 		meta, err := waitForTransitionConvergence(ctx, convergence, server, clients, timeout, stableFor, started, transition)
 		convergence.Stop()
+		combatStats := combatTracker.Finish()
 		if err != nil {
 			return convergenceMetadata{}, err
 		}
@@ -144,17 +161,18 @@ func runTeleportChurnRounds(
 			}
 		}
 		reports = append(reports, report)
-		log.Printf("teleport churn round %d/%d converged: %.3fs p99=%.3fms heap_alloc=%d heap_sys=%d gc=%d spawn=%d despawn=%d vitals=%d", round, rounds, meta.TriggerToConvergedSeconds, report.TickDuration.P99MS, report.Memory.HeapAllocBytes, report.Memory.HeapSysBytes, report.Memory.NumGC, report.Lifecycle.SpawnSelected, report.Lifecycle.DespawnSelected, report.Lifecycle.InitialVitalsSelected)
+		combatReports = append(combatReports, combatStats)
+		log.Printf("teleport churn round %d/%d converged: %.3fs p99=%.3fms combat=%d rejected=%d dirty_vitals=%d heap_alloc=%d heap_sys=%d gc=%d spawn=%d despawn=%d initial_vitals=%d", round, rounds, meta.TriggerToConvergedSeconds, report.TickDuration.P99MS, combatStats.ActionsApplied, combatStats.ActionRejections, combatStats.DirtyVitalsSelected, report.Memory.HeapAllocBytes, report.Memory.HeapSysBytes, report.Memory.NumGC, report.Lifecycle.SpawnSelected, report.Lifecycle.DespawnSelected, report.Lifecycle.InitialVitalsSelected)
 	}
 
-	summary := buildChurnSoakSummary(scenario, clients, reports)
+	summary := buildChurnSoakSummary(scenario, clients, reports, combatReports)
 	if err := loadlab.WriteReport(churnSoakReportPath(reportPath), summary); err != nil {
 		return convergenceMetadata{}, fmt.Errorf("write churn soak summary: %w", err)
 	}
 	return latest, nil
 }
 
-func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []phasedServerReport) churnSoakSummary {
+func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []phasedServerReport, combatReports []churnCombatMetrics) churnSoakSummary {
 	summary := churnSoakSummary{
 		SchemaVersion:   loadlab.ReportSchemaVersion,
 		Scenario:        scenario,
@@ -164,6 +182,10 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 	}
 	for i, report := range reports {
 		world := report.Convergence.Observation.World
+		combatStats := churnCombatMetrics{}
+		if i < len(combatReports) {
+			combatStats = combatReports[i]
+		}
 		round := churnSoakRoundSummary{
 			Round:                       i + 1,
 			Direction:                   "swap",
@@ -182,6 +204,9 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 			SpawnSelected:               report.Lifecycle.SpawnSelected,
 			DespawnSelected:             report.Lifecycle.DespawnSelected,
 			InitialVitalsSelected:       report.Lifecycle.InitialVitalsSelected,
+			CombatActionsApplied:        combatStats.ActionsApplied,
+			ActionRejections:            combatStats.ActionRejections,
+			DirtyVitalsSelected:         combatStats.DirtyVitalsSelected,
 			LifecycleBackpressureStops:  report.Lifecycle.BackpressureStops,
 			MaxLifecycleSelectedPerTick: report.Lifecycle.MaxGlobalSelectedPerTick,
 			MaxInitialVitalsPerTick:     report.Lifecycle.MaxInitialVitalsSelectedPerTick,
@@ -213,6 +238,9 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 		summary.TotalSpawnSelected += round.SpawnSelected
 		summary.TotalDespawnSelected += round.DespawnSelected
 		summary.TotalInitialVitalsSelected += round.InitialVitalsSelected
+		summary.TotalCombatActionsApplied += round.CombatActionsApplied
+		summary.TotalActionRejections += round.ActionRejections
+		summary.TotalDirtyVitalsSelected += round.DirtyVitalsSelected
 		summary.TotalAllocBytes += round.TotalAllocBytes
 		if round.TotalAllocBytes > summary.MaxRoundTotalAllocBytes {
 			summary.MaxRoundTotalAllocBytes = round.TotalAllocBytes
