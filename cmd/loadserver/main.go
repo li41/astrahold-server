@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -32,11 +33,13 @@ func main() {
 		worldPath          = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
 		combatPath         = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
 		clients            = flag.Int("clients", 500, "Expected ready clients before convergence starts")
-		scenarioText       = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
-		duration           = flag.Duration("duration", 60*time.Second, "Steady-state measurement window after semantic convergence")
+		scenarioText       = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege | teleport-churn")
+		duration           = flag.Duration("duration", 60*time.Second, "Steady-state measurement window after semantic convergence / optional churn")
 		readyTimeout       = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
 		convergenceTimeout = flag.Duration("convergence-timeout", 30*time.Second, "Maximum time from all-ready to lifecycle/reliable convergence")
-		convergenceStable  = flag.Duration("convergence-stable", 250*time.Millisecond, "How long convergence conditions must remain continuously true")
+		convergenceStable  = flag.Duration("convergence-stable", 250*time.Millisecond, "How long initial convergence conditions must remain continuously true")
+		churnTimeout       = flag.Duration("churn-timeout", 15*time.Second, "Maximum time from teleport-churn trigger to lifecycle/reliable convergence")
+		churnStable        = flag.Duration("churn-stable", 250*time.Millisecond, "How long post-churn convergence conditions must remain continuously true")
 		shutdownGrace      = flag.Duration("shutdown-grace", 2*time.Second, "Keep listeners alive after report so bots can close cleanly")
 		reportPath         = flag.String("report", "artifacts/loadlab-server.json", "Steady-state Server JSON report path")
 		allocProfilePrefix = flag.String("alloc-profile-prefix", "", "Optional steady-state allocation profile path prefix; writes <prefix>-before.pprof and <prefix>-after.pprof")
@@ -45,8 +48,8 @@ func main() {
 	flag.Parse()
 
 	if err := validateRates(*tickRate, *snapshotRate); err != nil { log.Fatal(err) }
-	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 || *convergenceTimeout <= 0 || *convergenceStable < 0 || *shutdownGrace < 0 {
-		log.Fatal("clients/duration/ready-timeout/convergence-timeout must be > 0; convergence-stable/shutdown-grace must be >= 0")
+	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 || *convergenceTimeout <= 0 || *churnTimeout <= 0 || *convergenceStable < 0 || *churnStable < 0 || *shutdownGrace < 0 {
+		log.Fatal("clients/duration/ready-timeout/convergence-timeout/churn-timeout must be > 0; convergence-stable/churn-stable/shutdown-grace must be >= 0")
 	}
 	if *allocProfileRate <= 0 { log.Fatal("alloc-profile-rate must be > 0") }
 	profiler, err := newAllocProfiler(*allocProfilePrefix, *allocProfileRate); if err != nil { log.Fatalf("configure allocation profiler: %v", err) }
@@ -58,6 +61,17 @@ func main() {
 	combatService, err := combat.NewService(loadedCombat.Definition.Actions); if err != nil { log.Fatalf("build combat service: %v", err) }
 	nav, err := navigation.NewGameplayNavigator(loadedWorld.Definition); if err != nil { log.Fatalf("build gameplay navigator: %v", err) }
 	playerFactory, err := loadlab.NewPlayerFactory(loadedWorld.Definition, scenario, *clients); if err != nil { log.Fatal(err) }
+
+	var churnRequests []worldruntime.TeleportRequest
+	if scenario == loadlab.ScenarioTeleportChurn {
+		targets, targetErr := loadlab.TeleportChurnTargets(loadedWorld.Definition, *clients)
+		if targetErr != nil { log.Fatal(targetErr) }
+		churnRequests = make([]worldruntime.TeleportRequest, 0, len(targets))
+		for entityID, position := range targets {
+			churnRequests = append(churnRequests, worldruntime.TeleportRequest{EntityID: entityID, Position: position})
+		}
+		sort.Slice(churnRequests, func(i, j int) bool { return churnRequests[i].EntityID < churnRequests[j].EntityID })
+	}
 
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
@@ -91,7 +105,7 @@ func main() {
 	if err := waitForClients(ctx,server,*clients,*readyTimeout); err != nil { stop(); <-serveDone; <-loopDone; log.Fatal(err) }
 
 	// Phase 1：all-ready 只代表 SessionWelcome / UDP endpoint 已建立。
-	// 在 lifecycle + vitals + dynamic + Reliable transport 真正 drain 前，先獨立量測 convergence burst。
+	// 在 lifecycle + vitals + dynamic + Reliable transport 真正 drain 前，先獨立量測 initial convergence。
 	convergenceStarted := time.Now()
 	collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics(); convergence.Start()
 	log.Printf("all clients ready; starting semantic convergence phase timeout=%s stable=%s", convergenceTimeout.String(), convergenceStable.String())
@@ -105,14 +119,36 @@ func main() {
 	if err:=writeSlowTickReport(slowTickReportPath(convergencePath),convergenceSlowReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write convergence slow tick report: %v",err) }
 	log.Printf("semantic convergence reached: %.3fs tick=%d desired=%d reliable_queued=%d reliable_in_flight=%d", convergenceMeta.ReadyToConvergedSeconds, convergenceMeta.Observation.Tick, convergenceMeta.Observation.World.DesiredRelationships, convergenceMeta.Reliable.Queued, convergenceMeta.Reliable.InFlight)
 
-	// Phase 2：正式 capacity / allocation 數據只量已收斂的 steady-state。
+	latestMeta := convergenceMeta
+	// Phase 2（teleport-churn only）：從已收斂世界一次性交換半數 Entity 的 cluster membership。
+	// Gate 必須先看到 non-converged，再等 Spawn/Despawn/Vitals + Reliable drain 重新成立。
+	if scenario == loadlab.ScenarioTeleportChurn {
+		collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics(); convergence.Start()
+		churnStarted := time.Now()
+		if err := worldRuntime.EnqueueTeleportBatch(churnRequests); err != nil {
+			convergence.Stop(); stop(); <-serveDone; <-loopDone; log.Fatalf("enqueue teleport churn batch: %v", err)
+		}
+		log.Printf("teleport churn triggered: moved=%d timeout=%s stable=%s", len(churnRequests), churnTimeout.String(), churnStable.String())
+		churnMeta, churnErr := waitForTransitionConvergence(ctx, convergence, server, *clients, *churnTimeout, *churnStable, churnStarted, "teleport-churn")
+		convergence.Stop()
+		if churnErr != nil { stop(); <-serveDone; <-loopDone; log.Fatal(churnErr) }
+		latestMeta = churnMeta
+		churnReport := withPhaseReport(withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics()), "churn", churnMeta)
+		churnSlowReport := slowTicks.Finish()
+		churnPath := churnReportPath(*reportPath)
+		if err:=loadlab.WriteReport(churnPath,churnReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write churn report: %v",err) }
+		if err:=writeSlowTickReport(slowTickReportPath(churnPath),churnSlowReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write churn slow tick report: %v",err) }
+		log.Printf("teleport churn converged: %.3fs tick=%d desired=%d spawn_selected=%d despawn_selected=%d backpressure_stops=%d reliable_queued=%d reliable_in_flight=%d", churnMeta.TriggerToConvergedSeconds, churnMeta.Observation.Tick, churnMeta.Observation.World.DesiredRelationships, churnReport.Lifecycle.SpawnSelected, churnReport.Lifecycle.DespawnSelected, churnReport.Lifecycle.BackpressureStops, churnMeta.Reliable.Queued, churnMeta.Reliable.InFlight)
+	}
+
+	// Final phase：capacity / allocation 數據只量最後一次 semantic convergence 之後的 steady-state。
 	if err := profiler.Write("before"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile before measurement: %v", err) }
 	collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics()
 	log.Printf("starting %s steady-state measurement window", duration.String())
 
 	measurementTimer:=time.NewTimer(*duration); completed:=false
 	select { case <-measurementTimer.C: completed=true; case <-ctx.Done(): measurementTimer.Stop() }
-	report:=withPhaseReport(withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics()), "steady-state", convergenceMeta)
+	report:=withPhaseReport(withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics()), "steady-state", latestMeta)
 	slowReport:=slowTicks.Finish()
 	if err := profiler.Write("after"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile after measurement: %v", err) }
 	if err:=loadlab.WriteReport(*reportPath,report); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write report: %v",err) }
