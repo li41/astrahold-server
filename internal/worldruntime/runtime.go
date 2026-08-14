@@ -37,6 +37,7 @@ type Config struct {
 	MaxDespawnsPerSessionBuild      int
 	MaxLifecyclePerSessionBuild     int
 	MaxLifecycleMessagesPerSnapshot int
+	MaxInitialVitalsPerTick         int
 	CollectMetrics                  bool
 }
 
@@ -52,6 +53,7 @@ func DefaultConfig() Config {
 		MaxDespawnsPerSessionBuild:      64,
 		MaxLifecyclePerSessionBuild:     32,
 		MaxLifecycleMessagesPerSnapshot: 16000,
+		MaxInitialVitalsPerTick:         8000,
 	}
 }
 
@@ -101,6 +103,9 @@ type StepMetrics struct {
 	LifecycleGlobalBudget            int
 	LifecycleGlobalSelected          int
 	LifecycleGlobalBudgetExhausted   bool
+	InitialVitalsGlobalBudget        int
+	InitialVitalsGlobalSelected      int
+	InitialVitalsGlobalBudgetExhausted bool
 	CommandDuration                  time.Duration
 	SimulationDuration               time.Duration
 	DynamicReplicationDuration       time.Duration
@@ -140,6 +145,7 @@ type Runtime struct {
 	sessionVitalsRevision     map[session.ID]map[world.EntityID]uint64
 	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
 	lifecycleSessionCursor    int
+	vitalsSessionCursor       int
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -169,6 +175,9 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.MaxLifecycleMessagesPerSnapshot <= 0 {
 		config.MaxLifecycleMessagesPerSnapshot = 16000
+	}
+	if config.MaxInitialVitalsPerTick <= 0 {
+		config.MaxInitialVitalsPerTick = 8000
 	}
 	characters, err := character.NewService(config.CharacterMaxHP)
 	if err != nil {
