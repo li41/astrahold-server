@@ -69,6 +69,10 @@ jobs:
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
           jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
+          # Gate Zerg 全員都在 AOI 內；500 peers 應收斂到 500*500 個 Reliable Spawn。
+          # 至少還應包含同數量的 Vitals full state 與每個 Session 一份 Dynamic state。
+          jq -e '.spawns == (.requested_clients * .requested_clients)' artifacts/bots.json >/dev/null
+          jq -e '.reliable_messages >= ((.requested_clients * .requested_clients * 2) + .requested_clients)' artifacts/bots.json >/dev/null
           jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload 500-client scaling reports
         if: always()
