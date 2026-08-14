@@ -91,3 +91,84 @@ jobs:
         with:
           name: s3e-gate-zerg-500
           path: artifacts/
+
+  teleport-churn-500:
+    if: startsWith(github.head_ref, 'agent/s3e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Build load tools
+        run: |
+          go build -o /tmp/astrahold-loadserver ./cmd/loadserver
+          go build -o /tmp/astrahold-loadbot ./cmd/loadbot
+      - name: Run 500-client Teleport AOI Churn baseline
+        shell: bash
+        run: |
+          set -u
+          mkdir -p artifacts
+          /tmp/astrahold-loadserver \
+            -tcp 127.0.0.1:19777 \
+            -udp 127.0.0.1:19778 \
+            -clients 500 \
+            -scenario teleport-churn \
+            -duration 10s \
+            -shutdown-grace 2s \
+            -ready-timeout 60s \
+            -convergence-timeout 30s \
+            -convergence-stable 250ms \
+            -churn-timeout 15s \
+            -churn-stable 250ms \
+            -report artifacts/churn-server.json \
+            > artifacts/churn-server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 1
+
+          set +e
+          /tmp/astrahold-loadbot \
+            -tcp 127.0.0.1:19777 \
+            -clients 500 \
+            -scenario teleport-churn \
+            -input-rate 20 \
+            -ramp-up 5s \
+            -duration 45s \
+            -report artifacts/churn-bots.json \
+            > artifacts/churn-bots.log 2>&1
+          BOT_STATUS=$?
+          wait "$SERVER_PID"
+          SERVER_STATUS=$?
+          set -e
+
+          cat artifacts/churn-server-convergence.json || true
+          cat artifacts/churn-server-churn.json || true
+          cat artifacts/churn-server.json || true
+          cat artifacts/churn-bots.json || true
+          test "$BOT_STATUS" -eq 0
+          test "$SERVER_STATUS" -eq 0
+
+          jq -e '.ready_clients == 500 and .failed_connections == 0 and .decode_errors == 0 and .network_errors == 0 and .incomplete_snapshot_resets == 0 and .completed_snapshots > 0' artifacts/churn-bots.json >/dev/null
+          # 初始兩群各 250 人：125,000 Spawn。交換半群後新增 62,500 Spawn + 62,500 Despawn。
+          jq -e '.spawns == 187500 and .despawns == 62500' artifacts/churn-bots.json >/dev/null
+          # 187,500 Spawn + 187,500 Vitals + 62,500 Despawn + 500 Dynamic = 438,000 Reliable minimum。
+          jq -e '.reliable_messages >= 438000' artifacts/churn-bots.json >/dev/null
+
+          jq -e '.phase == "convergence" and .convergence.transition == "initial" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-convergence.json >/dev/null
+
+          # Churn gate 必須先看到 non-converged，再重新回到同樣 125,000 desired/known，且 Reliable 全 drain。
+          jq -e '.phase == "churn" and .convergence.transition == "teleport-churn" and .convergence.observed_non_converged == true and .convergence.trigger_to_converged_seconds > 0 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-churn.json >/dev/null
+          jq -e '.lifecycle.spawn_selected >= 62500 and .lifecycle.despawn_selected >= 62500' artifacts/churn-server-churn.json >/dev/null
+          jq -e '.errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0' artifacts/churn-server-churn.json >/dev/null
+
+          # 第一輪 S3-E.7 只把 churn performance 當 baseline，不先用未量測過的 p99/time 門檻自我驗證。
+          # 最後 steady-state 仍必須保留既有 50ms capacity budget。
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50' artifacts/churn-server.json >/dev/null
+      - name: Upload Teleport Churn reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3e-teleport-churn-500
+          path: artifacts/
