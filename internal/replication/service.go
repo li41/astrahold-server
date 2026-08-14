@@ -36,9 +36,17 @@ type sentTransform struct {
 	Yaw      float32
 }
 
+type entityTrack struct {
+	id                      world.EntityID
+	known                   bool
+	lastDeliveredGeneration uint64
+	lastSentBuild           uint64
+}
+
 type snapshotCandidate struct {
 	entity     world.EntityState
 	generation uint64
+	trackIndex int
 	tier       Tier
 	age        uint64
 	cadence    uint64
@@ -47,18 +55,21 @@ type snapshotCandidate struct {
 
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
-	// AOI 可見但 Spawn backpressure 的 Entity 不可提前標成 known，否則 Client 會永久漏 Spawn。
-	known                   map[world.EntityID]struct{}
-	// desiredIDs 是上一個 AOI desired view 的 stable EntityID order。
-	// steady-state membership 不變時不再 clear + rewrite 一個 500-entry map。
-	desiredIDs              []world.EntityID
-	departed                []world.EntityID
-	lastSnapshot            map[world.EntityID]sentTransform // legacy Build compatibility only
-	lastDeliveredGeneration map[world.EntityID]uint64
-	lastSentBuild           map[world.EntityID]uint64
-	candidates              []snapshotCandidate
-	messages                []Outbound
-	buildNumber             uint64
+	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity 查 map。
+	known map[world.EntityID]struct{}
+
+	// desiredIDs / tracks 與 shared frame 的 stable EntityID order 對齊。
+	// AOI membership 不變時，dirty / cadence / known 都走 dense slice，避免每 Session × visible map lookup。
+	desiredIDs []world.EntityID
+	tracks     []entityTrack
+
+	departed   []world.EntityID
+	lastSnapshot map[world.EntityID]sentTransform // legacy Build compatibility only
+	lastDeliveredGeneration map[world.EntityID]uint64 // legacy Build compatibility only
+	lastSentBuild map[world.EntityID]uint64 // legacy Build compatibility only
+	candidates []snapshotCandidate
+	messages   []Outbound
+	buildNumber uint64
 }
 
 type Service struct {
@@ -79,10 +90,10 @@ func NewService(policies ...Policy) *Service {
 
 func newViewState() *viewState {
 	return &viewState{
-		known:                   make(map[world.EntityID]struct{}),
-		lastSnapshot:            make(map[world.EntityID]sentTransform),
+		known: make(map[world.EntityID]struct{}),
+		lastSnapshot: make(map[world.EntityID]sentTransform),
 		lastDeliveredGeneration: make(map[world.EntityID]uint64),
-		lastSentBuild:           make(map[world.EntityID]uint64),
+		lastSentBuild: make(map[world.EntityID]uint64),
 	}
 }
 
@@ -114,6 +125,9 @@ func (s *Service) ConfirmSpawn(sessionID session.ID, entityID world.EntityID) {
 		return
 	}
 	state.known[entityID] = struct{}{}
+	if index := desiredIndex(state.desiredIDs, entityID); index >= 0 && index < len(state.tracks) {
+		state.tracks[index].known = true
+	}
 }
 
 // ConfirmDespawn 只在 EntityDespawn TrySend 成功後呼叫。
@@ -127,6 +141,11 @@ func (s *Service) ConfirmDespawn(sessionID session.ID, entityID world.EntityID) 
 	delete(state.lastSnapshot, entityID)
 	delete(state.lastDeliveredGeneration, entityID)
 	delete(state.lastSentBuild, entityID)
+	if index := desiredIndex(state.desiredIDs, entityID); index >= 0 && index < len(state.tracks) {
+		state.tracks[index].known = false
+		state.tracks[index].lastDeliveredGeneration = 0
+		state.tracks[index].lastSentBuild = 0
+	}
 }
 
 // Build 保留給既有單元測試與非 frame caller；production Runtime 使用 BuildFrame。
@@ -139,10 +158,10 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	}
 	frame := simulation.ReplicationFrame{
-		Tick:                 tick,
-		Entities:             ordered,
+		Tick: tick,
+		Entities: ordered,
 		TransformGenerations: make([]uint64, len(ordered)),
-		IndexByID:            make(map[world.EntityID]int, len(ordered)),
+		IndexByID: make(map[world.EntityID]int, len(ordered)),
 	}
 	visibleIndices := make([]int, len(ordered))
 	for i := range ordered {
@@ -163,7 +182,7 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 }
 
 // BuildFrame 使用 shared immutable frame 與 AOI index view。
-// production path 的 dirty 判斷只比較 generation，不重複比較 Position / Yaw。
+// production path 的 dirty / cadence / known state 使用與 desired view 對齊的 dense track。
 func (s *Service) BuildFrame(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int) Batch {
 	state := s.ensureView(sessionID)
 	return s.buildFrame(state, selfID, lastProcessedInput, frame, visibleIndices)
@@ -189,24 +208,15 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		selfPosition = self.Transform.Position
 		selfTransform = protocol.EntityTransform{
 			EntityID: self.ID,
-			Tick:     tick,
+			Tick: tick,
 			Position: self.Transform.Position,
-			Yaw:      self.Transform.Yaw,
+			Yaw: self.Transform.Yaw,
 		}
 	}
 
 	desiredChanged := !sameDesiredIDs(state.desiredIDs, frame, visibleIndices)
 	if desiredChanged {
-		if cap(state.desiredIDs) < len(visibleIndices) {
-			state.desiredIDs = make([]world.EntityID, len(visibleIndices))
-		} else {
-			state.desiredIDs = state.desiredIDs[:len(visibleIndices)]
-		}
-		for i, index := range visibleIndices {
-			if index >= 0 && index < len(frame.Entities) {
-				state.desiredIDs[i] = frame.Entities[index].ID
-			}
-		}
+		rebuildDesiredTracks(state, frame, visibleIndices)
 	}
 
 	state.candidates = state.candidates[:0]
@@ -214,18 +224,20 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	batch := Batch{Messages: state.messages}
 	hasUnknown := false
 
-	for _, index := range visibleIndices {
-		if index < 0 || index >= len(frame.Entities) {
+	for i, index := range visibleIndices {
+		if index < 0 || index >= len(frame.Entities) || i >= len(state.tracks) {
 			continue
 		}
 		e := frame.Entities[index]
 		generation := frame.TransformGenerations[index]
-		tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
-		if _, ok := state.known[e.ID]; !ok {
+		track := &state.tracks[i]
+
+		if !track.known {
 			hasUnknown = true
+			tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 			batch.Messages = append(batch.Messages, Outbound{
 				Delivery: protocol.DeliveryReliableOrdered,
-				Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
+				Message: protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
 			})
 			// Spawn 自己已包含 authoritative transform。直到 Reliable Spawn 成功前，
 			// 不把這個 Entity 放進 realtime snapshot，也不讓 Vitals 認為 Client 已知。
@@ -239,13 +251,12 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		if hasSelf {
 			tier = s.policy.tier(selfPosition, e.Transform.Position)
 		}
-		lastGeneration, hasDelivered := state.lastDeliveredGeneration[e.ID]
-		dirty := !hasDelivered || lastGeneration != generation
+		hasDelivered := track.lastDeliveredGeneration != 0
+		dirty := !hasDelivered || track.lastDeliveredGeneration != generation
 		if dirty {
 			batch.Stats.DirtyVisible++
 		}
-		lastBuild := state.lastSentBuild[e.ID]
-		age := state.buildNumber - lastBuild
+		age := state.buildNumber - track.lastSentBuild
 		cadence := s.policy.cadence(tier)
 		forced := hasDelivered && age >= s.policy.refresh(tier)
 		dueDirty := dirty && (!hasDelivered || age >= cadence)
@@ -256,12 +267,13 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 			batch.Stats.ForcedRefreshCandidates++
 		}
 		state.candidates = append(state.candidates, snapshotCandidate{
-			entity:     e,
+			entity: e,
 			generation: generation,
-			tier:       tier,
-			age:        age,
-			cadence:    cadence,
-			dirty:      dirty,
+			trackIndex: i,
+			tier: tier,
+			age: age,
+			cadence: cadence,
+			dirty: dirty,
 		})
 	}
 
@@ -279,7 +291,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	for _, id := range state.departed {
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
-			Message:  protocol.EntityDespawn{EntityID: id},
+			Message: protocol.EntityDespawn{EntityID: id},
 		})
 	}
 
@@ -288,8 +300,6 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	if budgetExceeded {
 		sort.Slice(state.candidates, func(i, j int) bool {
 			a, b := state.candidates[i], state.candidates[j]
-			// age/cadence 越大代表相對於自己的 LOD cadence 越 overdue。
-			// 只有真的超過 budget 時才付 ranking 成本；normal path 保留 frame EntityID 穩定順序。
 			left := a.age * b.cadence
 			right := b.age * a.cadence
 			if left != right {
@@ -320,6 +330,12 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		candidate := state.candidates[i]
 		e := candidate.entity
 		transforms[i] = protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
+		if candidate.trackIndex >= 0 && candidate.trackIndex < len(state.tracks) {
+			track := &state.tracks[candidate.trackIndex]
+			track.lastDeliveredGeneration = candidate.generation
+			track.lastSentBuild = state.buildNumber
+		}
+		// compatibility mirrors：只有 legacy Build 會讀這些 map，production scheduler 不讀。
 		state.lastSnapshot[e.ID] = sentTransform{Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		state.lastDeliveredGeneration[e.ID] = candidate.generation
 		state.lastSentBuild[e.ID] = state.buildNumber
@@ -349,10 +365,10 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryRealtimeSequenced,
 			Message: protocol.WorldSnapshot{
-				Tick:       tick,
+				Tick: tick,
 				ChunkIndex: uint16(chunk),
 				ChunkCount: uint16(chunkCount),
-				Entities:   transforms[start:end],
+				Entities: transforms[start:end],
 			},
 		})
 	}
@@ -361,10 +377,10 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryRealtimeSequenced,
 			Message: protocol.PositionCorrection{
-				Tick:                       tick,
-				EntityID:                   selfTransform.EntityID,
-				Position:                   selfTransform.Position,
-				Yaw:                        selfTransform.Yaw,
+				Tick: tick,
+				EntityID: selfTransform.EntityID,
+				Position: selfTransform.Position,
+				Yaw: selfTransform.Yaw,
 				LastProcessedInputSequence: lastProcessedInput,
 			},
 		})
@@ -372,6 +388,34 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 
 	state.messages = batch.Messages
 	return batch
+}
+
+func rebuildDesiredTracks(state *viewState, frame *simulation.ReplicationFrame, visibleIndices []int) {
+	oldIDs := state.desiredIDs
+	oldTracks := state.tracks
+	newIDs := make([]world.EntityID, len(visibleIndices))
+	newTracks := make([]entityTrack, len(visibleIndices))
+	for i, index := range visibleIndices {
+		if index < 0 || index >= len(frame.Entities) {
+			continue
+		}
+		id := frame.Entities[index].ID
+		newIDs[i] = id
+		oldIndex := desiredIndex(oldIDs, id)
+		if oldIndex >= 0 && oldIndex < len(oldTracks) {
+			newTracks[i] = oldTracks[oldIndex]
+			continue
+		}
+		_, known := state.known[id]
+		newTracks[i] = entityTrack{
+			id: id,
+			known: known,
+			lastDeliveredGeneration: state.lastDeliveredGeneration[id],
+			lastSentBuild: state.lastSentBuild[id],
+		}
+	}
+	state.desiredIDs = newIDs
+	state.tracks = newTracks
 }
 
 func sameDesiredIDs(previous []world.EntityID, frame *simulation.ReplicationFrame, visibleIndices []int) bool {
@@ -386,7 +430,14 @@ func sameDesiredIDs(previous []world.EntityID, frame *simulation.ReplicationFram
 	return true
 }
 
-func containsDesiredID(ids []world.EntityID, id world.EntityID) bool {
+func desiredIndex(ids []world.EntityID, id world.EntityID) int {
 	index := sort.Search(len(ids), func(i int) bool { return ids[i] >= id })
-	return index < len(ids) && ids[index] == id
+	if index < len(ids) && ids[index] == id {
+		return index
+	}
+	return -1
+}
+
+func containsDesiredID(ids []world.EntityID, id world.EntityID) bool {
+	return desiredIndex(ids, id) >= 0
 }
