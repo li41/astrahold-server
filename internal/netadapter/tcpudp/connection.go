@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -19,10 +20,11 @@ type clientConnection struct {
 	codec   transport.PayloadCodec
 	metrics *networkCounters
 
-	reliable chan protocol.Envelope
-	realtime *realtimeMailbox
-	done     chan struct{}
-	closeOnce sync.Once
+	reliable         chan protocol.Envelope
+	reliableInFlight atomic.Bool
+	realtime         *realtimeMailbox
+	done             chan struct{}
+	closeOnce        sync.Once
 
 	remoteMu   sync.RWMutex
 	remote     *net.UDPAddr
@@ -118,7 +120,10 @@ func (c *clientConnection) runReliableWriter() error {
 		case <-c.done:
 			return nil
 		case envelope := <-c.reliable:
-			if err := transport.WriteEnvelope(c.tcp, envelope, c.codec); err != nil {
+			c.reliableInFlight.Store(true)
+			err := transport.WriteEnvelope(c.tcp, envelope, c.codec)
+			c.reliableInFlight.Store(false)
+			if err != nil {
 				return err
 			}
 		}
