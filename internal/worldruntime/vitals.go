@@ -285,12 +285,6 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 					delete(r.sessionVitalsPending, s.ID)
 				}
 			}
-			if remaining <= 0 && sessionOrder+1 < len(sessions) {
-				allDelivered = false
-				nextSessionIndex := (sessionIndex + 1) % len(sessions)
-				r.dirtyVitalsNextSession[entityID] = sessions[nextSessionIndex].ID
-				break
-			}
 		}
 		if allDelivered {
 			delete(r.dirtyVitalsEntities, entityID)
