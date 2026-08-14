@@ -11,6 +11,7 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/transport"
+	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
