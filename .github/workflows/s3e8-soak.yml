@@ -17,7 +17,7 @@ on:
 
 jobs:
   repeated-churn-500:
-    if: startsWith(github.head_ref, 'agent/s3e8')
+    if: startsWith(github.head_ref, 'agent/s3e8') || startsWith(github.head_ref, 'agent/s3e9')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
