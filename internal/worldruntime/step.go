@@ -105,9 +105,9 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			}
 			var batch replication.Batch
 			if _, immediate := connection.(session.ImmediateRealtimeConnection); immediate {
-				batch = r.replication.BuildFrameBorrowedWithLifecycleLimits(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible, lifecycleLimits)
+				batch = r.replication.BuildFrameBorrowedLifecycleFirst(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible, lifecycleLimits)
 			} else {
-				batch = r.replication.BuildFrameWithLifecycleLimits(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible, lifecycleLimits)
+				batch = r.replication.BuildFrameLifecycleFirst(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible, lifecycleLimits)
 			}
 			if measure {
 				report.Metrics.ReplicationBuildDuration += time.Since(stageStart)

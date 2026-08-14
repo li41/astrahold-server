@@ -15,7 +15,7 @@ func TestLifecycleSpawnBudgetMakesBoundedProgress(t *testing.T) {
 	frame, visible := lifecycleFrame(10, 5)
 	limits := LifecycleLimits{MaxSpawns: 2, MaxDespawns: 2}
 
-	first := svc.BuildFrameWithLifecycleLimits(sid, 1, 0, frame, visible, limits)
+	first := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
 	if got := lifecycleIDs(first, true); !equalIDs(got, []world.EntityID{1, 2}) {
 		t.Fatalf("first spawn ids=%v want=[1 2]", got)
 	}
@@ -29,7 +29,10 @@ func TestLifecycleSpawnBudgetMakesBoundedProgress(t *testing.T) {
 		svc.ConfirmSpawn(sid, id)
 	}
 
-	second := svc.BuildFrameWithLifecycleLimits(sid, 1, 0, frame, visible, limits)
+	second := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
+	if got := snapshotEntityIDs(second); len(got) != 0 {
+		t.Fatalf("bootstrap view emitted remote snapshot before all spawns: %v", got)
+	}
 	if got := lifecycleIDs(second, true); !equalIDs(got, []world.EntityID{3, 4}) {
 		t.Fatalf("second spawn ids=%v want=[3 4]", got)
 	}
@@ -40,12 +43,17 @@ func TestLifecycleSpawnBudgetMakesBoundedProgress(t *testing.T) {
 		svc.ConfirmSpawn(sid, id)
 	}
 
-	third := svc.BuildFrameWithLifecycleLimits(sid, 1, 0, frame, visible, limits)
+	third := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
 	if got := lifecycleIDs(third, true); !equalIDs(got, []world.EntityID{5}) {
 		t.Fatalf("third spawn ids=%v want=[5]", got)
 	}
 	if third.Stats.SpawnCandidates != 1 || third.Stats.SpawnSelected != 1 || third.Stats.SpawnDeferred != 0 {
 		t.Fatalf("third spawn stats=%+v", third.Stats)
+	}
+	svc.ConfirmSpawn(sid, 5)
+	fourth := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
+	if got := snapshotEntityIDs(fourth); !equalIDs(got, []world.EntityID{2, 3, 4, 5}) {
+		t.Fatalf("converged view snapshot ids=%v want=[2 3 4 5]", got)
 	}
 }
 
@@ -61,7 +69,7 @@ func TestLifecycleDespawnBudgetMakesBoundedProgress(t *testing.T) {
 	limits := LifecycleLimits{MaxSpawns: 2, MaxDespawns: 2}
 
 	frame, visible := lifecycleFrame(20, 1)
-	first := svc.BuildFrameWithLifecycleLimits(sid, 1, 0, frame, visible, limits)
+	first := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
 	if got := lifecycleIDs(first, false); !equalIDs(got, []world.EntityID{2, 3}) {
 		t.Fatalf("first despawn ids=%v want=[2 3]", got)
 	}
@@ -72,7 +80,7 @@ func TestLifecycleDespawnBudgetMakesBoundedProgress(t *testing.T) {
 		svc.ConfirmDespawn(sid, id)
 	}
 
-	second := svc.BuildFrameWithLifecycleLimits(sid, 1, 0, frame, visible, limits)
+	second := svc.BuildFrameLifecycleFirst(sid, 1, 0, frame, visible, limits)
 	if got := lifecycleIDs(second, false); !equalIDs(got, []world.EntityID{4, 5}) {
 		t.Fatalf("second despawn ids=%v want=[4 5]", got)
 	}
