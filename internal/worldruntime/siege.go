@@ -1,0 +1,37 @@
+package worldruntime
+
+import (
+	"errors"
+
+	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/gameplayworld"
+	"github.com/li41/astrahold-server/internal/siege"
+)
+
+const legacyGateActionID = "__legacy_gate_attack__"
+
+var (
+	ErrSiegeUnavailable  = errors.New("worldruntime: siege unavailable")
+	ErrCombatUnavailable = errors.New("worldruntime: combat unavailable")
+)
+
+func WithSiegeGates(gates []gameplayworld.Gate) Option {
+	return func(r *Runtime) {
+		if len(gates) == 0 { return }
+		r.siege = siege.NewService(gates)
+		profile := gates[0].Attack
+		legacy, err := combat.NewService([]combat.ActionDefinition{{
+			ID: legacyGateActionID,
+			Targets: []combat.TargetKind{combat.TargetGate},
+			Range: profile.Range,
+			BaseDamage: profile.Damage,
+			DamageType: combat.DamagePhysical,
+			CooldownSeconds: profile.CooldownSeconds,
+		}})
+		if err == nil { r.combat = legacy }
+	}
+}
+
+func WithCombatService(service *combat.Service) Option {
+	return func(r *Runtime) { r.combat = service }
+}
