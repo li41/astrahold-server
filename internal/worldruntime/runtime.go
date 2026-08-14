@@ -7,6 +7,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/deathpenalty"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -87,6 +88,9 @@ type StepMetrics struct {
 	CommandQueueDepthAfter                   int
 	CommandsDrained                         int
 	EntityActionsApplied                    int
+	DeathOutcomesRecorded                   int
+	DeathPenaltyTransactionsApplied         int
+	DeathPenaltyCheckpointForfeits          int
 	RespawnsScheduled                       int
 	RespawnPolicyDue                        int
 	RespawnsApplied                         int
@@ -173,6 +177,8 @@ type Runtime struct {
 	siege                     *siege.Service
 	combat                    *combat.Service
 	respawnPolicy             *respawnpolicy.Service
+	deathPenalty              *deathpenalty.Service
+	deathRevision             map[world.EntityID]uint64
 	dynamicRevision           uint64
 	sessionDynamicRevision    map[session.ID]uint64
 	entityVitalsRevision      map[world.EntityID]uint64
@@ -243,6 +249,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characters:              characters,
 		queue:                   newCommandQueue(config.CommandQueueCapacity),
 		config:                  config,
+		deathRevision:           make(map[world.EntityID]uint64),
 		sessionDynamicRevision:  make(map[session.ID]uint64),
 		entityVitalsRevision:    make(map[world.EntityID]uint64),
 		dirtyVitalsEntities:     make(map[world.EntityID]struct{}),
