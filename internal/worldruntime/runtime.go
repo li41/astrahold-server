@@ -13,6 +13,7 @@ import (
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 var (
@@ -81,6 +82,8 @@ type Runtime struct {
 	combat *combat.Service
 	dynamicRevision uint64
 	sessionDynamicRevision map[session.ID]uint64
+	entityVitalsRevision map[world.EntityID]uint64
+	sessionVitalsRevision map[session.ID]map[world.EntityID]uint64
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -99,6 +102,8 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		queue: newCommandQueue(config.CommandQueueCapacity),
 		config: config,
 		sessionDynamicRevision: make(map[session.ID]uint64),
+		entityVitalsRevision: make(map[world.EntityID]uint64),
+		sessionVitalsRevision: make(map[session.ID]map[world.EntityID]uint64),
 	}
 	for _, option := range options { if option != nil { option(r) } }
 	if r.dynamic != nil { r.dynamicRevision = 1 }
