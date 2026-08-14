@@ -53,24 +53,24 @@ type BotReport struct {
 }
 
 type botCollector struct {
-	connected         atomic.Uint64
-	ready             atomic.Uint64
-	failedConnections atomic.Uint64
-	moves             atomic.Uint64
-	udpSent           atomic.Uint64
-	udpReceived       atomic.Uint64
-	tcpReceived       atomic.Uint64
-	reliable          atomic.Uint64
-	realtime          atomic.Uint64
-	snapshots         atomic.Uint64
-	completedSnapshots atomic.Uint64
+	connected                atomic.Uint64
+	ready                    atomic.Uint64
+	failedConnections        atomic.Uint64
+	moves                    atomic.Uint64
+	udpSent                  atomic.Uint64
+	udpReceived              atomic.Uint64
+	tcpReceived              atomic.Uint64
+	reliable                 atomic.Uint64
+	realtime                 atomic.Uint64
+	snapshots                atomic.Uint64
+	completedSnapshots       atomic.Uint64
 	incompleteSnapshotResets atomic.Uint64
-	corrections       atomic.Uint64
-	spawns            atomic.Uint64
-	despawns          atomic.Uint64
-	dynamicStates     atomic.Uint64
-	decodeErrors      atomic.Uint64
-	networkErrors     atomic.Uint64
+	corrections              atomic.Uint64
+	spawns                   atomic.Uint64
+	despawns                 atomic.Uint64
+	dynamicStates            atomic.Uint64
+	decodeErrors             atomic.Uint64
+	networkErrors            atomic.Uint64
 
 	latencyMu sync.Mutex
 	latencies []time.Duration
@@ -229,7 +229,9 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 		case <-ticker.C:
 			sequence++
 			if err := sendMove(udp, token, codec, config.Scenario, welcome.EntityID, sequence, time.Since(started), collector); err != nil {
-				if ctx.Err() == nil {
+				// Reliable reader 在 Server 正常關閉 TCP 時會先 cancel botCtx；
+				// 與取消競態中的 UDP send error 屬於正常 shutdown，不應重複計成 network error。
+				if botCtx.Err() == nil {
 					collector.networkErrors.Add(1)
 				}
 				return nil
