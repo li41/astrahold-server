@@ -87,6 +87,9 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 	r.replication.Remove(id)
 	r.removeSessionVitals(id)
 	r.removeEntityVitals(s.EntityID)
+	if r.respawnPolicy != nil {
+		r.respawnPolicy.Remove(s.EntityID)
+	}
 	r.characters.Remove(s.EntityID)
 	r.world.Remove(s.EntityID)
 	_ = s.Connection().Close()
