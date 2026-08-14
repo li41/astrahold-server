@@ -42,12 +42,17 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyTeleportBatch(cmd.name(), c, &report)
 		case respawnCommand:
 			r.applyRespawn(cmd.name(), c.request, &report)
+		case setRespawnCheckpointCommand:
+			r.applySetRespawnCheckpoint(cmd.name(), c, &report)
 		case useActionCommand:
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
 	}
+	// Policy due 在 queued Client intents 之後、simulation 前執行。若同一 tick 有 move，
+	// 它仍先以 Defeated 規則 consume 並清零，respawn 後不會沿用該 input。
+	r.applyDueRespawns(tick, &report)
 	if measure {
 		report.Metrics.CommandDuration = time.Since(stageStart)
 	}
