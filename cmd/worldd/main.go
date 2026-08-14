@@ -16,6 +16,7 @@ import (
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/worldruntime"
@@ -23,12 +24,13 @@ import (
 
 func main() {
 	var (
-		tcpAddress   = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
-		udpAddress   = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
-		tickRate     = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
-		snapshotRate = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
-		combatPath   = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		tcpAddress        = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
+		udpAddress        = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
+		tickRate          = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
+		snapshotRate      = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath         = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
+		combatPath        = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		respawnPolicyPath = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
 	)
 	flag.Parse()
 	if err := validateRates(*tickRate, *snapshotRate); err != nil { log.Fatal(err) }
@@ -39,6 +41,13 @@ func main() {
 	if err != nil { log.Fatalf("load combat actions %q: %v", *combatPath, err) }
 	combatService, err := combat.NewService(loadedCombat.Definition.Actions)
 	if err != nil { log.Fatalf("build combat service: %v", err) }
+	loadedRespawnPolicy, err := respawnpolicy.LoadFile(*respawnPolicyPath)
+	if err != nil { log.Fatalf("load respawn policy %q: %v", *respawnPolicyPath, err) }
+	if err := respawnpolicy.ValidateAgainstWorld(loadedRespawnPolicy.Definition, loadedWorld.Definition); err != nil {
+		log.Fatalf("validate respawn policy %q against gameplay world: %v", *respawnPolicyPath, err)
+	}
+	respawnService, err := respawnpolicy.NewService(loadedRespawnPolicy.Definition, *tickRate)
+	if err != nil { log.Fatalf("build respawn policy service: %v", err) }
 	nav, err := navigation.NewGameplayNavigator(loadedWorld.Definition)
 	if err != nil { log.Fatalf("build gameplay navigator: %v", err) }
 
@@ -46,7 +55,14 @@ func main() {
 	sim := simulation.New(spatial.NewGrid(32), move)
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
-	runtime := worldruntime.New(sim, runtimeConfig, worldruntime.WithDynamicWorld(nav), worldruntime.WithSiegeGates(loadedWorld.Definition.Gates), worldruntime.WithCombatService(combatService))
+	runtime := worldruntime.New(
+		sim,
+		runtimeConfig,
+		worldruntime.WithDynamicWorld(nav),
+		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
+		worldruntime.WithCombatService(combatService),
+		worldruntime.WithRespawnPolicy(respawnService),
+	)
 	loop, err := worldruntime.NewLoop(runtime, *tickRate)
 	if err != nil { log.Fatal(err) }
 
@@ -66,7 +82,7 @@ func main() {
 	go func() { loopDone <- loop.RunObserved(ctx, logStepReport) }()
 	go logNetworkErrors(ctx, server.Errors())
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_delay_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), respawnService.DelayTicks(), respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	if err := server.Serve(ctx); err != nil { stop(); log.Printf("network server stopped with error: %v", err) }
 	if err := <-loopDone; err != nil { log.Printf("world loop stopped with error: %v", err) }
