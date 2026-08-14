@@ -27,33 +27,37 @@ type TeleportRequest struct {
 }
 
 type Config struct {
-	CommandQueueCapacity            int
-	MaxCommandsPerTick              int
-	SnapshotEveryTicks              uint64
-	CharacterMaxHP                  uint32
-	AOIOptions                      spatial.QueryOptions
-	ReplicationPolicy               replication.Policy
-	MaxSpawnsPerSessionBuild        int
-	MaxDespawnsPerSessionBuild      int
-	MaxLifecyclePerSessionBuild     int
-	MaxLifecycleMessagesPerSnapshot int
-	MaxInitialVitalsPerTick         int
-	CollectMetrics                  bool
+	CommandQueueCapacity                 int
+	MaxCommandsPerTick                   int
+	SnapshotEveryTicks                   uint64
+	CharacterMaxHP                       uint32
+	AOIOptions                           spatial.QueryOptions
+	ReplicationPolicy                    replication.Policy
+	MaxSpawnsPerSessionBuild             int
+	MaxDespawnsPerSessionBuild           int
+	MaxLifecyclePerSessionBuild          int
+	MaxLifecycleMessagesPerSnapshot      int
+	MaxChurnLifecycleMessagesPerSnapshot int
+	MaxInitialVitalsPerTick              int
+	MaxChurnInitialVitalsPerTick         int
+	CollectMetrics                       bool
 }
 
 func DefaultConfig() Config {
 	return Config{
-		CommandQueueCapacity:            4096,
-		MaxCommandsPerTick:              2048,
-		SnapshotEveryTicks:              2,
-		CharacterMaxHP:                  1000,
-		AOIOptions:                      spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
-		ReplicationPolicy:               replication.DefaultPolicy(),
-		MaxSpawnsPerSessionBuild:        32,
-		MaxDespawnsPerSessionBuild:      64,
-		MaxLifecyclePerSessionBuild:     32,
-		MaxLifecycleMessagesPerSnapshot: 8000,
-		MaxInitialVitalsPerTick:         4000,
+		CommandQueueCapacity:                 4096,
+		MaxCommandsPerTick:                   2048,
+		SnapshotEveryTicks:                   2,
+		CharacterMaxHP:                       1000,
+		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
+		ReplicationPolicy:                    replication.DefaultPolicy(),
+		MaxSpawnsPerSessionBuild:             32,
+		MaxDespawnsPerSessionBuild:           64,
+		MaxLifecyclePerSessionBuild:          32,
+		MaxLifecycleMessagesPerSnapshot:      16000,
+		MaxChurnLifecycleMessagesPerSnapshot: 7000,
+		MaxInitialVitalsPerTick:              8000,
+		MaxChurnInitialVitalsPerTick:         3500,
 	}
 }
 
@@ -146,6 +150,7 @@ type Runtime struct {
 	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
 	lifecycleSessionCursor    int
 	vitalsSessionCursor       int
+	lifecycleChurnActive      bool
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -174,10 +179,16 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config.MaxLifecyclePerSessionBuild = 32
 	}
 	if config.MaxLifecycleMessagesPerSnapshot <= 0 {
-		config.MaxLifecycleMessagesPerSnapshot = 8000
+		config.MaxLifecycleMessagesPerSnapshot = 16000
+	}
+	if config.MaxChurnLifecycleMessagesPerSnapshot <= 0 {
+		config.MaxChurnLifecycleMessagesPerSnapshot = 7000
 	}
 	if config.MaxInitialVitalsPerTick <= 0 {
-		config.MaxInitialVitalsPerTick = 4000
+		config.MaxInitialVitalsPerTick = 8000
+	}
+	if config.MaxChurnInitialVitalsPerTick <= 0 {
+		config.MaxChurnInitialVitalsPerTick = 3500
 	}
 	characters, err := character.NewService(config.CharacterMaxHP)
 	if err != nil {
