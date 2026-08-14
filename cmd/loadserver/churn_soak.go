@@ -130,8 +130,13 @@ func runTeleportChurnRounds(
 			return convergenceMetadata{}, fmt.Errorf("write churn round %d slow tick report: %w", round, err)
 		}
 		if round == 1 {
+			// S3-E.7 tooling 固定讀 *-churn.json 並要求 phase=churn / transition=teleport-churn。
+			// Repeated churn 的 round artifact 保留更精確名稱，但 legacy alias 不改既有 contract。
+			legacyReport := report
+			legacyReport.Phase = "churn"
+			legacyReport.Convergence.Transition = "teleport-churn"
 			legacyPath := churnReportPath(reportPath)
-			if err := loadlab.WriteReport(legacyPath, report); err != nil {
+			if err := loadlab.WriteReport(legacyPath, legacyReport); err != nil {
 				return convergenceMetadata{}, fmt.Errorf("write legacy churn report: %w", err)
 			}
 			if err := writeSlowTickReport(slowTickReportPath(legacyPath), slowReport); err != nil {
