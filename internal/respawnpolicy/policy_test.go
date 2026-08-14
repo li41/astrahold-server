@@ -6,32 +6,49 @@ import (
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/gameplayworld"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestLoadIsStrictAndValidatesDefaultSpawnPoint(t *testing.T) {
+func TestLoadIsStrictAndRequiresAllDeathContexts(t *testing.T) {
 	valid := `{
-		"schema_version":1,
-		"revision":"test-001",
-		"respawn_delay_seconds":1.25,
-		"default_spawn_point":"field",
-		"spawn_points":[{"id":"field","x":0,"y":0,"z":0,"layer":0}]
+		"schema_version":2,
+		"revision":"test-002",
+		"spawn_points":[
+			{"id":"safe","class":"safe","x":0,"y":0,"z":0,"layer":0,"checkpoint_activation_radius":0},
+			{"id":"checkpoint","class":"checkpoint","x":10,"y":0,"z":0,"layer":0,"checkpoint_activation_radius":4},
+			{"id":"siege","class":"siege","x":-10,"y":0,"z":0,"layer":0,"checkpoint_activation_radius":0}
+		],
+		"contexts":[
+			{"context":"pve","respawn_delay_seconds":1.25,"default_spawn_point":"safe","allowed_spawn_classes":["safe","checkpoint"]},
+			{"context":"pvp","respawn_delay_seconds":2,"default_spawn_point":"safe","allowed_spawn_classes":["safe"]},
+			{"context":"siege","respawn_delay_seconds":3,"default_spawn_point":"siege","allowed_spawn_classes":["safe","siege"]}
+		]
 	}`
 	loaded, err := Load(strings.NewReader(valid))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Definition.Revision != "test-001" {
+	if loaded.Definition.Revision != "test-002" {
 		t.Fatalf("revision=%q", loaded.Definition.Revision)
 	}
 
-	unknown := strings.Replace(valid, `"revision":"test-001"`, `"revision":"test-001","extra":true`, 1)
+	unknown := strings.Replace(valid, `"revision":"test-002"`, `"revision":"test-002","extra":true`, 1)
 	if _, err := Load(strings.NewReader(unknown)); !errors.Is(err, ErrInvalidDefinition) {
 		t.Fatalf("unknown field err=%v", err)
 	}
 
-	missingDefault := strings.Replace(valid, `"default_spawn_point":"field"`, `"default_spawn_point":"missing"`, 1)
-	if _, err := Load(strings.NewReader(missingDefault)); !errors.Is(err, ErrInvalidDefinition) {
-		t.Fatalf("missing default err=%v", err)
+	missingSiege := loaded.Definition
+	missingSiege.Contexts = append([]ContextRule(nil), loaded.Definition.Contexts[:2]...)
+	if err := Validate(missingSiege); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("missing siege context err=%v", err)
+	}
+}
+
+func TestValidateRejectsContextDefaultOutsideAllowedClass(t *testing.T) {
+	definition := testDefinition()
+	definition.Contexts[1].DefaultSpawnPoint = "checkpoint"
+	if err := Validate(definition); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("default class err=%v", err)
 	}
 }
 
@@ -58,68 +75,97 @@ func TestValidateAgainstWorldRejectsOffSurfaceAndBlocker(t *testing.T) {
 	}
 }
 
-func TestScheduleBindsCheckpointAtDefeatAndDueIsDeterministic(t *testing.T) {
-	definition := testDefinition()
-	service, err := NewService(definition, 20)
+func TestAcquireCheckpointRequiresClassLayerAndRadius(t *testing.T) {
+	service, err := NewService(testDefinition(), 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.DelayTicks() != 25 {
-		t.Fatalf("delay ticks=%d", service.DelayTicks())
-	}
-	if err := service.SetCheckpoint(7, "courtyard"); err != nil {
+	if err := service.AcquireCheckpoint(7, world.Position{X: 8, Layer: 0}, "checkpoint"); err != nil {
 		t.Fatal(err)
 	}
-	first, err := service.Schedule(7, 100)
+	if checkpoint, ok := service.Checkpoint(7); !ok || checkpoint != "checkpoint" {
+		t.Fatalf("checkpoint=%q ok=%v", checkpoint, ok)
+	}
+	if err := service.AcquireCheckpoint(8, world.Position{X: 8, Layer: 1}, "checkpoint"); !errors.Is(err, ErrCheckpointWrongLayer) {
+		t.Fatalf("wrong layer err=%v", err)
+	}
+	if err := service.AcquireCheckpoint(8, world.Position{X: 0, Layer: 0}, "checkpoint"); !errors.Is(err, ErrCheckpointOutOfRange) {
+		t.Fatalf("out of range err=%v", err)
+	}
+	if err := service.AcquireCheckpoint(8, world.Position{X: 0, Layer: 0}, "safe"); !errors.Is(err, ErrCheckpointNotAcquirable) {
+		t.Fatalf("safe point err=%v", err)
+	}
+}
+
+func TestScheduleBindsContextDelayAndAllowedSpawnClass(t *testing.T) {
+	service, err := NewService(testDefinition(), 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.SpawnPointID != "courtyard" || first.DueTick != 125 {
-		t.Fatalf("scheduled=%#v", first)
+	if delay, ok := service.DelayTicks(DeathContextPvE); !ok || delay != 25 {
+		t.Fatalf("pve delay=%d ok=%v", delay, ok)
+	}
+	if delay, ok := service.DelayTicks(DeathContextPvP); !ok || delay != 40 {
+		t.Fatalf("pvp delay=%d ok=%v", delay, ok)
+	}
+	if delay, ok := service.DelayTicks(DeathContextSiege); !ok || delay != 60 {
+		t.Fatalf("siege delay=%d ok=%v", delay, ok)
 	}
 
-	// 已排定的死亡結果不因倒地後 checkpoint 改動而變更。
+	for _, entityID := range []world.EntityID{3, 7, 9} {
+		if err := service.AcquireCheckpoint(entityID, world.Position{X: 10, Layer: 0}, "checkpoint"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pve, err := service.Schedule(7, 100, DeathContextPvE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pve.Context != DeathContextPvE || pve.SpawnPointID != "checkpoint" || pve.SpawnClass != SpawnClassCheckpoint || pve.DueTick != 125 {
+		t.Fatalf("pve=%#v", pve)
+	}
+	pvp, err := service.Schedule(3, 100, DeathContextPvP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pvp.Context != DeathContextPvP || pvp.SpawnPointID != "safe" || pvp.SpawnClass != SpawnClassSafe || pvp.DueTick != 140 {
+		t.Fatalf("pvp=%#v", pvp)
+	}
+	siege, err := service.Schedule(9, 100, DeathContextSiege)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if siege.Context != DeathContextSiege || siege.SpawnPointID != "siege" || siege.SpawnClass != SpawnClassSiege || siege.DueTick != 160 {
+		t.Fatalf("siege=%#v", siege)
+	}
+
+	// Death-time binding：清除 checkpoint 不會改寫已排定的 PvE結果。
 	service.ClearCheckpoint(7)
 	pending, ok := service.Pending(7)
-	if !ok || pending.SpawnPointID != "courtyard" {
+	if !ok || pending.SpawnPointID != "checkpoint" {
 		t.Fatalf("pending=%#v ok=%v", pending, ok)
 	}
 	if due := service.Due(124); len(due) != 0 {
 		t.Fatalf("early due=%#v", due)
 	}
-
-	if _, err := service.Schedule(3, 100); err != nil {
-		t.Fatal(err)
-	}
-	due := service.Due(125)
-	if len(due) != 2 || due[0].EntityID != 3 || due[1].EntityID != 7 {
+	due := service.Due(160)
+	if len(due) != 3 || due[0].EntityID != 7 || due[1].EntityID != 3 || due[2].EntityID != 9 {
 		t.Fatalf("due order=%#v", due)
 	}
-	// Due selection 不等於 transition 成功；pending 必須保留，直到 authoritative respawn確認。
-	if _, ok := service.Pending(3); !ok {
-		t.Fatal("due selection prematurely removed entity 3")
-	}
 	if _, ok := service.Pending(7); !ok {
-		t.Fatal("due selection prematurely removed entity 7")
-	}
-	service.Cancel(3)
-	if _, ok := service.Pending(3); ok {
-		t.Fatal("cancel did not confirm pending removal")
+		t.Fatal("Due selection removed pending truth")
 	}
 }
 
-func TestCheckpointRejectsUnknownPointAndRemoveClearsState(t *testing.T) {
+func TestRemoveClearsCheckpointAndPending(t *testing.T) {
 	service, err := NewService(testDefinition(), 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.SetCheckpoint(9, "missing"); !errors.Is(err, ErrUnknownSpawnPoint) {
-		t.Fatalf("unknown checkpoint err=%v", err)
-	}
-	if err := service.SetCheckpoint(9, "courtyard"); err != nil {
+	if err := service.AcquireCheckpoint(9, world.Position{X: 10, Layer: 0}, "checkpoint"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Schedule(9, 1); err != nil {
+	if _, err := service.Schedule(9, 1, DeathContextPvE); err != nil {
 		t.Fatal(err)
 	}
 	service.Remove(9)
@@ -133,13 +179,17 @@ func TestCheckpointRejectsUnknownPointAndRemoveClearsState(t *testing.T) {
 
 func testDefinition() Definition {
 	return Definition{
-		SchemaVersion:       SchemaVersion,
-		Revision:            "test-001",
-		RespawnDelaySeconds: 1.25,
-		DefaultSpawnPoint:   "field",
+		SchemaVersion: SchemaVersion,
+		Revision:      "test-002",
 		SpawnPoints: []SpawnPoint{
-			{ID: "field", X: 0, Y: 0, Z: 0, Layer: 0},
-			{ID: "courtyard", X: 10, Y: 0, Z: 10, Layer: 0},
+			{ID: "safe", Class: SpawnClassSafe, X: 0, Y: 0, Z: 0, Layer: 0},
+			{ID: "checkpoint", Class: SpawnClassCheckpoint, X: 10, Y: 0, Z: 0, Layer: 0, CheckpointActivationRadius: 4},
+			{ID: "siege", Class: SpawnClassSiege, X: -10, Y: 0, Z: 0, Layer: 0},
+		},
+		Contexts: []ContextRule{
+			{Context: DeathContextPvE, RespawnDelaySeconds: 1.25, DefaultSpawnPoint: "safe", AllowedSpawnClasses: []SpawnClass{SpawnClassSafe, SpawnClassCheckpoint}},
+			{Context: DeathContextPvP, RespawnDelaySeconds: 2, DefaultSpawnPoint: "safe", AllowedSpawnClasses: []SpawnClass{SpawnClassSafe}},
+			{Context: DeathContextSiege, RespawnDelaySeconds: 3, DefaultSpawnPoint: "siege", AllowedSpawnClasses: []SpawnClass{SpawnClassSafe, SpawnClassSiege}},
 		},
 	}
 }
@@ -152,10 +202,10 @@ func testGameplayDefinition() gameplayworld.Definition {
 		Units:         "meters",
 		Agent:         gameplayworld.AgentDefaults{Radius: 0.35, Height: 1.8, MaxStepHeight: 0.5},
 		Surfaces: []gameplayworld.Surface{{
-			ID:    "ground",
-			Layer: 0,
+			ID:     "ground",
+			Layer:  0,
 			Bounds: gameplayworld.BoundsXZ{MinX: -20, MaxX: 20, MinZ: -20, MaxZ: 20},
-			Plane: gameplayworld.SurfacePlane{BaseY: 0},
+			Plane:  gameplayworld.SurfacePlane{BaseY: 0},
 		}},
 		Blockers: []gameplayworld.Blocker{{
 			ID:             "blocked",

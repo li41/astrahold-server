@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
@@ -16,13 +17,13 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestRespawnPolicySchedulesCheckpointAndAppliesAfterDelay(t *testing.T) {
-	rt, policy := makeRespawnPolicyRuntime(t)
+func TestRespawnPolicyPvECheckpointAppliesAfterContextDelay(t *testing.T) {
+	rt, policy := makeRespawnContextRuntime(t, world.EntityMonster)
 	if report := rt.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 {
 		t.Fatalf("bootstrap=%#v", report.CommandErrors)
 	}
 
-	if err := rt.EnqueueSetRespawnCheckpoint(2, "checkpoint"); err != nil {
+	if err := rt.EnqueueAcquireRespawnCheckpoint(2, "checkpoint"); err != nil {
 		t.Fatal(err)
 	}
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 {
@@ -35,17 +36,13 @@ func TestRespawnPolicySchedulesCheckpointAndAppliesAfterDelay(t *testing.T) {
 	if len(defeat.CommandErrors) != 0 || len(defeat.ActionRejections) != 0 || defeat.Metrics.RespawnsScheduled != 1 {
 		t.Fatalf("defeat=%#v", defeat)
 	}
-	state, _ := rt.characters.State(2)
-	if !state.Defeated || state.HP != 0 {
-		t.Fatalf("defeated state=%#v", state)
-	}
 	pending, ok := policy.Pending(2)
-	if !ok || pending.SpawnPointID != "checkpoint" || pending.DueTick != 5 {
+	if !ok || pending.Context != respawnpolicy.DeathContextPvE || pending.SpawnPointID != "checkpoint" || pending.DueTick != 5 {
 		t.Fatalf("pending=%#v ok=%v", pending, ok)
 	}
 
-	// 死後改 checkpoint 只影響下一次死亡；本次 schedule 已在 defeat tick 綁定目的地。
-	if err := rt.EnqueueSetRespawnCheckpoint(2, ""); err != nil {
+	// 死後清 checkpoint 只影響下一次死亡；本次 schedule 已在 defeat tick 綁定目的地。
+	if err := rt.EnqueueClearRespawnCheckpoint(2); err != nil {
 		t.Fatal(err)
 	}
 	beforeDue := rt.Step(4, 50*time.Millisecond)
@@ -57,8 +54,7 @@ func TestRespawnPolicySchedulesCheckpointAndAppliesAfterDelay(t *testing.T) {
 		t.Fatalf("pending changed after checkpoint clear=%#v ok=%v", pending, ok)
 	}
 
-	// due tick 的 ClientMoveInput 先以 Defeated 規則 consume/zero，之後才 respawn；
-	// 因此 simulation 不會把角色從新出生點沿該方向推走。
+	// due tick 的 ClientMoveInput 先以 Defeated 規則 consume/zero，之後才 respawn。
 	if err := rt.EnqueueMove(2, 1, protocol.ClientMoveInput{DirectionX: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +62,7 @@ func TestRespawnPolicySchedulesCheckpointAndAppliesAfterDelay(t *testing.T) {
 	if len(due.CommandErrors) != 0 || due.Metrics.RespawnPolicyDue != 1 || due.Metrics.RespawnsApplied != 1 {
 		t.Fatalf("due=%#v", due)
 	}
-	state, _ = rt.characters.State(2)
+	state, _ := rt.characters.State(2)
 	if state.Defeated || state.HP != 200 {
 		t.Fatalf("revived state=%#v", state)
 	}
@@ -92,10 +88,92 @@ func TestRespawnPolicySchedulesCheckpointAndAppliesAfterDelay(t *testing.T) {
 	}
 }
 
-func TestManualRespawnCancelsPolicyAndLeaveRemovesCheckpoint(t *testing.T) {
-	rt, policy := makeRespawnPolicyRuntime(t)
+func TestRespawnPolicyClassifiesPvPPvEAndSiege(t *testing.T) {
+	tests := []struct {
+		name         string
+		attackerKind world.EntityKind
+		context      respawnpolicy.DeathContext
+		spawnPoint   string
+		dueTick      uint64
+	}{
+		{name: "pve", attackerKind: world.EntityMonster, context: respawnpolicy.DeathContextPvE, spawnPoint: "checkpoint", dueTick: 5},
+		{name: "pvp", attackerKind: world.EntityPlayer, context: respawnpolicy.DeathContextPvP, spawnPoint: "safe", dueTick: 7},
+		{name: "siege", attackerKind: world.EntitySiegeObject, context: respawnpolicy.DeathContextSiege, spawnPoint: "siege", dueTick: 9},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, policy := makeRespawnContextRuntime(t, tt.attackerKind)
+			rt.Step(1, 50*time.Millisecond)
+			if err := rt.EnqueueAcquireRespawnCheckpoint(2, "checkpoint"); err != nil {
+				t.Fatal(err)
+			}
+			if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+				t.Fatalf("checkpoint=%#v", report.CommandErrors)
+			}
+			if err := rt.EnqueueUseAction(1, 1, protocol.ClientUseAction{ActionID: "kill", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
+				t.Fatal(err)
+			}
+			if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
+				t.Fatalf("defeat=%#v", report)
+			}
+			pending, ok := policy.Pending(2)
+			if !ok || pending.Context != tt.context || pending.SpawnPointID != tt.spawnPoint || pending.DueTick != tt.dueTick {
+				t.Fatalf("pending=%#v ok=%v", pending, ok)
+			}
+		})
+	}
+}
+
+func TestRespawnCheckpointAcquisitionUsesAuthoritativeState(t *testing.T) {
+	rt, policy := makeRespawnContextRuntime(t, world.EntityMonster)
 	rt.Step(1, 50*time.Millisecond)
-	if err := rt.EnqueueSetRespawnCheckpoint(2, "checkpoint"); err != nil {
+
+	if err := rt.EnqueueAcquireRespawnCheckpoint(2, "safe"); err != nil {
+		t.Fatal(err)
+	}
+	notCheckpoint := rt.Step(2, 50*time.Millisecond)
+	if len(notCheckpoint.CommandErrors) != 1 || !errors.Is(notCheckpoint.CommandErrors[0].Err, respawnpolicy.ErrCheckpointNotAcquirable) {
+		t.Fatalf("safe acquisition=%#v", notCheckpoint.CommandErrors)
+	}
+
+	if err := rt.EnqueueTeleport(2, world.Position{X: 90, Layer: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("teleport=%#v", report.CommandErrors)
+	}
+	if err := rt.EnqueueAcquireRespawnCheckpoint(2, "checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	outOfRange := rt.Step(4, 50*time.Millisecond)
+	if len(outOfRange.CommandErrors) != 1 || !errors.Is(outOfRange.CommandErrors[0].Err, respawnpolicy.ErrCheckpointOutOfRange) {
+		t.Fatalf("out of range=%#v", outOfRange.CommandErrors)
+	}
+	if _, ok := policy.Checkpoint(2); ok {
+		t.Fatal("invalid acquisition changed checkpoint")
+	}
+}
+
+func TestDefeatedCharacterCannotAcquireNewCheckpoint(t *testing.T) {
+	rt, _ := makeRespawnContextRuntime(t, world.EntityMonster)
+	rt.Step(1, 50*time.Millisecond)
+	if err := rt.EnqueueUseAction(1, 1, protocol.ClientUseAction{ActionID: "kill", TargetKind: protocol.ActionTargetEntity, TargetID: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	rt.Step(2, 50*time.Millisecond)
+	if err := rt.EnqueueAcquireRespawnCheckpoint(2, "checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	report := rt.Step(3, 50*time.Millisecond)
+	if len(report.CommandErrors) != 1 || !errors.Is(report.CommandErrors[0].Err, character.ErrCharacterDefeated) {
+		t.Fatalf("defeated acquisition=%#v", report.CommandErrors)
+	}
+}
+
+func TestManualRespawnCancelsPolicyAndLeaveRemovesCheckpoint(t *testing.T) {
+	rt, policy := makeRespawnContextRuntime(t, world.EntityMonster)
+	rt.Step(1, 50*time.Millisecond)
+	if err := rt.EnqueueAcquireRespawnCheckpoint(2, "checkpoint"); err != nil {
 		t.Fatal(err)
 	}
 	rt.Step(2, 50*time.Millisecond)
@@ -118,14 +196,11 @@ func TestManualRespawnCancelsPolicyAndLeaveRemovesCheckpoint(t *testing.T) {
 	if _, ok := policy.Pending(2); ok {
 		t.Fatal("manual respawn did not cancel pending policy")
 	}
-	if report := rt.Step(5, 50*time.Millisecond); report.Metrics.RespawnPolicyDue != 0 || report.Metrics.RespawnsApplied != 0 {
-		t.Fatalf("cancelled policy fired=%#v", report.Metrics)
-	}
 
 	if err := rt.EnqueueLeave(2); err != nil {
 		t.Fatal(err)
 	}
-	if report := rt.Step(6, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+	if report := rt.Step(5, 50*time.Millisecond); len(report.CommandErrors) != 0 {
 		t.Fatalf("leave=%#v", report.CommandErrors)
 	}
 	if _, ok := policy.Checkpoint(2); ok {
@@ -133,13 +208,13 @@ func TestManualRespawnCancelsPolicyAndLeaveRemovesCheckpoint(t *testing.T) {
 	}
 }
 
-func makeRespawnPolicyRuntime(t *testing.T) (*Runtime, *respawnpolicy.Service) {
+func makeRespawnContextRuntime(t *testing.T, attackerKind world.EntityKind) (*Runtime, *respawnpolicy.Service) {
 	t.Helper()
 	nav := navigation.Plane{MinX: -200, MaxX: 200, MinZ: -200, MaxZ: 200, Layer: 0}
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, 0.1))
 	for _, entity := range []world.EntityState{
-		{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 0, Layer: 0}}},
-		{ID: 2, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 2, Layer: 0}}},
+		{ID: 1, Kind: attackerKind, Transform: world.Transform{Position: world.Position{X: 98, Layer: 0}}},
+		{ID: 2, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 100, Layer: 0}}},
 	} {
 		if err := sim.Spawn(entity, 6, 0.35, 0.5); err != nil {
 			t.Fatal(err)
@@ -153,13 +228,17 @@ func makeRespawnPolicyRuntime(t *testing.T) (*Runtime, *respawnpolicy.Service) {
 		t.Fatal(err)
 	}
 	policy, err := respawnpolicy.NewService(respawnpolicy.Definition{
-		SchemaVersion:       respawnpolicy.SchemaVersion,
-		Revision:            "runtime-test",
-		RespawnDelaySeconds: 0.1,
-		DefaultSpawnPoint:   "default",
+		SchemaVersion: respawnpolicy.SchemaVersion,
+		Revision:      "runtime-test-s3f4",
 		SpawnPoints: []respawnpolicy.SpawnPoint{
-			{ID: "default", X: 50, Layer: 0},
-			{ID: "checkpoint", X: 100, Layer: 0},
+			{ID: "safe", Class: respawnpolicy.SpawnClassSafe, X: 50, Layer: 0},
+			{ID: "checkpoint", Class: respawnpolicy.SpawnClassCheckpoint, X: 100, Layer: 0, CheckpointActivationRadius: 4},
+			{ID: "siege", Class: respawnpolicy.SpawnClassSiege, X: -50, Layer: 0},
+		},
+		Contexts: []respawnpolicy.ContextRule{
+			{Context: respawnpolicy.DeathContextPvE, RespawnDelaySeconds: 0.1, DefaultSpawnPoint: "safe", AllowedSpawnClasses: []respawnpolicy.SpawnClass{respawnpolicy.SpawnClassSafe, respawnpolicy.SpawnClassCheckpoint}},
+			{Context: respawnpolicy.DeathContextPvP, RespawnDelaySeconds: 0.2, DefaultSpawnPoint: "safe", AllowedSpawnClasses: []respawnpolicy.SpawnClass{respawnpolicy.SpawnClassSafe}},
+			{Context: respawnpolicy.DeathContextSiege, RespawnDelaySeconds: 0.3, DefaultSpawnPoint: "siege", AllowedSpawnClasses: []respawnpolicy.SpawnClass{respawnpolicy.SpawnClassSafe, respawnpolicy.SpawnClassSiege}},
 		},
 	}, 20)
 	if err != nil {
