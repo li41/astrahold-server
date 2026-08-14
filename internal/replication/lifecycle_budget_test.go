@@ -19,8 +19,8 @@ func TestLifecycleSpawnBudgetMakesBoundedProgress(t *testing.T) {
 	if got := lifecycleIDs(first, true); !equalIDs(got, []world.EntityID{1, 2}) {
 		t.Fatalf("first spawn ids=%v want=[1 2]", got)
 	}
-	if first.Stats.SpawnCandidates != 5 || first.Stats.SpawnSelected != 2 || first.Stats.SpawnDeferred != 3 {
-		t.Fatalf("first spawn stats=%+v", first.Stats)
+	if first.Stats.SpawnCandidates != 3 || first.Stats.SpawnSelected != 2 || first.Stats.SpawnDeferred != 1 {
+		t.Fatalf("first bounded scan stats=%+v", first.Stats)
 	}
 	if got := snapshotEntityIDs(first); len(got) != 0 {
 		t.Fatalf("unknown entities entered snapshot: %v", got)
@@ -37,7 +37,7 @@ func TestLifecycleSpawnBudgetMakesBoundedProgress(t *testing.T) {
 		t.Fatalf("second spawn ids=%v want=[3 4]", got)
 	}
 	if second.Stats.SpawnCandidates != 3 || second.Stats.SpawnSelected != 2 || second.Stats.SpawnDeferred != 1 {
-		t.Fatalf("second spawn stats=%+v", second.Stats)
+		t.Fatalf("second bounded scan stats=%+v", second.Stats)
 	}
 	for _, id := range []world.EntityID{3, 4} {
 		svc.ConfirmSpawn(sid, id)
