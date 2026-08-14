@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/session"
 )
 
@@ -74,9 +75,11 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 
 			connection := s.Connection()
 			if measure { stageStart = time.Now() }
-			var batch = r.replication.BuildFrame(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
+			var batch replication.Batch
 			if _, immediate := connection.(session.ImmediateRealtimeConnection); immediate {
 				batch = r.replication.BuildFrameBorrowed(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
+			} else {
+				batch = r.replication.BuildFrame(s.ID, s.EntityID, s.LastProcessedInputSequence(), frame, visible)
 			}
 			if measure { report.Metrics.ReplicationBuildDuration += time.Since(stageStart) }
 			report.Metrics.OutboundMessages += len(batch.Messages)
