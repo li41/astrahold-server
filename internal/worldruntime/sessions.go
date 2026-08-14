@@ -107,3 +107,9 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 	}
 	s.MarkProcessedInput(c.sequence)
 }
+
+func (r *Runtime) applyTeleport(name string, c teleportCommand, report *StepReport) {
+	if err := r.world.Teleport(c.entityID, c.position); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,Err:err})
+	}
+}
