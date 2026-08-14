@@ -103,6 +103,6 @@ func runDeathOutcomeJournal(ctx context.Context, outbox *deathoutcome.Outbox, jo
 
 func logDeathOutcomeJournalRecord(record deathoutcome.JournalRecord) error {
 	event := record.Event
-	log.Printf("death outcome journal: record_id=%d event_id=%d entity=%d defeat_revision=%d context=%s defeated_tick=%d respawn_scheduled=%t spawn_point=%s spawn_class=%s due_tick=%d respawn_policy_revision=%s penalty_policy_revision=%s penalty_applied=%t checkpoint_forfeited=%t", record.RecordID, event.EventID, event.EntityID, event.DefeatRevision, event.Context, event.DefeatedTick, event.Respawn.Scheduled, event.Respawn.SpawnPointID, event.Respawn.SpawnClass, event.Respawn.DueTick, event.RespawnPolicyRevision, event.DeathPenaltyPolicyRevision, event.PenaltyTransactionApplied, event.CheckpointForfeited)
+	log.Printf("death outcome journal: record_id=%d event_id=%d entity=%d character_id=%s character_identity_assurance=%s defeat_revision=%d context=%s defeated_tick=%d respawn_scheduled=%t spawn_point=%s spawn_class=%s due_tick=%d respawn_policy_revision=%s penalty_policy_revision=%s penalty_applied=%t checkpoint_forfeited=%t", record.RecordID, event.EventID, event.EntityID, event.CharacterID, event.CharacterIdentityAssurance, event.DefeatRevision, event.Context, event.DefeatedTick, event.Respawn.Scheduled, event.Respawn.SpawnPointID, event.Respawn.SpawnClass, event.Respawn.DueTick, event.RespawnPolicyRevision, event.DeathPenaltyPolicyRevision, event.PenaltyTransactionApplied, event.CheckpointForfeited)
 	return nil
 }
