@@ -30,6 +30,7 @@ func (r *Runtime) removeEntityVitals(entityID world.EntityID) {
 	delete(r.dirtyVitalsEntities, entityID)
 	delete(r.dirtyVitalsNextSession, entityID)
 	delete(r.dirtyVitalsProgress, entityID)
+	delete(r.respawnVitalsPhases, entityID)
 	for _, delivered := range r.sessionVitalsRevision {
 		delete(delivered, entityID)
 	}
@@ -124,6 +125,13 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 		delivered := r.ensureSessionVitalsDelivered(sessionID)
 		selected := 0
 		for entityID := range pending {
+			phase := r.respawnVitalsPhases[entityID]
+			if phase == respawnVitalsAwaitingAOI {
+				continue
+			}
+			if phase == respawnVitalsDesiredOnly && !r.replication.Wants(sessionID, entityID) {
+				continue
+			}
 			if !r.replication.Knows(sessionID, entityID) {
 				delete(pending, entityID)
 				delete(delivered, entityID)
@@ -247,6 +255,7 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			delete(r.dirtyVitalsEntities, entityID)
 			delete(r.dirtyVitalsNextSession, entityID)
 			delete(r.dirtyVitalsProgress, entityID)
+			delete(r.respawnVitalsPhases, entityID)
 			continue
 		}
 		revision := r.entityVitalsRevision[entityID]
@@ -254,6 +263,7 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			delete(r.dirtyVitalsEntities, entityID)
 			delete(r.dirtyVitalsNextSession, entityID)
 			delete(r.dirtyVitalsProgress, entityID)
+			delete(r.respawnVitalsPhases, entityID)
 			continue
 		}
 
@@ -271,6 +281,13 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			report.Metrics.DirtyVitalsOldestDirtyAgeTicks = dirtyAge
 		}
 
+		phase := r.respawnVitalsPhases[entityID]
+		if phase == respawnVitalsAwaitingAOI {
+			// Respawn 可跨 AOI。下一次 normal snapshot 尚未 rebuild desired membership 前，
+			// 不讓任何 initial/dirty Vitals 使用舊 known relationship fan-out。
+			continue
+		}
+
 		sessionStart := 0
 		if nextSessionID := r.dirtyVitalsNextSession[entityID]; nextSessionID != 0 && len(sessions) > 0 {
 			sessionStart = sort.Search(len(sessions), func(i int) bool { return sessions[i].ID >= nextSessionID })
@@ -283,11 +300,14 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 		for sessionOrder := 0; sessionOrder < len(sessions); sessionOrder++ {
 			sessionIndex := (sessionStart + sessionOrder) % len(sessions)
 			s := sessions[sessionIndex]
+			if phase == respawnVitalsDesiredOnly && !r.replication.Wants(s.ID, entityID) {
+				continue
+			}
 
 			// ConfirmSpawn 一定會先 queue Initial Vitals；成功送過任一 Vitals 後則會留下
 			// delivered revision。ConfirmDespawn 同步移除兩者，因此 pending ∪ delivered正好是
-			// Dirty Vitals需要的 known-relationship mirror。這裡直接讀 runtime mirror，避免每個
-			// relationship 再跨 replication Service做一次 Knows map lookup。
+			// Dirty Vitals需要的 known-relationship mirror。一般 gameplay hot path 仍直接讀 mirror；
+			// 只有短暫 respawn desired-only phase 才額外查 Wants，避免 stale-known observer leak。
 			delivered := r.sessionVitalsRevision[s.ID]
 			deliveredRevision, hasDelivered := delivered[entityID]
 			pending := r.sessionVitalsPending[s.ID]
