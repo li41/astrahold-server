@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "revision": "s3f7-001",
+  "checkpoint_forfeit_contexts": ["pve"]
+}
