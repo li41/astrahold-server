@@ -37,7 +37,7 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 				// 不再掃 known map、逐 ID binary-search 新 desired、最後再 sort。
 				rebuildPendingDepartedFromDesiredDiff(state, frame, visibleIndices)
 			}
-			rebuildDesiredTracks(state, frame, visibleIndices)
+			rebuildLifecycleDesiredTracks(state, frame, visibleIndices)
 			if hadPendingDeparted {
 				// 連續 churn 可能在前一批 Despawn 尚未 Confirm 時再次改 AOI。這是 rare path，
 				// 保留完整 known-vs-new-desired rebuild，確保舊 pending 不遺失、重新進 AOI 可撤銷。
