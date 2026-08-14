@@ -29,6 +29,9 @@ func TestBindingRejectsReservedOrMalformedValues(t *testing.T) {
 			t.Fatalf("value=%q err=%v", value, err)
 		}
 	}
+	if _, err := New("ephemeral:gggggggggggggggggggggggggggggggg", AssuranceEphemeral); !errors.Is(err, ErrInvalidID) {
+		t.Fatalf("malformed ephemeral err=%v", err)
+	}
 	if _, err := New("character:alpha", Assurance("unknown")); !errors.Is(err, ErrInvalidAssurance) {
 		t.Fatalf("assurance err=%v", err)
 	}
