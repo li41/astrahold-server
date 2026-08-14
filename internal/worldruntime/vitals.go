@@ -213,6 +213,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 				allDelivered = false
 				continue
 			}
+			report.Metrics.DirtyVitalsSelected++
 			delivered[entityID] = revision
 			if pending := r.sessionVitalsPending[s.ID]; pending != nil {
 				delete(pending, entityID)
