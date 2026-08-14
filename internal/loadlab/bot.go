@@ -17,6 +17,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+const shutdownNetworkErrorCorrelationWindow = 50 * time.Millisecond
+
 type BotConfig struct {
 	TCPAddress     string
 	Clients        int
@@ -53,24 +55,24 @@ type BotReport struct {
 }
 
 type botCollector struct {
-	connected         atomic.Uint64
-	ready             atomic.Uint64
-	failedConnections atomic.Uint64
-	moves             atomic.Uint64
-	udpSent           atomic.Uint64
-	udpReceived       atomic.Uint64
-	tcpReceived       atomic.Uint64
-	reliable          atomic.Uint64
-	realtime          atomic.Uint64
-	snapshots         atomic.Uint64
-	completedSnapshots atomic.Uint64
+	connected                atomic.Uint64
+	ready                    atomic.Uint64
+	failedConnections        atomic.Uint64
+	moves                    atomic.Uint64
+	udpSent                  atomic.Uint64
+	udpReceived              atomic.Uint64
+	tcpReceived              atomic.Uint64
+	reliable                 atomic.Uint64
+	realtime                 atomic.Uint64
+	snapshots                atomic.Uint64
+	completedSnapshots       atomic.Uint64
 	incompleteSnapshotResets atomic.Uint64
-	corrections       atomic.Uint64
-	spawns            atomic.Uint64
-	despawns          atomic.Uint64
-	dynamicStates     atomic.Uint64
-	decodeErrors      atomic.Uint64
-	networkErrors     atomic.Uint64
+	corrections              atomic.Uint64
+	spawns                   atomic.Uint64
+	despawns                 atomic.Uint64
+	dynamicStates            atomic.Uint64
+	decodeErrors             atomic.Uint64
+	networkErrors            atomic.Uint64
 
 	latencyMu sync.Mutex
 	latencies []time.Duration
@@ -229,12 +231,28 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 		case <-ticker.C:
 			sequence++
 			if err := sendMove(udp, token, codec, config.Scenario, welcome.EntityID, sequence, time.Since(started), collector); err != nil {
-				if ctx.Err() == nil {
-					collector.networkErrors.Add(1)
-				}
+				recordUDPFailureUnlessStopping(botCtx, collector)
 				return nil
 			}
 		}
+	}
+}
+
+// recordUDPFailureUnlessStopping 給 TCP shutdown 一個極短 bounded correlation window。
+// Server 關閉共享 UDP socket 與 peer TCP connection 時，Linux loopback 可能先回報 UDP ECONNREFUSED，
+// TCP EOF 才隨後抵達並 cancel botCtx。若 TCP 在 window 內同步結束，該 UDP error 屬正常 shutdown；
+// 若 TCP 仍存活，仍照常記為真實 network error。send / receive 兩側都使用同一判定。
+func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollector) {
+	if botCtx == nil || collector == nil || botCtx.Err() != nil {
+		return
+	}
+	timer := time.NewTimer(shutdownNetworkErrorCorrelationWindow)
+	defer timer.Stop()
+	select {
+	case <-botCtx.Done():
+		return
+	case <-timer.C:
+		collector.networkErrors.Add(1)
 	}
 }
 
@@ -280,7 +298,7 @@ func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Tok
 		n, err := udp.Read(buffer)
 		if err != nil {
 			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
-				collector.networkErrors.Add(1)
+				recordUDPFailureUnlessStopping(ctx, collector)
 			}
 			return
 		}

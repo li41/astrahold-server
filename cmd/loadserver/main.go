@@ -31,19 +31,23 @@ func main() {
 		snapshotRate       = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
 		worldPath          = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
 		combatPath         = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
-		clients            = flag.Int("clients", 500, "Expected ready clients before measurement starts")
+		clients            = flag.Int("clients", 500, "Expected ready clients before convergence starts")
 		scenarioText       = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
-		duration           = flag.Duration("duration", 60*time.Second, "Measurement window after all clients are ready")
+		duration           = flag.Duration("duration", 60*time.Second, "Steady-state measurement window after semantic convergence")
 		readyTimeout       = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
+		convergenceTimeout = flag.Duration("convergence-timeout", 30*time.Second, "Maximum time from all-ready to lifecycle/reliable convergence")
+		convergenceStable  = flag.Duration("convergence-stable", 250*time.Millisecond, "How long convergence conditions must remain continuously true")
 		shutdownGrace      = flag.Duration("shutdown-grace", 2*time.Second, "Keep listeners alive after report so bots can close cleanly")
-		reportPath         = flag.String("report", "artifacts/loadlab-server.json", "Server JSON report path")
-		allocProfilePrefix = flag.String("alloc-profile-prefix", "", "Optional allocation profile path prefix; writes <prefix>-before.pprof and <prefix>-after.pprof")
+		reportPath         = flag.String("report", "artifacts/loadlab-server.json", "Steady-state Server JSON report path")
+		allocProfilePrefix = flag.String("alloc-profile-prefix", "", "Optional steady-state allocation profile path prefix; writes <prefix>-before.pprof and <prefix>-after.pprof")
 		allocProfileRate   = flag.Int("alloc-profile-rate", 64*1024, "Allocation profiler sampling rate in bytes")
 	)
 	flag.Parse()
 
 	if err := validateRates(*tickRate, *snapshotRate); err != nil { log.Fatal(err) }
-	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 || *shutdownGrace < 0 { log.Fatal("clients, duration and ready-timeout must be > 0; shutdown-grace must be >= 0") }
+	if *clients <= 0 || *duration <= 0 || *readyTimeout <= 0 || *convergenceTimeout <= 0 || *convergenceStable < 0 || *shutdownGrace < 0 {
+		log.Fatal("clients/duration/ready-timeout/convergence-timeout must be > 0; convergence-stable/shutdown-grace must be >= 0")
+	}
 	if *allocProfileRate <= 0 { log.Fatal("alloc-profile-rate must be > 0") }
 	profiler, err := newAllocProfiler(*allocProfilePrefix, *allocProfileRate); if err != nil { log.Fatalf("configure allocation profiler: %v", err) }
 	if profiler != nil { defer profiler.Close() }
@@ -68,8 +72,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM); defer stop()
 	collector := loadlab.NewServerCollector(*tickRate, *snapshotRate)
 	slowTicks := newSlowTickCollector(defaultSlowTickLimit)
+	convergence := newConvergenceTracker()
 	loopDone := make(chan error,1); go func(){
-		err:=loop.RunObserved(ctx,func(report worldruntime.StepReport){ collector.RecordStep(report); slowTicks.Record(report) })
+		err:=loop.RunObserved(ctx,func(report worldruntime.StepReport){
+			collector.RecordStep(report)
+			slowTicks.Record(report)
+			if report.Tick%runtimeConfig.SnapshotEveryTicks == 0 {
+				convergence.Record(report.Tick, worldRuntime)
+			}
+		})
 		if err!=nil{stop()}
 		loopDone<-err
 	}()
@@ -78,17 +89,35 @@ func main() {
 
 	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 combat_revision=%s scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, loadedCombat.Definition.Revision, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	if err := waitForClients(ctx,server,*clients,*readyTimeout); err != nil { stop(); <-serveDone; <-loopDone; log.Fatal(err) }
+
+	// Phase 1：all-ready 只代表 SessionWelcome / UDP endpoint 已建立。
+	// 在 lifecycle + vitals + dynamic + Reliable transport 真正 drain 前，先獨立量測 convergence burst。
+	convergenceStarted := time.Now()
+	collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics(); convergence.Start()
+	log.Printf("all clients ready; starting semantic convergence phase timeout=%s stable=%s", convergenceTimeout.String(), convergenceStable.String())
+	convergenceMeta, err := waitForConvergence(ctx, convergence, server, *clients, *convergenceTimeout, *convergenceStable, convergenceStarted)
+	convergence.Stop()
+	if err != nil { stop(); <-serveDone; <-loopDone; log.Fatal(err) }
+	convergenceReport := withPhaseReport(withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics()), "convergence", convergenceMeta)
+	convergenceSlowReport := slowTicks.Finish()
+	convergencePath := convergenceReportPath(*reportPath)
+	if err:=loadlab.WriteReport(convergencePath,convergenceReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write convergence report: %v",err) }
+	if err:=writeSlowTickReport(slowTickReportPath(convergencePath),convergenceSlowReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write convergence slow tick report: %v",err) }
+	log.Printf("semantic convergence reached: %.3fs tick=%d desired=%d reliable_queued=%d reliable_in_flight=%d", convergenceMeta.ReadyToConvergedSeconds, convergenceMeta.Observation.Tick, convergenceMeta.Observation.World.DesiredRelationships, convergenceMeta.Reliable.Queued, convergenceMeta.Reliable.InFlight)
+
+	// Phase 2：正式 capacity / allocation 數據只量已收斂的 steady-state。
 	if err := profiler.Write("before"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile before measurement: %v", err) }
-	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics()
+	collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics()
+	log.Printf("starting %s steady-state measurement window", duration.String())
 
 	measurementTimer:=time.NewTimer(*duration); completed:=false
 	select { case <-measurementTimer.C: completed=true; case <-ctx.Done(): measurementTimer.Stop() }
-	report:=withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics())
+	report:=withPhaseReport(withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics()), "steady-state", convergenceMeta)
 	slowReport:=slowTicks.Finish()
 	if err := profiler.Write("after"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile after measurement: %v", err) }
 	if err:=loadlab.WriteReport(*reportPath,report); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write report: %v",err) }
 	if err:=writeSlowTickReport(slowTickReportPath(*reportPath),slowReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write slow tick report: %v",err) }
-	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d realtime_mbps=%.3f encode_avg_us=%.3f",*reportPath,report.Ticks,report.TickDuration.P99MS,report.Queue.MaxDepthBefore,report.Errors.DatagramTooLarge,report.Network.RealtimeMbitsPerSec,report.Network.EncodeAverageUS)
+	log.Printf("steady-state report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d realtime_mbps=%.3f encode_avg_us=%.3f",*reportPath,report.Ticks,report.TickDuration.P99MS,report.Queue.MaxDepthBefore,report.Errors.DatagramTooLarge,report.Network.RealtimeMbitsPerSec,report.Network.EncodeAverageUS)
 
 	if completed && *shutdownGrace>0 { timer:=time.NewTimer(*shutdownGrace); select { case <-timer.C: case <-ctx.Done(): timer.Stop() } }
 	stop(); serveErr:=<-serveDone; loopErr:=<-loopDone

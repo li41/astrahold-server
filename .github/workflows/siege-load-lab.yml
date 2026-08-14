@@ -31,7 +31,7 @@ on:
         default: '500'
         type: string
       duration_seconds:
-        description: Measurement duration in seconds
+        description: Steady-state measurement duration in seconds
         required: true
         default: '60'
         type: string
@@ -74,6 +74,8 @@ jobs:
             -duration 5s \
             -shutdown-grace 2s \
             -ready-timeout 20s \
+            -convergence-timeout 15s \
+            -convergence-stable 250ms \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
           SERVER_PID=$!
@@ -86,7 +88,7 @@ jobs:
             -scenario vertical-siege \
             -input-rate 20 \
             -ramp-up 1s \
-            -duration 7s \
+            -duration 30s \
             -report artifacts/bots.json \
             > artifacts/bots.log 2>&1
           BOT_STATUS=$?
@@ -94,13 +96,15 @@ jobs:
           SERVER_STATUS=$?
           set -e
 
+          cat artifacts/server-convergence.json || true
           cat artifacts/server.json || true
           cat artifacts/bots.json || true
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
           jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
-          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
+          jq -e '.phase == "convergence" and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload smoke reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -135,6 +139,8 @@ jobs:
             -duration 8s \
             -shutdown-grace 2s \
             -ready-timeout 30s \
+            -convergence-timeout 20s \
+            -convergence-stable 250ms \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
           SERVER_PID=$!
@@ -147,7 +153,7 @@ jobs:
             -scenario gate-zerg \
             -input-rate 20 \
             -ramp-up 2s \
-            -duration 11s \
+            -duration 40s \
             -report artifacts/bots.json \
             > artifacts/bots.log 2>&1
           BOT_STATUS=$?
@@ -155,13 +161,15 @@ jobs:
           SERVER_STATUS=$?
           set -e
 
+          cat artifacts/server-convergence.json || true
           cat artifacts/server.json || true
           cat artifacts/bots.json || true
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
           jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
-          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
+          jq -e '.phase == "convergence" and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload 100-client baseline
         if: always()
         uses: actions/upload-artifact@v4
@@ -194,7 +202,7 @@ jobs:
         run: |
           set -u
           mkdir -p artifacts
-          BOT_TIMEOUT=$((DURATION_SECONDS + 11))
+          BOT_TIMEOUT=$((DURATION_SECONDS + 50))
           /tmp/astrahold-loadserver \
             -tcp 127.0.0.1:17777 \
             -udp 127.0.0.1:17778 \
@@ -205,6 +213,8 @@ jobs:
             -duration "${DURATION_SECONDS}s" \
             -shutdown-grace 2s \
             -ready-timeout 60s \
+            -convergence-timeout 30s \
+            -convergence-stable 250ms \
             -report artifacts/server.json \
             > artifacts/server.log 2>&1 &
           SERVER_PID=$!
@@ -225,12 +235,14 @@ jobs:
           SERVER_STATUS=$?
           set -e
 
+          cat artifacts/server-convergence.json || true
           cat artifacts/server.json || true
           cat artifacts/bots.json || true
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients and .decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
-          jq -e '.ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
+          jq -e '.phase == "convergence" and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0' artifacts/server.json >/dev/null
       - name: Upload load reports
         if: always()
         uses: actions/upload-artifact@v4
