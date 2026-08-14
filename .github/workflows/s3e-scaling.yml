@@ -79,7 +79,6 @@ jobs:
           # Convergence phase 必須以 application lifecycle + Reliable transport 真正 drain 結束。
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == .convergence.observation.world.known_desired and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
           # S3-E.6 同時限制 convergence tail 與完成時間：不能只把 burst 攤成過長登入等待。
-          # Final acceptance 刻意重跑同一組 gates，確認不是單次 runner tail 偶然過關。
           jq -e '.tick_duration.p99_ms < 50' artifacts/server-convergence.json >/dev/null
           jq -e '.convergence.ready_to_converged_seconds < 2' artifacts/server-convergence.json >/dev/null
           # 正式 steady-state capacity gate 保持不變。
@@ -106,7 +105,7 @@ jobs:
         run: |
           go build -o /tmp/astrahold-loadserver ./cmd/loadserver
           go build -o /tmp/astrahold-loadbot ./cmd/loadbot
-      - name: Run 500-client Teleport AOI Churn baseline
+      - name: Run 500-client Teleport AOI Churn hard gates
         shell: bash
         run: |
           set -u
@@ -158,13 +157,12 @@ jobs:
 
           jq -e '.phase == "convergence" and .convergence.transition == "initial" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-convergence.json >/dev/null
 
-          # Churn gate 必須先看到 non-converged，再重新回到同樣 125,000 desired/known，且 Reliable 全 drain。
-          jq -e '.phase == "churn" and .convergence.transition == "teleport-churn" and .convergence.observed_non_converged == true and .convergence.trigger_to_converged_seconds > 0 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-churn.json >/dev/null
-          jq -e '.lifecycle.spawn_selected >= 62500 and .lifecycle.despawn_selected >= 62500' artifacts/churn-server-churn.json >/dev/null
+          # S3-E.8 正式補回 S3-E.7 應有的 churn performance gates；不再只收 baseline。
+          jq -e '.phase == "churn" and .convergence.transition == "teleport-churn" and .convergence.observed_non_converged == true and .convergence.trigger_to_converged_seconds > 0 and .convergence.trigger_to_converged_seconds < 2.75 and .tick_duration.p99_ms < 50 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-churn.json >/dev/null
+          jq -e '.lifecycle.spawn_selected >= 62500 and .lifecycle.despawn_selected >= 62500 and .lifecycle.max_global_selected_per_tick <= 6000 and .lifecycle.max_initial_vitals_selected_per_tick <= 5000' artifacts/churn-server-churn.json >/dev/null
           jq -e '.errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0' artifacts/churn-server-churn.json >/dev/null
 
-          # 第一輪 S3-E.7 只把 churn performance 當 baseline，不先用未量測過的 p99/time 門檻自我驗證。
-          # 最後 steady-state 仍必須保留既有 50ms capacity budget。
+          # Churn 後 steady-state 仍必須保留既有 50ms capacity budget。
           jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50' artifacts/churn-server.json >/dev/null
       - name: Upload Teleport Churn reports
         if: always()
