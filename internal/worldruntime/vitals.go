@@ -40,8 +40,6 @@ func (r *Runtime) removeSessionVitals(id session.ID) {
 	delete(r.sessionVitalsPending, id)
 }
 
-// queueEntityVitalsForSession 只在 Reliable Spawn 成功排入 outbound queue 後呼叫。
-// 這讓 initial vitals retry 與 lifecycle known truth 綁在一起，而不是每 tick 掃全世界 Character state。
 func (r *Runtime) queueEntityVitalsForSession(sessionID session.ID, entityID world.EntityID) {
 	pending := r.sessionVitalsPending[sessionID]
 	if pending == nil {
@@ -72,14 +70,17 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 	return delivered
 }
 
-// replicateEntityVitals 將 Character full-state 視為可重送的 Reliable state，而不是一次性事件。
-// Initial full-state 同時受 per-session 32 與 global per-world-tick budget 約束；global budget
-// 以 Session round-robin 起點輪轉，避免固定低 ID 在持續 churn 中總是先取得 Vitals quantum。
-// Dirty gameplay fan-out 不共用這個 bootstrap budget，仍保留 latest full-state retry semantics。
+// Initial Vitals 與 lifecycle 使用同一種 phase-sensitive budgeting：
+// pure bootstrap 保留較高吞吐；一旦 mixed churn 被偵測，就降到 churn cap，直到 lifecycle deferred
+// 與 initial Vitals pending 都清空。Session 起點持續 round-robin，避免固定 ID 優先。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	sessions := r.sessions.List()
-	report.Metrics.InitialVitalsGlobalBudget = r.config.MaxInitialVitalsPerTick
-	globalRemaining := r.config.MaxInitialVitalsPerTick
+	globalBudget := r.config.MaxInitialVitalsPerTick
+	if r.lifecycleChurnActive {
+		globalBudget = r.config.MaxChurnInitialVitalsPerTick
+	}
+	report.Metrics.InitialVitalsGlobalBudget = globalBudget
+	globalRemaining := globalBudget
 	startIndex := 0
 	if len(sessions) > 0 {
 		startIndex = r.vitalsSessionCursor % len(sessions)
@@ -149,7 +150,6 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 		}
 	}
 
-	// 若 Session 已離線但其 pending map 還沒被 remove command 清掉，做稀有 cleanup。
 	for sessionID := range r.sessionVitalsPending {
 		if _, ok := r.sessions.Get(sessionID); !ok {
 			delete(r.sessionVitalsPending, sessionID)
@@ -157,12 +157,17 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 		}
 	}
 
+	// 只在 snapshot tick 判斷 churn phase 是否完成，避免兩個 snapshot 之間 lifecycle metrics 為 0 時誤清。
+	if r.lifecycleChurnActive && tick%r.config.SnapshotEveryTicks == 0 &&
+		report.Metrics.LifecycleGlobalSelected == 0 && report.Metrics.SpawnDeferred == 0 && report.Metrics.DespawnDeferred == 0 &&
+		len(r.sessionVitalsPending) == 0 {
+		r.lifecycleChurnActive = false
+	}
+
 	if len(r.dirtyVitalsEntities) == 0 {
 		return
 	}
 
-	// Dirty fan-out 是 O(Sessions × dirty entities)，而不是 O(Sessions × all characters) 每 tick。
-	// 若某 Session backpressure，該 entity 保留 dirty，下一 tick retry latest full state。
 	for entityID := range r.dirtyVitalsEntities {
 		state, ok := r.characters.State(entityID)
 		if !ok {
