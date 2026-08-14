@@ -6,19 +6,20 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 var (
-	ErrInvalidCapacity   = errors.New("deathoutcome: invalid outbox capacity")
-	ErrInvalidEvent      = errors.New("deathoutcome: invalid event")
-	ErrOutboxFull        = errors.New("deathoutcome: outbox full")
+	ErrInvalidCapacity    = errors.New("deathoutcome: invalid outbox capacity")
+	ErrInvalidEvent       = errors.New("deathoutcome: invalid event")
+	ErrOutboxFull         = errors.New("deathoutcome: outbox full")
 	ErrRevisionRegression = errors.New("deathoutcome: defeat revision regression")
-	ErrOutcomeConflict   = errors.New("deathoutcome: conflicting outcome for defeat revision")
-	ErrEventIDOverflow   = errors.New("deathoutcome: event id overflow")
-	ErrUnknownEvent      = errors.New("deathoutcome: unknown event")
-	ErrConfirmOutOfOrder = errors.New("deathoutcome: confirm out of order")
+	ErrOutcomeConflict    = errors.New("deathoutcome: conflicting outcome for defeat revision")
+	ErrEventIDOverflow    = errors.New("deathoutcome: event id overflow")
+	ErrUnknownEvent       = errors.New("deathoutcome: unknown event")
+	ErrConfirmOutOfOrder  = errors.New("deathoutcome: confirm out of order")
 )
 
 type RespawnBinding struct {
@@ -32,6 +33,8 @@ type RespawnBinding struct {
 type Event struct {
 	EventID                    uint64
 	EntityID                   world.EntityID
+	CharacterID                characteridentity.ID
+	CharacterIdentityAssurance characteridentity.Assurance
 	DefeatRevision             uint64
 	Context                    respawnpolicy.DeathContext
 	DefeatedTick               uint64
@@ -42,15 +45,19 @@ type Event struct {
 	CheckpointForfeited        bool
 }
 
+func (e Event) CharacterIdentity() characteridentity.Binding {
+	return characteridentity.Binding{ID: e.CharacterID, Assurance: e.CharacterIdentityAssurance}
+}
+
 // Outbox 是 process-local、thread-safe 的 bounded outbox。World owner只呼叫 Enqueue；
 // external consumer可在其他 goroutine Pending/Confirm，因此不需要把 DB / network I/O 放進 world tick。
 // 它不是 durable storage；process restart 後內容不保留。
 type Outbox struct {
-	mu             sync.Mutex
-	capacity       int
-	nextEventID    uint64
-	pending        []Event
-	lastByEntity   map[world.EntityID]Event
+	mu           sync.Mutex
+	capacity     int
+	nextEventID  uint64
+	pending      []Event
+	lastByEntity map[world.EntityID]Event
 }
 
 func NewOutbox(capacity int) (*Outbox, error) {
@@ -73,6 +80,7 @@ func (o *Outbox) Depth() int {
 }
 
 // Enqueue 以 (EntityID, DefeatRevision) 對目前 entity incarnation 做 idempotency。
+// CharacterID是 durable ownership key；DefeatRevision仍只屬於目前 world/entity incarnation。
 // same revision + same payload 回傳既有 event 且 created=false；same revision不同 payload視為 conflict。
 // ResetEntity 會在 leave_world 清 incarnation dedupe，但不會刪除尚未被 consumer confirm 的舊事件。
 func (o *Outbox) Enqueue(event Event) (stored Event, created bool, err error) {
@@ -150,9 +158,29 @@ func (o *Outbox) ResetEntity(entityID world.EntityID) {
 }
 
 func validateEvent(event Event) error {
-	if event.EventID != 0 || event.EntityID == 0 || event.DefeatRevision == 0 || !validContext(event.Context) {
+	if event.EventID != 0 || event.EntityID == 0 || !event.CharacterIdentity().Valid() || event.DefeatRevision == 0 || !validContext(event.Context) {
 		return ErrInvalidEvent
 	}
+	return validateEventBody(event)
+}
+
+func validateJournalEvent(event Event) error {
+	if event.EventID == 0 || event.EntityID == 0 || !event.CharacterIdentity().Valid() || event.DefeatRevision == 0 || !validContext(event.Context) {
+		return ErrInvalidEvent
+	}
+	return validateEventBody(event)
+}
+
+// validateLegacyJournalEvent accepts S3-F.9 record schema v1. Those records have no
+// CharacterID and remain explicitly legacy; callers must not infer a durable identity from EntityID.
+func validateLegacyJournalEvent(event Event) error {
+	if event.EventID == 0 || event.EntityID == 0 || event.CharacterID != "" || event.CharacterIdentityAssurance != "" || event.DefeatRevision == 0 || !validContext(event.Context) {
+		return ErrInvalidEvent
+	}
+	return validateEventBody(event)
+}
+
+func validateEventBody(event Event) error {
 	if event.CheckpointForfeited && !event.PenaltyTransactionApplied {
 		return fmt.Errorf("%w: checkpoint forfeiture requires applied penalty transaction", ErrInvalidEvent)
 	}
