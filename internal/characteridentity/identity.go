@@ -71,7 +71,16 @@ func (b Binding) Valid() bool {
 		return false
 	}
 	if b.Assurance == AssuranceEphemeral {
-		return len(value) == len(ephemeralPrefix)+32 && len(value) >= len(ephemeralPrefix) && value[:len(ephemeralPrefix)] == ephemeralPrefix
+		if len(value) != len(ephemeralPrefix)+32 || value[:len(ephemeralPrefix)] != ephemeralPrefix {
+			return false
+		}
+		for i := len(ephemeralPrefix); i < len(value); i++ {
+			c := value[i]
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				return false
+			}
+		}
+		return true
 	}
 	return !(len(value) >= len(ephemeralPrefix) && value[:len(ephemeralPrefix)] == ephemeralPrefix)
 }
