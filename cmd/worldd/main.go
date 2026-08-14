@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,16 +25,21 @@ import (
 
 func main() {
 	var (
-		tcpAddress        = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
-		udpAddress        = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
-		tickRate          = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
-		snapshotRate      = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath         = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
-		combatPath        = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
-		respawnPolicyPath = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
+		tcpAddress                   = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
+		udpAddress                   = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
+		tickRate                     = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
+		snapshotRate                 = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath                    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
+		combatPath                   = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		respawnPolicyPath            = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
+		postReviveProtectionSeconds = flag.Float64("post-revive-protection-seconds", 3.0, "Server-side damage protection after respawn/resurrection; 0 disables")
 	)
 	flag.Parse()
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
+		log.Fatal(err)
+	}
+	protectionTicks, err := reviveProtectionTicks(*postReviveProtectionSeconds, *tickRate)
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -72,6 +78,7 @@ func main() {
 	sim := simulation.New(spatial.NewGrid(32), move)
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
+	runtimeConfig.PostReviveProtectionTicks = protectionTicks
 	runtime := worldruntime.New(
 		sim,
 		runtimeConfig,
@@ -103,7 +110,7 @@ func main() {
 	go func() { loopDone <- loop.RunObserved(ctx, logStepReport) }()
 	go logNetworkErrors(ctx, server.Errors())
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	if err := server.Serve(ctx); err != nil {
 		stop()
@@ -125,6 +132,20 @@ func validateRates(tickRate, snapshotRate int) error {
 		return fmt.Errorf("snapshot-rate must divide tick-rate evenly and be <= tick-rate")
 	}
 	return nil
+}
+
+func reviveProtectionTicks(seconds float64, tickRate int) (uint64, error) {
+	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return 0, fmt.Errorf("post-revive-protection-seconds must be finite and >= 0")
+	}
+	if seconds == 0 {
+		return 0, nil
+	}
+	ticks := math.Ceil(seconds * float64(tickRate))
+	if ticks <= 0 || ticks > float64(^uint64(0)) {
+		return 0, fmt.Errorf("post-revive-protection-seconds overflows tick duration")
+	}
+	return uint64(ticks), nil
 }
 
 func logStepReport(report worldruntime.StepReport) {
