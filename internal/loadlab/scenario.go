@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"time"
 
 	"github.com/li41/astrahold-server/internal/gameplayworld"
@@ -22,7 +23,10 @@ const (
 	ScenarioTeleportChurn Scenario = "teleport-churn"
 )
 
-var ErrUnknownScenario = errors.New("loadlab: unknown scenario")
+var (
+	ErrUnknownScenario              = errors.New("loadlab: unknown scenario")
+	s3e9MixedMovementEnabled        = os.Getenv("ASTRAHOLD_S3E9_MIXED_MOVEMENT") == "1"
+)
 
 func ParseScenario(value string) (Scenario, error) {
 	scenario := Scenario(value)
@@ -242,6 +246,25 @@ func pointOnSurface(surface gameplayworld.Surface, point xzPoint) world.Position
 	}
 }
 
+// S3E9MixedStationaryEntity 將相鄰兩個 Entity 視為一組，兩組 stationary / movers 交錯。
+// Teleport-churn 的 adjacent combat pairs 因此可挑固定 stationary hot targets；其餘約一半
+// Client 持續走正常 ClientMoveInput，並讓低/高 SessionID 都同時包含 movers 與 observers。
+func S3E9MixedStationaryEntity(entityID world.EntityID) bool {
+	if entityID == 0 {
+		return true
+	}
+	return ((uint64(entityID)-1)/2)%2 == 0
+}
+
+func distributedMovementDirection(entityID world.EntityID, phase int) (float32, float32) {
+	directions := [8][2]float32{
+		{1, 0}, {0.70710677, 0.70710677}, {0, 1}, {-0.70710677, 0.70710677},
+		{-1, 0}, {-0.70710677, -0.70710677}, {0, -1}, {0.70710677, -0.70710677},
+	}
+	direction := directions[(int(entityID)+phase)%len(directions)]
+	return direction[0], direction[1]
+}
+
 // MovementDirection 回傳 deterministic input pattern，避免 Load Lab 本身使用大量 RNG。
 func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.Duration) (float32, float32) {
 	phase := int(elapsed / (2 * time.Second))
@@ -249,7 +272,10 @@ func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.
 	case ScenarioGateZerg:
 		return 0, 1
 	case ScenarioTeleportChurn:
-		return 0, 0
+		if !s3e9MixedMovementEnabled || S3E9MixedStationaryEntity(entityID) {
+			return 0, 0
+		}
+		return distributedMovementDirection(entityID, phase)
 	case ScenarioVerticalSiege:
 		role := int((uint64(entityID) - 1) % 10)
 		switch {
@@ -267,12 +293,7 @@ func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.
 			return -1, 0
 		}
 	default:
-		directions := [8][2]float32{
-			{1, 0}, {0.70710677, 0.70710677}, {0, 1}, {-0.70710677, 0.70710677},
-			{-1, 0}, {-0.70710677, -0.70710677}, {0, -1}, {0.70710677, -0.70710677},
-		}
-		direction := directions[(int(entityID)+phase)%len(directions)]
-		return direction[0], direction[1]
+		return distributedMovementDirection(entityID, phase)
 	}
 }
 

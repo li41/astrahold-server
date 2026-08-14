@@ -31,17 +31,23 @@ func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.Entity
 			}
 		} else {
 			hadPendingDeparted := len(state.departed) > 0
-			if !hadPendingDeparted {
-				// semantic-converged world 的 common churn path：old desired 與 new desired 都是
-				// stable EntityID order。直接做線性 diff，並只保留目前 known 的 removed IDs；
-				// 不再掃 known map、逐 ID binary-search 新 desired、最後再 sort。
-				rebuildPendingDepartedFromDesiredDiff(state, frame, visibleIndices)
-			}
-			rebuildDesiredTracks(state, frame, visibleIndices)
-			if hadPendingDeparted {
-				// 連續 churn 可能在前一批 Despawn 尚未 Confirm 時再次改 AOI。這是 rare path，
-				// 保留完整 known-vs-new-desired rebuild，確保舊 pending 不遺失、重新進 AOI 可撤銷。
-				rebuildPendingDeparted(state)
+			// semantic-converged churn 的 common path：上一份 desired 已全部 known、也沒有
+			// pending departed。直接用 dense tracks 與新 sorted visible 線性 merge，同時產生
+			// departed + retained/new tracks，不再逐 Entity查 known/history maps。
+			if !hadPendingDeparted && len(state.known) == len(state.desiredIDs) {
+				rebuildConvergedLifecycleTracks(state, frame, visibleIndices)
+			} else {
+				if !hadPendingDeparted {
+					// 尚未完全 lifecycle-converged 的 membership change仍用保守線性 diff；
+					// removed IDs只有目前 known的才會進 departed。
+					rebuildPendingDepartedFromDesiredDiff(state, frame, visibleIndices)
+				}
+				rebuildLifecycleDesiredTracks(state, frame, visibleIndices)
+				if hadPendingDeparted {
+					// 連續 churn 可能在前一批 Despawn 尚未 Confirm 時再次改 AOI。這是 rare path，
+					// 保留完整 known-vs-new-desired rebuild，確保舊 pending不遺失、重新進 AOI可撤銷。
+					rebuildPendingDeparted(state)
+				}
 			}
 		}
 	} else if len(state.departed) > 0 {

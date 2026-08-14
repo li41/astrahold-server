@@ -28,6 +28,8 @@ func (r *Runtime) markEntityVitalsDirty(entityID world.EntityID) {
 func (r *Runtime) removeEntityVitals(entityID world.EntityID) {
 	delete(r.entityVitalsRevision, entityID)
 	delete(r.dirtyVitalsEntities, entityID)
+	delete(r.dirtyVitalsNextSession, entityID)
+	delete(r.dirtyVitalsProgress, entityID)
 	for _, delivered := range r.sessionVitalsRevision {
 		delete(delivered, entityID)
 	}
@@ -190,14 +192,22 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 
 // replicateDirtyEntityVitals 將 gameplay HP dirty fan-out限制在固定 world-tick work quantum。
 // 每個 Session 的 delivered revision 仍是唯一進度 truth：budget 用完時未送出的關係不前進，
-// 下一 tick 直接重試 latest full state。Entity 起點按 stable ID 輪轉，避免持續 combat 讓低 ID
-// 長期壟斷 global budget；單一 Entity 若只送了一部分 Session，也會在下一輪回到它時補齊。
+// 下一 tick 直接重試 latest full state。Entity 起點按 stable ID 輪轉；每個 dirty Entity 也記住
+// 自己下一個 Session 起點，避免 hot Entity 在 revision 持續增加時每 tick 都從最低 SessionID 重掃。
+// fairness telemetry 只為目前 dirty Entity 保留一筆 progress，不建立 per-session age map。
 func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Session, report *StepReport) {
 	budget := r.config.MaxDirtyVitalsPerTick
 	report.Metrics.DirtyVitalsGlobalBudget = budget
+	report.Metrics.DirtyVitalsEntities = len(r.dirtyVitalsEntities)
 	if budget <= 0 || len(r.dirtyVitalsEntities) == 0 {
 		if len(r.dirtyVitalsEntities) == 0 {
 			r.dirtyVitalsNextEntity = 0
+			for entityID := range r.dirtyVitalsNextSession {
+				delete(r.dirtyVitalsNextSession, entityID)
+			}
+			for entityID := range r.dirtyVitalsProgress {
+				delete(r.dirtyVitalsProgress, entityID)
+			}
 		}
 		return
 	}
@@ -228,30 +238,81 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 		index := (start + order) % len(r.dirtyVitalsScratch)
 		entityID := r.dirtyVitalsScratch[index]
 		if _, dirty := r.dirtyVitalsEntities[entityID]; !dirty {
+			delete(r.dirtyVitalsNextSession, entityID)
+			delete(r.dirtyVitalsProgress, entityID)
 			continue
 		}
 		state, ok := r.characters.State(entityID)
 		if !ok {
 			delete(r.dirtyVitalsEntities, entityID)
+			delete(r.dirtyVitalsNextSession, entityID)
+			delete(r.dirtyVitalsProgress, entityID)
 			continue
 		}
 		revision := r.entityVitalsRevision[entityID]
 		if revision == 0 {
 			delete(r.dirtyVitalsEntities, entityID)
+			delete(r.dirtyVitalsNextSession, entityID)
+			delete(r.dirtyVitalsProgress, entityID)
 			continue
 		}
 
+		progress := r.dirtyVitalsProgress[entityID]
+		if progress.FirstTick == 0 {
+			progress.FirstTick = tick
+		}
+		if progress.Revision != revision {
+			progress.Revision = revision
+			progress.RevisionTick = tick
+		}
+		r.dirtyVitalsProgress[entityID] = progress
+		dirtyAge := tick - progress.FirstTick
+		if dirtyAge > report.Metrics.DirtyVitalsOldestDirtyAgeTicks {
+			report.Metrics.DirtyVitalsOldestDirtyAgeTicks = dirtyAge
+		}
+
+		sessionStart := 0
+		if nextSessionID := r.dirtyVitalsNextSession[entityID]; nextSessionID != 0 && len(sessions) > 0 {
+			sessionStart = sort.Search(len(sessions), func(i int) bool { return sessions[i].ID >= nextSessionID })
+			if sessionStart >= len(sessions) {
+				sessionStart = 0
+			}
+		}
+
 		allDelivered := true
-		for _, s := range sessions {
-			if !r.replication.Knows(s.ID, entityID) {
+		for sessionOrder := 0; sessionOrder < len(sessions); sessionOrder++ {
+			sessionIndex := (sessionStart + sessionOrder) % len(sessions)
+			s := sessions[sessionIndex]
+
+			// ConfirmSpawn 一定會先 queue Initial Vitals；成功送過任一 Vitals 後則會留下
+			// delivered revision。ConfirmDespawn 同步移除兩者，因此 pending ∪ delivered正好是
+			// Dirty Vitals需要的 known-relationship mirror。這裡直接讀 runtime mirror，避免每個
+			// relationship 再跨 replication Service做一次 Knows map lookup。
+			delivered := r.sessionVitalsRevision[s.ID]
+			deliveredRevision, hasDelivered := delivered[entityID]
+			pending := r.sessionVitalsPending[s.ID]
+			_, hasPending := pending[entityID]
+			if !hasDelivered && !hasPending {
 				continue
 			}
-			delivered := r.ensureSessionVitalsDelivered(s.ID)
-			if delivered[entityID] >= revision {
+			if hasDelivered && deliveredRevision >= revision {
 				continue
+			}
+			pendingAge := tick - progress.RevisionTick
+			if pendingAge > report.Metrics.DirtyVitalsOldestPendingRevisionAgeTicks || report.Metrics.DirtyVitalsOldestPendingEntityID == 0 {
+				report.Metrics.DirtyVitalsOldestPendingRevisionAgeTicks = pendingAge
+				report.Metrics.DirtyVitalsOldestPendingEntityID = entityID
+				report.Metrics.DirtyVitalsOldestPendingSessionID = s.ID
 			}
 			if remaining <= 0 {
 				allDelivered = false
+				if r.dirtyVitalsNextSession[entityID] != s.ID {
+					report.Metrics.DirtyVitalsSessionCursorAdvances++
+				}
+				if sessionIndex < sessionStart {
+					report.Metrics.DirtyVitalsSessionCursorWraps++
+				}
+				r.dirtyVitalsNextSession[entityID] = s.ID
 				break
 			}
 			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
@@ -260,8 +321,11 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			}
 			report.Metrics.DirtyVitalsSelected++
 			remaining--
+			if delivered == nil {
+				delivered = r.ensureSessionVitalsDelivered(s.ID)
+			}
 			delivered[entityID] = revision
-			if pending := r.sessionVitalsPending[s.ID]; pending != nil {
+			if hasPending {
 				delete(pending, entityID)
 				if len(pending) == 0 {
 					delete(r.sessionVitalsPending, s.ID)
@@ -269,7 +333,18 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			}
 		}
 		if allDelivered {
+			report.Metrics.DirtyVitalsEntityCompletions++
+			entityCompletion := tick - progress.FirstTick
+			if entityCompletion > report.Metrics.DirtyVitalsMaxEntityCompletionTicks {
+				report.Metrics.DirtyVitalsMaxEntityCompletionTicks = entityCompletion
+			}
+			revisionCompletion := tick - progress.RevisionTick
+			if revisionCompletion > report.Metrics.DirtyVitalsMaxRevisionCompletionTicks {
+				report.Metrics.DirtyVitalsMaxRevisionCompletionTicks = revisionCompletion
+			}
 			delete(r.dirtyVitalsEntities, entityID)
+			delete(r.dirtyVitalsNextSession, entityID)
+			delete(r.dirtyVitalsProgress, entityID)
 		}
 		if remaining <= 0 {
 			report.Metrics.DirtyVitalsGlobalBudgetExhausted = true
@@ -280,6 +355,7 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 	}
 
 	r.dirtyVitalsNextEntity = nextEntity
+	report.Metrics.DirtyVitalsEntities = len(r.dirtyVitalsEntities)
 }
 
 func (r *Runtime) trySendEntityVitals(s *session.Session, entityID world.EntityID, hp, maxHP uint32, defeated bool, tick uint64, report *StepReport) error {

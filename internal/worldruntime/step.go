@@ -66,7 +66,10 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.DynamicReplicationDuration = time.Since(stageStart)
 	}
 
+	snapshotRan := false
+	initialBootstrapHadLifecycle := false
 	if tick%r.config.SnapshotEveryTicks == 0 {
+		snapshotRan = true
 		sessions := r.sessions.List()
 		report.Metrics.SessionsReplicated = len(sessions)
 
@@ -93,6 +96,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		}
 		globalRemaining := globalBudget
 		budgetExhaustedNextCursor := -1
+		suppressInitialSnapshots := r.suppressInitialBootstrapSnapshots()
 
 		for order := 0; order < len(sessions); order++ {
 			index := (startIndex + order) % len(sessions)
@@ -131,6 +135,13 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				MaxDespawns: r.config.MaxDespawnsPerSessionBuild,
 				MaxMessages: maxMessages,
 			}
+			// Initial bootstrap active時，fully-known Session不和仍在做 Spawn/Initial Vitals
+			// 的 Session同 tick競爭 remote snapshot candidate CPU。若目前 AOI membership 有
+			// lifecycle work，仍使用原 bounded builder；只有 lifecycle-complete view 才套
+			// 現有 MaxMessages=-1 deferred path，因此不改 lifecycle truth / Confirm semantics。
+			if suppressInitialSnapshots && !r.replication.NeedsLifecycleWork(s.ID, frame, visible) {
+				lifecycleLimits.MaxMessages = -1
+			}
 			if measure {
 				stageStart = time.Now()
 			}
@@ -157,6 +168,11 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			report.Metrics.DespawnCandidates += batch.Stats.DespawnCandidates
 			report.Metrics.DespawnSelected += batch.Stats.DespawnSelected
 			report.Metrics.DespawnDeferred += batch.Stats.DespawnDeferred
+
+			if batch.Stats.SpawnCandidates > 0 || batch.Stats.SpawnSelected > 0 || batch.Stats.SpawnDeferred > 0 ||
+				batch.Stats.DespawnCandidates > 0 || batch.Stats.DespawnSelected > 0 || batch.Stats.DespawnDeferred > 0 {
+				initialBootstrapHadLifecycle = true
+			}
 
 			selectedLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
 			report.Metrics.LifecycleGlobalSelected += selectedLifecycle
@@ -222,6 +238,9 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	r.replicateEntityVitals(tick, &report)
 	if measure {
 		report.Metrics.VitalsReplicationDuration = time.Since(stageStart)
+	}
+	if snapshotRan {
+		r.observeInitialBootstrapSnapshot(report.Metrics.SessionsReplicated, initialBootstrapHadLifecycle)
 	}
 
 	report.Metrics.CommandQueueDepthAfter = r.queue.depth()
