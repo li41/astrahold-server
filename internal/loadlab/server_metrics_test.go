@@ -1,6 +1,7 @@
 package loadlab
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
-func TestServerCollectorSummarizesTickAndAOI(t *testing.T) {
+func TestServerCollectorSummarizesTickAOIAndReplication(t *testing.T) {
 	collector := NewServerCollector(20, 10)
 	collector.Reset()
 	collector.RecordStep(worldruntime.StepReport{
@@ -24,6 +25,13 @@ func TestServerCollectorSummarizesTickAndAOI(t *testing.T) {
 			AOICandidates:           18,
 			AOIVisible:              12,
 			OutboundMessages:        9,
+			SnapshotCandidates:      10,
+			SnapshotTransforms:      6,
+			SnapshotDeferred:        4,
+			SnapshotForcedRefreshes: 1,
+			SnapshotNearTransforms:  3,
+			SnapshotMidTransforms:   2,
+			SnapshotFarTransforms:   1,
 			SimulationDuration:      time.Millisecond,
 			AOIDuration:             2 * time.Millisecond,
 			ReplicationBuildDuration: time.Millisecond,
@@ -37,6 +45,21 @@ func TestServerCollectorSummarizesTickAndAOI(t *testing.T) {
 	}
 	if report.AOI.Queries != 3 || report.AOI.Candidates != 18 || report.AOI.Visible != 12 {
 		t.Fatalf("unexpected AOI report: %+v", report.AOI)
+	}
+	if report.Replication.SessionsReplicated != 3 || report.Replication.OutboundMessages != 9 {
+		t.Fatalf("unexpected replication message report: %+v", report.Replication)
+	}
+	if report.Replication.SnapshotCandidates != 10 || report.Replication.SnapshotTransforms != 6 || report.Replication.SnapshotDeferred != 4 {
+		t.Fatalf("unexpected snapshot replication report: %+v", report.Replication)
+	}
+	if report.Replication.SnapshotForcedRefreshes != 1 || report.Replication.SnapshotNearTransforms != 3 || report.Replication.SnapshotMidTransforms != 2 || report.Replication.SnapshotFarTransforms != 1 {
+		t.Fatalf("unexpected tier replication report: %+v", report.Replication)
+	}
+	if math.Abs(report.Replication.TransformsPerSession-2) > 0.0001 {
+		t.Fatalf("transforms/session=%f want=2", report.Replication.TransformsPerSession)
+	}
+	if math.Abs(report.Replication.DeferredCandidateRatio-0.4) > 0.0001 {
+		t.Fatalf("deferred ratio=%f want=0.4", report.Replication.DeferredCandidateRatio)
 	}
 	if report.Errors.BlockedMoves != 1 {
 		t.Fatalf("blocked moves = %d, want 1", report.Errors.BlockedMoves)
