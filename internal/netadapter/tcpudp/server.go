@@ -52,6 +52,11 @@ type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 // identity per connection and does not authenticate returning characters.
 type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentity.Binding, error)
 
+// CharacterRestoreFactory resolves already-durable state for a trusted identity before
+// SessionWelcome is sent. It is never called for the default ephemeral identity path.
+// Implementations may perform storage I/O because handleTCP is not the world-owner tick.
+type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
+
 type Config struct {
 	TCPAddress               string
 	UDPAddress               string
@@ -60,6 +65,7 @@ type Config struct {
 	ReliableQueueCapacity    int
 	PlayerFactory            PlayerFactory
 	CharacterIdentityFactory CharacterIdentityFactory
+	CharacterRestoreFactory  CharacterRestoreFactory
 	WorldIdentity            protocol.WorldIdentity
 }
 
@@ -282,6 +288,25 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 
+	var restore *worldruntime.CharacterRestore
+	if identity.Assurance == characteridentity.AssuranceTrusted && s.config.CharacterRestoreFactory != nil {
+		candidate, exists, err := s.config.CharacterRestoreFactory(identity)
+		if err != nil {
+			s.emit(sid, "character_restore_factory", err)
+			_ = raw.Close()
+			return
+		}
+		if exists {
+			if err := worldruntime.ValidateCharacterRestore(identity, candidate, s.config.WorldIdentity); err != nil {
+				s.emit(sid, "character_restore_factory", err)
+				_ = raw.Close()
+				return
+			}
+			candidateCopy := candidate
+			restore = &candidateCopy
+		}
+	}
+
 	connection := newClientConnection(raw, s.udp, token, s.codec, s.config.ReliableQueueCapacity, &s.metrics)
 	sess, err := session.NewWithCharacterIdentity(sid, eid, identity, spec.AOIRadius, connection)
 	if err != nil {
@@ -322,6 +347,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		Speed:         spec.Speed,
 		Radius:        spec.Radius,
 		MaxStepHeight: spec.MaxStepHeight,
+		Restore:       restore,
 	}); err != nil {
 		s.closePeer(p, "enqueue_join", err)
 		return

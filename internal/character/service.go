@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	ErrInvalidMaxHP   = errors.New("character: invalid max hp")
-	ErrCharacterExists = errors.New("character: character already exists")
+	ErrInvalidMaxHP      = errors.New("character: invalid max hp")
+	ErrInvalidState      = errors.New("character: invalid state")
+	ErrCharacterExists   = errors.New("character: character already exists")
 	ErrCharacterNotFound = errors.New("character: character not found")
 	ErrCharacterDefeated = errors.New("character: character defeated")
 )
@@ -35,13 +36,37 @@ func NewService(defaultMaxHP uint32) (*Service, error) {
 }
 
 func (s *Service) Register(id world.EntityID) error {
-	if id == 0 {
+	return s.RegisterState(State{EntityID: id, HP: s.defaultMaxHP, MaxHP: s.defaultMaxHP})
+}
+
+// RegisterState installs an already-authoritative character health state for a newly
+// spawned world incarnation. It is intentionally registration-only: callers cannot use
+// it to mutate an existing character and bypass normal damage/revive transitions.
+func (s *Service) RegisterState(state State) error {
+	if state.EntityID == 0 {
 		return ErrCharacterNotFound
 	}
-	if _, exists := s.states[id]; exists {
+	if _, exists := s.states[state.EntityID]; exists {
 		return ErrCharacterExists
 	}
-	s.states[id] = State{EntityID: id, HP: s.defaultMaxHP, MaxHP: s.defaultMaxHP}
+	if err := validateState(state); err != nil {
+		return err
+	}
+	s.states[state.EntityID] = state
+	return nil
+}
+
+func validateState(state State) error {
+	if state.MaxHP == 0 || state.HP > state.MaxHP {
+		return ErrInvalidState
+	}
+	if state.Defeated {
+		if state.HP != 0 {
+			return ErrInvalidState
+		}
+	} else if state.HP == 0 {
+		return ErrInvalidState
+	}
 	return nil
 }
 

@@ -13,6 +13,7 @@ type JoinRequest struct {
 	Speed         float32
 	Radius        float32
 	MaxStepHeight float32
+	Restore       *CharacterRestore
 }
 
 func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *StepReport) {
@@ -67,11 +68,35 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
-	if err := r.world.Spawn(request.Entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
+
+	entity := request.Entity
+	var restoredState *character.State
+	if request.Restore != nil {
+		if err := r.validateCharacterRestore(request.Session, *request.Restore); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+			return
+		}
+		entity.Transform = request.Restore.Transform
+		state := character.State{
+			EntityID: request.Entity.ID,
+			HP:       request.Restore.HP,
+			MaxHP:    request.Restore.MaxHP,
+			Defeated: request.Restore.Defeated,
+		}
+		restoredState = &state
+	}
+
+	if err := r.world.Spawn(entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
-	if err := r.characters.Register(request.Entity.ID); err != nil {
+	var err error
+	if restoredState != nil {
+		err = r.characters.RegisterState(*restoredState)
+	} else {
+		err = r.characters.Register(request.Entity.ID)
+	}
+	if err != nil {
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
