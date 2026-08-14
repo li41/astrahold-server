@@ -25,12 +25,14 @@ type DurationSummary struct {
 }
 
 type StageSummary struct {
-	SimulationAverageMS             float64 `json:"simulation_average_ms"`
-	DynamicReplicationAverageMS     float64 `json:"dynamic_replication_average_ms"`
-	ReplicationFrameBuildAverageMS  float64 `json:"replication_frame_build_average_ms"`
-	AOIAverageMS                    float64 `json:"aoi_average_ms"`
-	ReplicationBuildAverageMS       float64 `json:"replication_build_average_ms"`
-	DeliveryAverageMS               float64 `json:"delivery_average_ms"`
+	CommandAverageMS                 float64 `json:"command_average_ms"`
+	SimulationAverageMS              float64 `json:"simulation_average_ms"`
+	DynamicReplicationAverageMS      float64 `json:"dynamic_replication_average_ms"`
+	ReplicationFrameBuildAverageMS   float64 `json:"replication_frame_build_average_ms"`
+	AOIAverageMS                     float64 `json:"aoi_average_ms"`
+	ReplicationBuildAverageMS        float64 `json:"replication_build_average_ms"`
+	DeliveryAverageMS                float64 `json:"delivery_average_ms"`
+	VitalsReplicationAverageMS       float64 `json:"vitals_replication_average_ms"`
 }
 
 type QueueSummary struct {
@@ -117,12 +119,14 @@ type ServerCollector struct {
 	tickDurations []time.Duration
 	ticks         uint64
 
-	simulationDuration             time.Duration
-	dynamicReplicationDuration     time.Duration
-	replicationFrameBuildDuration  time.Duration
-	aoiDuration                    time.Duration
-	replicationBuildDuration       time.Duration
-	deliveryDuration               time.Duration
+	commandDuration                 time.Duration
+	simulationDuration              time.Duration
+	dynamicReplicationDuration      time.Duration
+	replicationFrameBuildDuration   time.Duration
+	aoiDuration                     time.Duration
+	replicationBuildDuration        time.Duration
+	deliveryDuration                time.Duration
+	vitalsReplicationDuration       time.Duration
 
 	maxQueueBefore int
 	maxQueueAfter  int
@@ -175,12 +179,14 @@ func (c *ServerCollector) Reset() {
 		c.tickDurations = c.tickDurations[:0]
 	}
 	c.ticks = 0
+	c.commandDuration = 0
 	c.simulationDuration = 0
 	c.dynamicReplicationDuration = 0
 	c.replicationFrameBuildDuration = 0
 	c.aoiDuration = 0
 	c.replicationBuildDuration = 0
 	c.deliveryDuration = 0
+	c.vitalsReplicationDuration = 0
 	c.maxQueueBefore = 0
 	c.maxQueueAfter = 0
 	c.commands = 0
@@ -218,12 +224,14 @@ func (c *ServerCollector) RecordStep(report worldruntime.StepReport) {
 	m := report.Metrics
 	c.ticks++
 	c.tickDurations = append(c.tickDurations, m.TotalDuration)
+	c.commandDuration += m.CommandDuration
 	c.simulationDuration += m.SimulationDuration
 	c.dynamicReplicationDuration += m.DynamicReplicationDuration
 	c.replicationFrameBuildDuration += m.ReplicationFrameBuildDuration
 	c.aoiDuration += m.AOIDuration
 	c.replicationBuildDuration += m.ReplicationBuildDuration
 	c.deliveryDuration += m.DeliveryDuration
+	c.vitalsReplicationDuration += m.VitalsReplicationDuration
 	if m.CommandQueueDepthBefore > c.maxQueueBefore {
 		c.maxQueueBefore = m.CommandQueueDepthBefore
 	}
@@ -331,12 +339,14 @@ func (c *ServerCollector) Finish(scenario Scenario, expectedClients int) ServerR
 		Ticks:              ticks,
 		TickDuration:       summarizeDurations(c.tickDurations),
 		Stages: StageSummary{
-			SimulationAverageMS:            durationMS(c.simulationDuration) / tickFloat,
-			DynamicReplicationAverageMS:    durationMS(c.dynamicReplicationDuration) / tickFloat,
-			ReplicationFrameBuildAverageMS: durationMS(c.replicationFrameBuildDuration) / tickFloat,
-			AOIAverageMS:                   durationMS(c.aoiDuration) / tickFloat,
-			ReplicationBuildAverageMS:      durationMS(c.replicationBuildDuration) / tickFloat,
-			DeliveryAverageMS:              durationMS(c.deliveryDuration) / tickFloat,
+			CommandAverageMS:                durationMS(c.commandDuration) / tickFloat,
+			SimulationAverageMS:             durationMS(c.simulationDuration) / tickFloat,
+			DynamicReplicationAverageMS:     durationMS(c.dynamicReplicationDuration) / tickFloat,
+			ReplicationFrameBuildAverageMS:  durationMS(c.replicationFrameBuildDuration) / tickFloat,
+			AOIAverageMS:                    durationMS(c.aoiDuration) / tickFloat,
+			ReplicationBuildAverageMS:       durationMS(c.replicationBuildDuration) / tickFloat,
+			DeliveryAverageMS:               durationMS(c.deliveryDuration) / tickFloat,
+			VitalsReplicationAverageMS:      durationMS(c.vitalsReplicationDuration) / tickFloat,
 		},
 		Queue: QueueSummary{
 			MaxDepthBefore:         c.maxQueueBefore,
