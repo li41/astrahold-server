@@ -2,6 +2,7 @@
 package replication
 
 import (
+	"container/heap"
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -53,6 +54,26 @@ type snapshotCandidate struct {
 	dirty      bool
 }
 
+// snapshotCandidateHeap 把「目前 top-K 中最差的 candidate」放在 root。
+// 新 candidate 只要優先序高於 root 就取代它，因此不必對整份 AOI candidates 做 full sort。
+type snapshotCandidateHeap []snapshotCandidate
+
+func (h snapshotCandidateHeap) Len() int { return len(h) }
+func (h snapshotCandidateHeap) Less(i, j int) bool {
+	return candidateHigherPriority(h[j], h[i])
+}
+func (h snapshotCandidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *snapshotCandidateHeap) Push(value any) {
+	*h = append(*h, value.(snapshotCandidate))
+}
+func (h *snapshotCandidateHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
+}
+
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
 	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity 查 map。
@@ -63,14 +84,15 @@ type viewState struct {
 	desiredIDs []world.EntityID
 	tracks     []entityTrack
 
-	departed                    []world.EntityID
-	lastSnapshot                map[world.EntityID]sentTransform // legacy Build compatibility only
-	lastDeliveredGeneration     map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
-	lastSentBuild               map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
-	candidates                  []snapshotCandidate
-	messages                    []Outbound
-	borrowedSnapshotTransforms  []protocol.EntityTransform
-	buildNumber                 uint64
+	departed                   []world.EntityID
+	lastSnapshot               map[world.EntityID]sentTransform // legacy Build compatibility only
+	lastDeliveredGeneration    map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
+	lastSentBuild              map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
+	candidates                 []snapshotCandidate
+	selectedCandidates         []snapshotCandidate
+	messages                   []Outbound
+	borrowedSnapshotTransforms []protocol.EntityTransform
+	buildNumber                uint64
 }
 
 type Service struct {
@@ -91,10 +113,10 @@ func NewService(policies ...Policy) *Service {
 
 func newViewState() *viewState {
 	return &viewState{
-		known:                       make(map[world.EntityID]struct{}),
-		lastSnapshot:                make(map[world.EntityID]sentTransform),
-		lastDeliveredGeneration:     make(map[world.EntityID]uint64),
-		lastSentBuild:               make(map[world.EntityID]uint64),
+		known:                   make(map[world.EntityID]struct{}),
+		lastSnapshot:            make(map[world.EntityID]sentTransform),
+		lastDeliveredGeneration: make(map[world.EntityID]uint64),
+		lastSentBuild:           make(map[world.EntityID]uint64),
 	}
 }
 
@@ -160,9 +182,9 @@ func (s *Service) Build(sessionID session.ID, selfID world.EntityID, lastProcess
 	}
 	frame := simulation.ReplicationFrame{
 		Tick:                 tick,
-		Entities:            ordered,
+		Entities:             ordered,
 		TransformGenerations: make([]uint64, len(ordered)),
-		IndexByID:           make(map[world.EntityID]int, len(ordered)),
+		IndexByID:            make(map[world.EntityID]int, len(ordered)),
 	}
 	visibleIndices := make([]int, len(ordered))
 	for i := range ordered {
@@ -305,32 +327,14 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	}
 
 	batch.Stats.SnapshotCandidates = len(state.candidates)
+	selectedCandidates := state.candidates
 	budgetExceeded := len(state.candidates) > s.policy.MaxTransformsPerBuild
 	if budgetExceeded {
-		sort.Slice(state.candidates, func(i, j int) bool {
-			a, b := state.candidates[i], state.candidates[j]
-			left := a.age * b.cadence
-			right := b.age * a.cadence
-			if left != right {
-				return left > right
-			}
-			if a.dirty != b.dirty {
-				return a.dirty
-			}
-			if a.tier != b.tier {
-				return a.tier < b.tier
-			}
-			if a.age != b.age {
-				return a.age > b.age
-			}
-			return a.entity.ID < b.entity.ID
-		})
+		state.selectedCandidates = selectSnapshotCandidates(state.selectedCandidates, state.candidates, s.policy.MaxTransformsPerBuild)
+		selectedCandidates = state.selectedCandidates
 	}
 
-	selectedCount := len(state.candidates)
-	if selectedCount > s.policy.MaxTransformsPerBuild {
-		selectedCount = s.policy.MaxTransformsPerBuild
-	}
+	selectedCount := len(selectedCandidates)
 	batch.Stats.SnapshotSelected = selectedCount
 	batch.Stats.SnapshotDeferred = len(state.candidates) - selectedCount
 
@@ -343,7 +347,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		transforms = make([]protocol.EntityTransform, selectedCount)
 	}
 	for i := 0; i < selectedCount; i++ {
-		candidate := state.candidates[i]
+		candidate := selectedCandidates[i]
 		e := candidate.entity
 		transforms[i] = protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 		if candidate.trackIndex >= 0 && candidate.trackIndex < len(state.tracks) {
@@ -404,6 +408,47 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 
 	state.messages = batch.Messages
 	return batch
+}
+
+// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，
+// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
+func selectSnapshotCandidates(buffer []snapshotCandidate, candidates []snapshotCandidate, budget int) []snapshotCandidate {
+	if budget <= 0 || len(candidates) <= budget {
+		return candidates
+	}
+	if cap(buffer) < budget {
+		buffer = make([]snapshotCandidate, budget)
+	} else {
+		buffer = buffer[:budget]
+	}
+	copy(buffer, candidates[:budget])
+	selected := snapshotCandidateHeap(buffer)
+	heap.Init(&selected)
+	for _, candidate := range candidates[budget:] {
+		if candidateHigherPriority(candidate, selected[0]) {
+			selected[0] = candidate
+			heap.Fix(&selected, 0)
+		}
+	}
+	return []snapshotCandidate(selected)
+}
+
+func candidateHigherPriority(a, b snapshotCandidate) bool {
+	left := a.age * b.cadence
+	right := b.age * a.cadence
+	if left != right {
+		return left > right
+	}
+	if a.dirty != b.dirty {
+		return a.dirty
+	}
+	if a.tier != b.tier {
+		return a.tier < b.tier
+	}
+	if a.age != b.age {
+		return a.age > b.age
+	}
+	return a.entity.ID < b.entity.ID
 }
 
 // rebuildDesiredTracks 只在 AOI membership 真正改變時執行。
