@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -29,6 +28,8 @@ type clientConnection struct {
 	remote     *net.UDPAddr
 	bindNotify chan struct{}
 }
+
+var _ session.ImmediateRealtimeConnection = (*clientConnection)(nil)
 
 func newClientConnection(tcp net.Conn, udp *net.UDPConn, token Token, codec transport.PayloadCodec, reliableCapacity int, metrics *networkCounters) *clientConnection {
 	if reliableCapacity <= 0 {
@@ -65,11 +66,16 @@ func (c *clientConnection) TrySend(envelope protocol.Envelope) error {
 			return session.ErrBackpressure
 		}
 	case protocol.DeliveryRealtimeSequenced:
-		return c.realtime.Put(envelope)
+		// PutEncoded 在返回前即把 realtime message materialize 到 connection-owned packet slot。
+		// 因此 caller 可安全重用 snapshot backing storage；writer 之後只讀 mailbox-owned bytes。
+		return c.realtime.PutEncoded(c.token, envelope, c.codec)
 	default:
 		return session.ErrInvalidSession
 	}
 }
+
+// RealtimeConsumedBeforeReturn 宣告 TrySend(Realtime) 的同步 ownership capability。
+func (*clientConnection) RealtimeConsumedBeforeReturn() {}
 
 func (c *clientConnection) Close() error {
 	c.closeOnce.Do(func() {
@@ -101,12 +107,9 @@ func (c *clientConnection) bindRealtime(addr *net.UDPAddr) error {
 func (c *clientConnection) realtimeAddr() *net.UDPAddr {
 	c.remoteMu.RLock()
 	defer c.remoteMu.RUnlock()
-	if c.remote == nil {
-		return nil
-	}
-	copyAddr := *c.remote
-	copyAddr.IP = append(net.IP(nil), c.remote.IP...)
-	return &copyAddr
+	// bindRealtime 永遠建立新的 immutable address object，不會原地修改既有 c.remote。
+	// 因此 writer 可在 lock 外安全持有這個 pointer，且不需要每 datagram 複製 IP slice。
+	return c.remote
 }
 
 func (c *clientConnection) runReliableWriter() error {
@@ -123,7 +126,8 @@ func (c *clientConnection) runReliableWriter() error {
 }
 
 func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
-	// WriteToUDP 在回傳後不再持有 packet bytes，因此每個 writer 可以安全重用自己的 MTU-sized buffer。
+	// NextPacket 只在 lock 內把 mailbox-owned packet 複製進此 writer-owned buffer；
+	// WriteToUDP 返回後即可安全覆寫。
 	packetBuffer := make([]byte, 0, MaxDatagramSize)
 	for {
 		addr := c.realtimeAddr()
@@ -138,21 +142,12 @@ func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
 			}
 		}
 
-		envelope, ok := c.realtime.Next(c.done)
+		packet, messageType, encodeDuration, ok := c.realtime.NextPacket(packetBuffer[:0], c.done)
 		if !ok {
 			return nil
 		}
-		started := time.Now()
-		packet, err := AppendEncodeDatagram(packetBuffer[:0], c.token, envelope, c.codec)
-		encodeDuration := time.Since(started)
-		if err != nil {
-			if onDrop != nil {
-				onDrop(err)
-			}
-			continue
-		}
 		packetBuffer = packet[:0]
-		c.metrics.recordRealtime(envelope.Message.Type(), len(packet), encodeDuration)
+		c.metrics.recordRealtime(messageType, len(packet), encodeDuration)
 		if _, err := c.udp.WriteToUDP(packet, addr); err != nil {
 			if onDrop != nil {
 				onDrop(err)
