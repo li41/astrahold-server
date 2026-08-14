@@ -47,6 +47,7 @@ jobs:
             -combat-actions config/combat-actions-s3e9.json \
             -s3e9-mixed-gameplay-duration 40s \
             -s3e9-mixed-gameplay-wave-interval 100ms \
+            -s3e9-mixed-gameplay-movement-interval 50ms \
             -s3e9-mixed-gameplay-objective-interval 1s \
             -s3e9-mixed-gameplay-action soak-attack \
             -duration 5s \
@@ -62,7 +63,7 @@ jobs:
           sleep 1
 
           set +e
-          ASTRAHOLD_S3E9_MIXED_MOVEMENT=1 /tmp/astrahold-loadbot \
+          /tmp/astrahold-loadbot \
             -tcp 127.0.0.1:21777 \
             -clients 500 \
             -scenario teleport-churn \
@@ -85,7 +86,8 @@ jobs:
           test "$BOT_STATUS" -eq 0
           test "$SERVER_STATUS" -eq 0
 
-          # 基礎 transport / decode correctness；stationary observer 與 movers 共用正式 bot path。
+          # 基礎 transport / decode correctness。Bots 在 bootstrap/initial convergence 保持 teleport-churn 原本的零方向 input；
+          # active phase 的 96 movers 由 loadserver 走正式 Runtime.EnqueueMove -> ClientMoveInput -> authoritative movement path。
           jq -e '.ready_clients == 500 and .failed_connections == 0 and .decode_errors == 0 and .network_errors == 0 and .incomplete_snapshot_resets == 0 and .completed_snapshots > 0 and .moves_sent > 0' artifacts/mixed-bots.json >/dev/null
           # Initial dynamic state 之外必須看到 objective toggle 的正式 WorldDynamicState delivery。
           jq -e '.dynamic_states > 500' artifacts/mixed-bots.json >/dev/null
@@ -111,10 +113,10 @@ jobs:
           jq -e '.round[0].total_alloc_bytes > 0 and .round[0].mallocs > 0 and .round[0].heap_alloc_bytes > 0 and .round[0].heap_sys_bytes > 0' artifacts/mixed-server-churn-soak.json >/dev/null
 
           # S3-E.9 long phase 的 p99 / fairness age / memory growth此時只輸出 baseline；不因新 workload 先放寬 50ms gate。
-          jq '{tick_p99_ms:.round[0].tick_p99_ms, tick_max_ms:.round[0].tick_max_ms, trigger_to_converged_seconds:.round[0].trigger_to_converged_seconds, heap_alloc_bytes:.round[0].heap_alloc_bytes, heap_sys_bytes:.round[0].heap_sys_bytes, total_alloc_bytes:.round[0].total_alloc_bytes, mallocs:.round[0].mallocs, num_gc:.round[0].num_gc}' artifacts/mixed-server-churn-soak.json
+          jq '{tick_p99_ms:.round[0].tick_p99_ms, tick_max_ms:.round[0].tick_max_ms, trigger_to_converged_seconds:.round[0].trigger_to_converged_seconds, spawn_selected:.round[0].spawn_selected, despawn_selected:.round[0].despawn_selected, heap_alloc_bytes:.round[0].heap_alloc_bytes, heap_sys_bytes:.round[0].heap_sys_bytes, total_alloc_bytes:.round[0].total_alloc_bytes, mallocs:.round[0].mallocs, num_gc:.round[0].num_gc}' artifacts/mixed-server-churn-soak.json
           jq '.dirty_vitals_fairness' artifacts/mixed-server-churn-round-01-slow-ticks.json
 
-          # Long phase drain 後仍要求既有 steady-state 50ms hard gate 與零錯誤。
+          # Long phase drain 後仍要求既有 steady-state 50ms hard gate與零錯誤。
           jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50' artifacts/mixed-server.json >/dev/null
       - name: Upload S3-E.9 mixed gameplay baseline
         if: always()
