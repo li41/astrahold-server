@@ -87,6 +87,7 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 	r.replication.Remove(id)
 	r.removeSessionVitals(id)
 	r.removeEntityVitals(s.EntityID)
+	r.clearReviveProtection(s.EntityID)
 	if r.respawnPolicy != nil {
 		r.respawnPolicy.Remove(s.EntityID)
 	}
