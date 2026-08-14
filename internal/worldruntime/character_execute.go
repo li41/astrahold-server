@@ -12,16 +12,17 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 	targetID, err := r.validateEntityTarget(actor, prepared)
 	if err != nil {
 		if errors.Is(err, ErrDynamicWorldUnavailable) {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sessionID,Err:err})
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sessionID,Err:err})
+			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sessionID, Err: err})
 		}
 		return false
 	}
 	if _, err := r.characters.ReduceHP(targetID, prepared.Damage.Amount); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sessionID,Err:err})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		return false
 	}
 	r.markEntityVitalsDirty(targetID)
+	report.Metrics.EntityActionsApplied++
 	return true
 }
