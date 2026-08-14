@@ -94,6 +94,9 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: id, Err: err})
 		return
 	}
+	// Capture authoritative trusted-character state before any leave cleanup mutates or
+	// removes character/world truth. Persistence itself runs outside the world owner.
+	r.enqueueCharacterStateSave(id, s.EntityID, report)
 	r.replication.Remove(id)
 	r.removeSessionVitals(id)
 	r.removeEntityVitals(s.EntityID)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
@@ -89,6 +90,8 @@ type StepMetrics struct {
 	CommandQueueDepthAfter                    int
 	CommandsDrained                          int
 	EntityActionsApplied                     int
+	CharacterStateSaveIntentsEnqueued         int
+	CharacterStateSaveIntentFailures          int
 	DeathOutcomesRecorded                    int
 	DeathOutcomeEventsEnqueued                int
 	DeathOutcomeEventEnqueueFailures          int
@@ -171,6 +174,8 @@ type Runtime struct {
 	world                     *simulation.World
 	sessions                  *session.Registry
 	characterIdentities       *characterIdentityRegistry
+	characterStateOutbox      *characterstate.Outbox
+	characterStateWorld       characterstate.WorldRef
 	replication               *replication.Service
 	replicationFrameBuilder   *simulation.ReplicationFrameBuilder
 	replicationVisibleScratch []int

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
@@ -33,18 +34,20 @@ const (
 
 func main() {
 	var (
-		tcpAddress                   = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
-		udpAddress                   = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
-		tickRate                     = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
-		snapshotRate                 = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath                    = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
-		combatPath                   = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
-		respawnPolicyPath            = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
-		deathPenaltyPath             = flag.String("death-penalty", "config/death-penalty.json", "Server death penalty policy JSON path")
-		deathOutcomeOutboxCapacity   = flag.Int("death-outcome-outbox-capacity", 4096, "Process-local death outcome outbox capacity")
-		deathOutcomeJournalPath      = flag.String("death-outcome-journal", "data/death-outcomes.journal", "Durable append-only death outcome journal path")
-		deathOutcomeCheckpointPath   = flag.String("death-outcome-checkpoint", "data/death-outcomes.checkpoint.json", "Durable death outcome consumer checkpoint path")
-		postReviveProtectionSeconds = flag.Float64("post-revive-protection-seconds", 3.0, "Server-side damage protection after respawn/resurrection; 0 disables")
+		tcpAddress                     = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
+		udpAddress                     = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
+		tickRate                       = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
+		snapshotRate                   = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath                      = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
+		combatPath                     = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		respawnPolicyPath              = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
+		deathPenaltyPath               = flag.String("death-penalty", "config/death-penalty.json", "Server death penalty policy JSON path")
+		deathOutcomeOutboxCapacity     = flag.Int("death-outcome-outbox-capacity", 4096, "Process-local death outcome outbox capacity")
+		deathOutcomeJournalPath        = flag.String("death-outcome-journal", "data/death-outcomes.journal", "Durable append-only death outcome journal path")
+		deathOutcomeCheckpointPath     = flag.String("death-outcome-checkpoint", "data/death-outcomes.checkpoint.json", "Durable death outcome consumer checkpoint path")
+		characterStateOutboxCapacity   = flag.Int("character-state-outbox-capacity", 4096, "Process-local trusted character state save outbox capacity")
+		characterStateDir              = flag.String("character-state-dir", "data/character-state", "Durable trusted character state directory")
+		postReviveProtectionSeconds   = flag.Float64("post-revive-protection-seconds", 3.0, "Server-side damage protection after respawn/resurrection; 0 disables")
 	)
 	flag.Parse()
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
@@ -77,6 +80,14 @@ func main() {
 	}
 	if deathJournal.RepairedTail() {
 		log.Printf("death outcome journal repaired incomplete crash tail: path=%s last_record_id=%d", deathJournal.Path(), deathJournal.LastRecordID())
+	}
+	characterStateOutbox, err := characterstate.NewOutbox(*characterStateOutboxCapacity)
+	if err != nil {
+		log.Fatalf("build character state outbox: %v", err)
+	}
+	characterStateStore, err := characterstate.Open(*characterStateDir)
+	if err != nil {
+		log.Fatalf("open character state store %q: %v", *characterStateDir, err)
 	}
 
 	loadedWorld, err := gameplayworld.LoadFile(*worldPath)
@@ -123,6 +134,9 @@ func main() {
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
 	runtimeConfig.PostReviveProtectionTicks = protectionTicks
+	characterStateWorld := characterstate.WorldRef{
+		WorldID: loadedWorld.Definition.WorldID, Revision: loadedWorld.Definition.Revision, GameplaySHA256: loadedWorld.SHA256,
+	}
 	runtime := worldruntime.New(
 		sim,
 		runtimeConfig,
@@ -132,6 +146,7 @@ func main() {
 		worldruntime.WithRespawnPolicy(respawnService),
 		worldruntime.WithDeathPenalty(deathPenaltyService),
 		worldruntime.WithDeathOutcomeOutbox(deathOutbox),
+		worldruntime.WithCharacterStateOutbox(characterStateOutbox, characterStateWorld),
 	)
 	loop, err := worldruntime.NewLoop(runtime, *tickRate)
 	if err != nil {
@@ -167,8 +182,20 @@ func main() {
 		journalDone <- err
 	}()
 
+	characterStateCtx, stopCharacterState := context.WithCancel(context.Background())
+	characterStateDone := make(chan error, 1)
+	go func() {
+		err := runCharacterStateStore(characterStateCtx, characterStateOutbox, characterStateStore)
+		if err != nil {
+			log.Printf("character state persistence worker stopped with error: %v", err)
+			stop()
+		}
+		characterStateDone <- err
+	}()
+
 	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("death outcome durability: journal=%s checkpoint=%s append_fsync=true checkpoint_atomic_rename=true", deathJournal.Path(), deathCheckpointStore.Path())
+	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true", characterStateStore.Path(), characterStateOutbox.Capacity())
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	if err := server.Serve(ctx); err != nil {
 		stop()
@@ -178,8 +205,12 @@ func main() {
 		log.Printf("world loop stopped with error: %v", err)
 	}
 
-	// Stop the journal worker only after the world loop is done producing new outcomes.
-	// The worker then fsyncs any remaining outbox events and checkpoints all journal records before exit.
+	// Stop persistence workers only after the world loop is done producing new events/intents.
+	// Each worker drains its process-local outbox before exit.
+	stopCharacterState()
+	if err := <-characterStateDone; err != nil {
+		log.Printf("character state persistence shutdown error: %v", err)
+	}
 	stopJournal()
 	if err := <-journalDone; err != nil {
 		log.Printf("death outcome journal shutdown error: %v", err)
