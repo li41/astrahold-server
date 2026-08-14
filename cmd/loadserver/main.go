@@ -67,20 +67,27 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM); defer stop()
 	collector := loadlab.NewServerCollector(*tickRate, *snapshotRate)
-	loopDone := make(chan error,1); go func(){ err:=loop.RunObserved(ctx,collector.RecordStep); if err!=nil{stop()}; loopDone<-err }()
+	slowTicks := newSlowTickCollector(defaultSlowTickLimit)
+	loopDone := make(chan error,1); go func(){
+		err:=loop.RunObserved(ctx,func(report worldruntime.StepReport){ collector.RecordStep(report); slowTicks.Record(report) })
+		if err!=nil{stop()}
+		loopDone<-err
+	}()
 	serveDone := make(chan error,1); go func(){ err:=server.Serve(ctx); if err!=nil{stop()}; serveDone<-err }()
 	go collectNetworkErrors(ctx,server.Errors(),collector)
 
 	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 combat_revision=%s scenario=%s clients=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, loadedCombat.Definition.Revision, scenario, *clients, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	if err := waitForClients(ctx,server,*clients,*readyTimeout); err != nil { stop(); <-serveDone; <-loopDone; log.Fatal(err) }
 	if err := profiler.Write("before"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile before measurement: %v", err) }
-	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset(); server.ResetNetworkMetrics()
+	log.Printf("all clients ready; starting %s measurement window", duration.String()); collector.Reset(); slowTicks.Reset(); server.ResetNetworkMetrics()
 
 	measurementTimer:=time.NewTimer(*duration); completed:=false
 	select { case <-measurementTimer.C: completed=true; case <-ctx.Done(): measurementTimer.Stop() }
 	report:=withNetworkMetrics(collector.Finish(scenario,*clients), server.NetworkMetrics())
+	slowReport:=slowTicks.Finish()
 	if err := profiler.Write("after"); err != nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write allocation profile after measurement: %v", err) }
 	if err:=loadlab.WriteReport(*reportPath,report); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write report: %v",err) }
+	if err:=writeSlowTickReport(slowTickReportPath(*reportPath),slowReport); err!=nil { stop(); <-serveDone; <-loopDone; log.Fatalf("write slow tick report: %v",err) }
 	log.Printf("load report written: %s ticks=%d p99=%.3fms max_queue=%d datagram_too_large=%d realtime_mbps=%.3f encode_avg_us=%.3f",*reportPath,report.Ticks,report.TickDuration.P99MS,report.Queue.MaxDepthBefore,report.Errors.DatagramTooLarge,report.Network.RealtimeMbitsPerSec,report.Network.EncodeAverageUS)
 
 	if completed && *shutdownGrace>0 { timer:=time.NewTimer(*shutdownGrace); select { case <-timer.C: case <-ctx.Done(): timer.Stop() } }
