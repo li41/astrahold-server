@@ -113,3 +113,11 @@ func (r *Runtime) applyTeleport(name string, c teleportCommand, report *StepRepo
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,Err:err})
 	}
 }
+
+func (r *Runtime) applyTeleportBatch(name string, c teleportBatchCommand, report *StepReport) {
+	for _, request := range c.requests {
+		if err := r.world.Teleport(request.EntityID, request.Position); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,Err:err})
+		}
+	}
+}
