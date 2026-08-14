@@ -42,10 +42,11 @@ func TestEntityVitalsBackpressureRetriesWithoutDeliveryError(t *testing.T) {
 	if err := rt.characters.Register(1); err != nil { t.Fatal(err) }
 	rt.ensureEntityVitalsRevision(1)
 
-	// S3-E.1 起 Build 只表示「想送 Spawn」，只有 Reliable TrySend 成功後才是 lifecycle knowledge。
-	// 此測試專注 Vitals retry，因此直接確認 Spawn 已成功進 outbound queue。
+	// S3-E.2 起 initial vitals 只由「Reliable Spawn 已成功」這個 lifecycle transition 排入 pending。
+	// 此測試直接模擬該 transition，不經完整 Step delivery loop。
 	rt.replication.Build(s.ID, 1, 0, 1, []world.EntityState{entity})
 	rt.replication.ConfirmSpawn(s.ID, entity.ID)
+	rt.queueEntityVitalsForSession(s.ID, entity.ID)
 
 	first := StepReport{}
 	rt.replicateEntityVitals(1, &first)
