@@ -258,11 +258,10 @@ func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollec
 
 func sendMove(udp *net.UDPConn, token tcpudp.Token, codec transport.PayloadCodec, scenario Scenario, entityID world.EntityID, sequence uint32, elapsed time.Duration, collector *botCollector) error {
 	dx, dz := MovementDirection(scenario, entityID, elapsed)
-	// S3-E.9 mixed movement 以正式 WorldDynamicState 作語意啟動訊號：bootstrap 階段
-	// dynamicStates <= ready，所以 teleport-churn movers 維持零方向；第一個 objective update
-	// 透過 ReliableOrdered fan-out 後 dynamicStates > ready，才開始原本的 deterministic movement。
-	// 這避免 fixed warm-up sleep，也不讓 initial convergence 與 active AOI churn 混在一起。
-	if scenario == ScenarioTeleportChurn && s3e9MixedMovementEnabled && collector.dynamicStates.Load() <= collector.ready.Load() {
+	// S3-E.9 mixed movement 只在正式 objective Dynamic State active window 內送非零方向。
+	// bootstrap 完成前不啟動；最後一個預期 objective revision 全部 fan-out 後立即回到零方向，
+	// 讓既有 semantic convergence tracker 接手判斷 drain，而不是依賴固定 stop sleep。
+	if scenario == ScenarioTeleportChurn && s3e9MixedMovementEnabled && !s3e9MixedMovementWindowOpen(collector.dynamicStates.Load(), collector.ready.Load()) {
 		dx, dz = 0, 0
 	}
 	envelope := protocol.Envelope{
