@@ -123,6 +123,8 @@ func (c *clientConnection) runReliableWriter() error {
 }
 
 func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
+	// WriteToUDP 在回傳後不再持有 packet bytes，因此每個 writer 可以安全重用自己的 MTU-sized buffer。
+	packetBuffer := make([]byte, 0, MaxDatagramSize)
 	for {
 		addr := c.realtimeAddr()
 		if addr == nil {
@@ -141,7 +143,7 @@ func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
 			return nil
 		}
 		started := time.Now()
-		packet, err := EncodeDatagram(c.token, envelope, c.codec)
+		packet, err := AppendEncodeDatagram(packetBuffer[:0], c.token, envelope, c.codec)
 		encodeDuration := time.Since(started)
 		if err != nil {
 			if onDrop != nil {
@@ -149,6 +151,7 @@ func (c *clientConnection) runRealtimeWriter(onDrop func(error)) error {
 			}
 			continue
 		}
+		packetBuffer = packet[:0]
 		c.metrics.recordRealtime(envelope.Message.Type(), len(packet), encodeDuration)
 		if _, err := c.udp.WriteToUDP(packet, addr); err != nil {
 			if onDrop != nil {
