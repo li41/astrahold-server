@@ -7,6 +7,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -79,4 +80,16 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		}
 	}
 	return nil
+}
+
+func (r *Runtime) validateCharacterRestore(s *session.Session, restore CharacterRestore) error {
+	if s == nil {
+		return session.ErrInvalidSession
+	}
+	currentWorld := protocol.WorldIdentity{
+		WorldID:        r.characterStateWorld.WorldID,
+		Revision:       r.characterStateWorld.Revision,
+		GameplaySHA256: r.characterStateWorld.GameplaySHA256,
+	}
+	return ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld)
 }
