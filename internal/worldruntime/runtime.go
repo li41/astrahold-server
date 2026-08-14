@@ -52,8 +52,8 @@ func DefaultConfig() Config {
 		MaxSpawnsPerSessionBuild:        32,
 		MaxDespawnsPerSessionBuild:      64,
 		MaxLifecyclePerSessionBuild:     32,
-		MaxLifecycleMessagesPerSnapshot: 16000,
-		MaxInitialVitalsPerTick:         8000,
+		MaxLifecycleMessagesPerSnapshot: 8000,
+		MaxInitialVitalsPerTick:         4000,
 	}
 }
 
@@ -75,46 +75,46 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore          int
-	CommandQueueDepthAfter           int
-	CommandsDrained                  int
-	SessionsReplicated               int
-	AOIQueries                       int
-	AOICandidates                    int
-	AOIVisible                       int
-	AOISharedCandidateBuilds         int
-	AOISharedCandidateReuses         int
-	AOIPhysicalCandidateScans        int
-	OutboundMessages                 int
-	SnapshotCandidates               int
-	SnapshotTransforms               int
-	SnapshotDeferred                 int
-	SnapshotForcedRefreshes          int
-	SnapshotNearTransforms           int
-	SnapshotMidTransforms            int
-	SnapshotFarTransforms            int
-	SpawnCandidates                  int
-	SpawnSelected                    int
-	SpawnDeferred                    int
-	DespawnCandidates                int
-	DespawnSelected                  int
-	DespawnDeferred                  int
-	LifecycleBackpressureStops       int
-	LifecycleGlobalBudget            int
-	LifecycleGlobalSelected          int
-	LifecycleGlobalBudgetExhausted   bool
-	InitialVitalsGlobalBudget        int
-	InitialVitalsGlobalSelected      int
+	CommandQueueDepthBefore            int
+	CommandQueueDepthAfter             int
+	CommandsDrained                    int
+	SessionsReplicated                 int
+	AOIQueries                         int
+	AOICandidates                      int
+	AOIVisible                         int
+	AOISharedCandidateBuilds           int
+	AOISharedCandidateReuses           int
+	AOIPhysicalCandidateScans          int
+	OutboundMessages                   int
+	SnapshotCandidates                 int
+	SnapshotTransforms                 int
+	SnapshotDeferred                   int
+	SnapshotForcedRefreshes            int
+	SnapshotNearTransforms             int
+	SnapshotMidTransforms              int
+	SnapshotFarTransforms              int
+	SpawnCandidates                    int
+	SpawnSelected                      int
+	SpawnDeferred                      int
+	DespawnCandidates                  int
+	DespawnSelected                    int
+	DespawnDeferred                    int
+	LifecycleBackpressureStops         int
+	LifecycleGlobalBudget              int
+	LifecycleGlobalSelected            int
+	LifecycleGlobalBudgetExhausted     bool
+	InitialVitalsGlobalBudget          int
+	InitialVitalsGlobalSelected        int
 	InitialVitalsGlobalBudgetExhausted bool
-	CommandDuration                  time.Duration
-	SimulationDuration               time.Duration
-	DynamicReplicationDuration       time.Duration
-	ReplicationFrameBuildDuration    time.Duration
-	AOIDuration                      time.Duration
-	ReplicationBuildDuration         time.Duration
-	DeliveryDuration                 time.Duration
-	VitalsReplicationDuration        time.Duration
-	TotalDuration                    time.Duration
+	CommandDuration                    time.Duration
+	SimulationDuration                 time.Duration
+	DynamicReplicationDuration         time.Duration
+	ReplicationFrameBuildDuration      time.Duration
+	AOIDuration                        time.Duration
+	ReplicationBuildDuration           time.Duration
+	DeliveryDuration                   time.Duration
+	VitalsReplicationDuration          time.Duration
+	TotalDuration                      time.Duration
 }
 
 type StepReport struct {
@@ -174,10 +174,10 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config.MaxLifecyclePerSessionBuild = 32
 	}
 	if config.MaxLifecycleMessagesPerSnapshot <= 0 {
-		config.MaxLifecycleMessagesPerSnapshot = 16000
+		config.MaxLifecycleMessagesPerSnapshot = 8000
 	}
 	if config.MaxInitialVitalsPerTick <= 0 {
-		config.MaxInitialVitalsPerTick = 8000
+		config.MaxInitialVitalsPerTick = 4000
 	}
 	characters, err := character.NewService(config.CharacterMaxHP)
 	if err != nil {
@@ -222,13 +222,10 @@ func (r *Runtime) EnqueueMove(id session.ID, sequence uint32, input protocol.Cli
 	return r.queue.tryPush(moveInputCommand{sessionID: id, sequence: sequence, input: input})
 }
 
-// EnqueueTeleport 將單一 server-authoritative teleport 排入 world owner command queue。
 func (r *Runtime) EnqueueTeleport(entityID world.EntityID, position world.Position) error {
 	return r.queue.tryPush(teleportCommand{entityID: entityID, position: position})
 }
 
-// EnqueueTeleportBatch 將整批 transition 視為一個 owner command。
-// caller 的 slice 會先複製，避免跨 goroutine mutation；整批會在同一 world tick、simulation 前套用。
 func (r *Runtime) EnqueueTeleportBatch(requests []TeleportRequest) error {
 	if len(requests) == 0 {
 		return nil
