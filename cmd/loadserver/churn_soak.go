@@ -21,6 +21,7 @@ type churnSoakRoundSummary struct {
 	PendingSpawns               int     `json:"pending_spawns"`
 	PendingDespawns             int     `json:"pending_despawns"`
 	PendingVitalsEntities       int     `json:"pending_vitals_entities"`
+	DirtyVitalsEntities         int     `json:"dirty_vitals_entities"`
 	PendingDynamicSessions      int     `json:"pending_dynamic_sessions"`
 	ReliableQueued              int     `json:"reliable_queued"`
 	ReliableInFlight            int     `json:"reliable_in_flight"`
@@ -84,12 +85,10 @@ func runTeleportChurnRounds(
 	ctx context.Context,
 	rounds int,
 	swapRequests, restoreRequests []worldruntime.TeleportRequest,
-	combatPairs []loadlab.EntityCombatPair,
 	worldRuntime *worldruntime.Runtime,
 	collector *loadlab.ServerCollector,
 	slowTicks *slowTickCollector,
 	convergence *convergenceTracker,
-	combatTracker *churnCombatTracker,
 	server *tcpudp.Server,
 	scenario loadlab.Scenario,
 	clients int,
@@ -98,6 +97,10 @@ func runTeleportChurnRounds(
 ) (convergenceMetadata, error) {
 	if rounds <= 0 || len(swapRequests) == 0 || len(restoreRequests) != len(swapRequests) {
 		return convergenceMetadata{}, fmt.Errorf("loadlab: invalid repeated churn plan rounds=%d swap=%d restore=%d", rounds, len(swapRequests), len(restoreRequests))
+	}
+	combatPairs, err := loadlab.TeleportChurnCombatPairs(clients, *churnCombatPairsPerGroup)
+	if err != nil {
+		return convergenceMetadata{}, err
 	}
 
 	reports := make([]phasedServerReport, 0, rounds)
@@ -114,24 +117,20 @@ func runTeleportChurnRounds(
 		collector.Reset()
 		slowTicks.Reset()
 		server.ResetNetworkMetrics()
-		combatTracker.Reset()
 		convergence.Start()
 		started := time.Now()
 		if err := worldRuntime.EnqueueTeleportBatch(requests); err != nil {
 			convergence.Stop()
-			combatTracker.Finish()
 			return convergenceMetadata{}, fmt.Errorf("enqueue teleport churn round %d: %w", round, err)
 		}
 		if err := enqueueChurnCombatActions(worldRuntime, round, combatPairs); err != nil {
 			convergence.Stop()
-			combatTracker.Finish()
 			return convergenceMetadata{}, err
 		}
 		transition := fmt.Sprintf("teleport-churn-%02d-%s", round, direction)
 		log.Printf("teleport churn round %d/%d triggered: direction=%s moved=%d combat_actions=%d timeout=%s stable=%s", round, rounds, direction, len(requests), len(combatPairs), timeout.String(), stableFor.String())
 		meta, err := waitForTransitionConvergence(ctx, convergence, server, clients, timeout, stableFor, started, transition)
 		convergence.Stop()
-		combatStats := combatTracker.Finish()
 		if err != nil {
 			return convergenceMetadata{}, err
 		}
@@ -139,6 +138,7 @@ func runTeleportChurnRounds(
 
 		report := withPhaseReport(withNetworkMetrics(collector.Finish(scenario, clients), server.NetworkMetrics()), fmt.Sprintf("churn-round-%02d", round), meta)
 		slowReport := slowTicks.Finish()
+		combatStats := slowReport.Combat
 		roundPath := churnRoundReportPath(reportPath, round)
 		if err := loadlab.WriteReport(roundPath, report); err != nil {
 			return convergenceMetadata{}, fmt.Errorf("write churn round %d report: %w", round, err)
@@ -196,6 +196,7 @@ func buildChurnSoakSummary(scenario loadlab.Scenario, clients int, reports []pha
 			PendingSpawns:               world.PendingSpawns,
 			PendingDespawns:             world.PendingDespawns,
 			PendingVitalsEntities:       world.PendingVitalsEntities,
+			DirtyVitalsEntities:         world.DirtyVitalsEntities,
 			PendingDynamicSessions:      world.PendingDynamicSessions,
 			ReliableQueued:              report.Convergence.Reliable.Queued,
 			ReliableInFlight:            report.Convergence.Reliable.InFlight,
