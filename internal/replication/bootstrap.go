@@ -9,15 +9,11 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// BuildFrameLifecycleFirst 在 view 尚有 unknown desired entity 時只做 bounded Reliable lifecycle
-// 與 self correction；Spawn 自身已帶 authoritative transform，因此 bootstrap 尚未完成前不重複支付
-// remote snapshot candidate scheduling。當所有 desired entity 都 known 後，自動回到完整 BuildFrame path。
 func (s *Service) BuildFrameLifecycleFirst(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
 	state := s.ensureView(sessionID)
 	return s.buildFrameLifecycleFirst(state, selfID, lastProcessedInput, frame, visibleIndices, false, limits)
 }
 
-// BuildFrameBorrowedLifecycleFirst 是 ImmediateRealtimeConnection 的 lifecycle-first production path。
 func (s *Service) BuildFrameBorrowedLifecycleFirst(sessionID session.ID, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, limits LifecycleLimits) Batch {
 	state := s.ensureView(sessionID)
 	return s.buildFrameLifecycleFirst(state, selfID, lastProcessedInput, frame, visibleIndices, true, limits)
@@ -26,6 +22,11 @@ func (s *Service) BuildFrameBorrowedLifecycleFirst(sessionID session.ID, selfID 
 func (s *Service) buildFrameLifecycleFirst(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, borrowSnapshotStorage bool, limits LifecycleLimits) Batch {
 	if !sameDesiredIDs(state.desiredIDs, frame, visibleIndices) {
 		rebuildDesiredTracks(state, frame, visibleIndices)
+	}
+	// Global budget 已由前面的 Session 用完時仍更新 desired dense state，
+	// 但本 Session 不再掃 known / sort departed / materialize lifecycle。
+	if limits.MaxMessages < 0 {
+		return s.buildDeferredLifecycleFrame(state, selfID, lastProcessedInput, frame)
 	}
 	firstUnknown := firstUnknownDesired(state)
 	if firstUnknown < 0 {
@@ -43,13 +44,35 @@ func firstUnknownDesired(state *viewState) int {
 	return -1
 }
 
+func (s *Service) buildDeferredLifecycleFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame) Batch {
+	state.buildNumber++
+	state.messages = state.messages[:0]
+	batch := Batch{Messages: state.messages}
+	if firstUnknownDesired(state) >= 0 {
+		batch.Stats.SpawnDeferred = 1
+	}
+	if self, _, ok := frame.Entity(selfID); ok {
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryRealtimeSequenced,
+			Message: protocol.PositionCorrection{
+				Tick:                       frame.Tick,
+				EntityID:                   self.ID,
+				Position:                   self.Transform.Position,
+				Yaw:                        self.Transform.Yaw,
+				LastProcessedInputSequence: lastProcessedInput,
+			},
+		})
+	}
+	state.messages = batch.Messages
+	return batch
+}
+
 func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.EntityID, lastProcessedInput uint32, frame *simulation.ReplicationFrame, visibleIndices []int, firstUnknown int, limits LifecycleLimits) Batch {
 	state.buildNumber++
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 
 	// AOI churn 同時產生 departed + unknown 時先清掉 stale known lifecycle。
-	// 這可避免 combined/global budget 下舊 Entity 長時間留在 Client；mass join 沒有 departed，因此不改 S3-E.6 bootstrap throughput。
 	state.departed = state.departed[:0]
 	for id := range state.known {
 		if !containsDesiredID(state.desiredIDs, id) {
@@ -71,8 +94,6 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 		batch.Stats.DespawnSelected++
 	}
 
-	// 從最早未完成的 desired track 開始；一旦 per-session 或 combined quantum 用完就立即停止。
-	// Deferred work 不應為了完整統計而先掃過一次，下一個 build 會從新的 firstUnknown 繼續。
 	for i := firstUnknown; i < len(visibleIndices) && i < len(state.tracks); i++ {
 		index := visibleIndices[i]
 		if index < 0 || index >= len(frame.Entities) {
@@ -85,8 +106,6 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 		batch.Stats.SpawnCandidates++
 		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
 		if !limits.allowMessage(totalLifecycle) || !limits.allowSpawn(batch.Stats.SpawnSelected) {
-			// lifecycle-first path 的 Deferred 只表示「本 build 尚有更多工作」，
-			// 不為了取得完整 deferred cardinality 而掃完整份 AOI。
 			batch.Stats.SpawnDeferred = 1
 			break
 		}
