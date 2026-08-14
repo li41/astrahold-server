@@ -117,15 +117,13 @@ jobs:
           jq -e '.round[0].tick_p99_ms < 60 and .round[0].tick_max_ms < 70' artifacts/mixed-server-churn-soak.json >/dev/null
 
           # 兩次 exact PASS 的 allocation envelope約1.101GB、19.6M mallocs、HeapAlloc 104-115MB、HeapSys約132MB、GC=21。
-          # 門檻保留約10-20% runner/GC headroom，用來抓 allocator/retention regression，而不是追求單次最低值。
+          # 門檻保留 bounded headroom；HeapAlloc 是任意 GC phase 的 live sample，因此只做 absolute envelope，
+          # 不拿 active/steady兩個不同 GC phase作相對大小判斷。跨 round retention由 S3-E.8 HeapSys growth gate負責。
           jq -e '.round[0].total_alloc_bytes < 1250000000 and .round[0].mallocs < 22000000 and .round[0].heap_alloc_bytes < 128000000 and .round[0].heap_sys_bytes < 160000000 and .round[0].num_gc <= 25' artifacts/mixed-server-churn-soak.json >/dev/null
 
-          # Long phase drain 後保留既有 steady-state 50ms hard gate與零錯誤；live heap也必須回落到兩次 baseline
-          # 都能穩定達到的96MB以下，避免 active-phase transient allocation長期 retained。
-          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50 and .memory.heap_alloc_bytes < 96000000 and .memory.heap_sys_bytes < 160000000' artifacts/mixed-server.json >/dev/null
-          ACTIVE_HEAP=$(jq -r '.round[0].heap_alloc_bytes' artifacts/mixed-server-churn-soak.json)
-          STEADY_HEAP=$(jq -r '.memory.heap_alloc_bytes' artifacts/mixed-server.json)
-          test "$STEADY_HEAP" -lt "$ACTIVE_HEAP"
+          # Long phase drain 後保留既有 steady-state 50ms hard gate與零錯誤；live heap / HeapSys各自維持
+          # 同一 bounded envelope。不要用 steady < active 判斷 retention，因為 ReadMemStats可能分別落在 GC 前/後。
+          jq -e '.phase == "steady-state" and .ticks > 0 and .errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0 and .tick_duration.p99_ms < 50 and .memory.heap_alloc_bytes < 128000000 and .memory.heap_sys_bytes < 160000000' artifacts/mixed-server.json >/dev/null
 
           jq '{tick_p99_ms:.round[0].tick_p99_ms, tick_max_ms:.round[0].tick_max_ms, trigger_to_converged_seconds:.round[0].trigger_to_converged_seconds, desired_relationships:.round[0].desired_relationships, dirty_vitals_selected:.round[0].dirty_vitals_selected, heap_alloc_bytes:.round[0].heap_alloc_bytes, heap_sys_bytes:.round[0].heap_sys_bytes, total_alloc_bytes:.round[0].total_alloc_bytes, mallocs:.round[0].mallocs, num_gc:.round[0].num_gc}' artifacts/mixed-server-churn-soak.json
           jq '.dirty_vitals_fairness' artifacts/mixed-server-churn-round-01-slow-ticks.json
