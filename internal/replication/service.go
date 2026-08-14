@@ -109,6 +109,53 @@ func (h *snapshotCandidateHeap) Pop() any {
 	return value
 }
 
+// snapshotSelection 在 visible scan 當下就維護 bounded top-K。
+// 前 budget 個 candidate 保持原 visible order；只有真的看到第 budget+1 個時才 heap.Init，
+// 因此 candidate 數量未超 budget 時與舊 path 的輸出順序完全相同。超額時使用與
+// selectSnapshotCandidates 相同的 heap/comparator，只省掉「先 materialize 全部 candidates，再掃第二遍」。
+type snapshotSelection struct {
+	selected  []snapshotCandidate
+	heap      snapshotCandidateHeap
+	budget    int
+	count     int
+	heapReady bool
+}
+
+func newSnapshotSelection(buffer []snapshotCandidate, budget int) snapshotSelection {
+	if budget > 0 && cap(buffer) < budget {
+		buffer = make([]snapshotCandidate, 0, budget)
+	} else {
+		buffer = buffer[:0]
+	}
+	return snapshotSelection{selected: buffer, budget: budget}
+}
+
+func (s *snapshotSelection) Consider(candidate snapshotCandidate) {
+	s.count++
+	if s.budget <= 0 || len(s.selected) < s.budget {
+		s.selected = append(s.selected, candidate)
+		return
+	}
+	if !s.heapReady {
+		s.heap = snapshotCandidateHeap(s.selected)
+		heap.Init(&s.heap)
+		s.heapReady = true
+	}
+	if candidateHigherPriority(candidate, s.heap[0]) {
+		s.heap[0] = candidate
+		heap.Fix(&s.heap, 0)
+	}
+}
+
+func (s *snapshotSelection) Selected() []snapshotCandidate {
+	if s.heapReady {
+		return []snapshotCandidate(s.heap)
+	}
+	return s.selected
+}
+
+func (s *snapshotSelection) Count() int { return s.count }
+
 type viewState struct {
 	// known 只代表 Reliable EntitySpawn 已成功進入該 Session 的 outbound queue。
 	// 它保留為 lifecycle truth / Knows API；steady-state transform scheduler 不再逐 Entity 查 map。
@@ -123,7 +170,7 @@ type viewState struct {
 	lastSnapshot               map[world.EntityID]sentTransform // legacy Build compatibility only
 	lastDeliveredGeneration    map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
 	lastSentBuild              map[world.EntityID]uint64         // legacy Build compatibility + rare membership rebuild
-	candidates                 []snapshotCandidate
+	candidates                 []snapshotCandidate               // legacy selector tests / compatibility scratch
 	selectedCandidates         []snapshotCandidate
 	messages                   []Outbound
 	borrowedSnapshotTransforms []protocol.EntityTransform
@@ -298,10 +345,10 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		rebuildDesiredTracks(state, frame, visibleIndices)
 	}
 
-	state.candidates = state.candidates[:0]
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 	hasUnknown := false
+	selection := newSnapshotSelection(state.selectedCandidates, s.policy.MaxTransformsPerBuild)
 
 	for i, index := range visibleIndices {
 		if index < 0 || index >= len(frame.Entities) || i >= len(state.tracks) {
@@ -352,7 +399,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		if forced {
 			batch.Stats.ForcedRefreshCandidates++
 		}
-		state.candidates = append(state.candidates, snapshotCandidate{
+		selection.Consider(snapshotCandidate{
 			entity:     e,
 			generation: generation,
 			trackIndex: i,
@@ -388,17 +435,14 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 		batch.Stats.DespawnSelected++
 	}
 
-	batch.Stats.SnapshotCandidates = len(state.candidates)
-	selectedCandidates := state.candidates
-	budgetExceeded := len(state.candidates) > s.policy.MaxTransformsPerBuild
-	if budgetExceeded {
-		state.selectedCandidates = selectSnapshotCandidates(state.selectedCandidates, state.candidates, s.policy.MaxTransformsPerBuild)
-		selectedCandidates = state.selectedCandidates
-	}
-
+	state.selectedCandidates = selection.Selected()
+	selectedCandidates := state.selectedCandidates
+	candidateCount := selection.Count()
+	batch.Stats.SnapshotCandidates = candidateCount
+	budgetExceeded := candidateCount > s.policy.MaxTransformsPerBuild
 	selectedCount := len(selectedCandidates)
 	batch.Stats.SnapshotSelected = selectedCount
-	batch.Stats.SnapshotDeferred = len(state.candidates) - selectedCount
+	batch.Stats.SnapshotDeferred = candidateCount - selectedCount
 
 	var transforms []protocol.EntityTransform
 	if borrowSnapshotStorage {
@@ -472,8 +516,8 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 	return batch
 }
 
-// selectSnapshotCandidates 保留與舊 full sort 完全相同的 priority comparator，
-// 但只維護最多 budget 個最佳 candidates。heap root 永遠是目前 top-K 裡最差的一個。
+// selectSnapshotCandidates 保留給單元測試與 compatibility 對照；production buildFrame
+// 已改為 snapshotSelection，在第一趟 visible scan 即維護相同 top-K set。
 func selectSnapshotCandidates(buffer []snapshotCandidate, candidates []snapshotCandidate, budget int) []snapshotCandidate {
 	if budget <= 0 || len(candidates) <= budget {
 		return candidates

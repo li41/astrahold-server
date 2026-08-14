@@ -14,7 +14,7 @@ import (
 
 type vitalsRetryConnection struct {
 	backpressureOnce bool
-	sent []protocol.Envelope
+	sent             []protocol.Envelope
 }
 
 func (c *vitalsRetryConnection) TrySend(envelope protocol.Envelope) error {
@@ -28,35 +28,63 @@ func (c *vitalsRetryConnection) TrySend(envelope protocol.Envelope) error {
 func (*vitalsRetryConnection) Close() error { return nil }
 
 func TestEntityVitalsBackpressureRetriesWithoutDeliveryError(t *testing.T) {
-	nav := navigation.Plane{MinX:-10,MaxX:10,MinZ:-10,MaxZ:10,Layer:0}
+	nav := navigation.Plane{MinX: -10, MaxX: 10, MinZ: -10, MaxZ: 10, Layer: 0}
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, 0.1))
-	entity := world.EntityState{ID:1,Kind:world.EntityPlayer,Transform:world.Transform{Position:world.Position{Layer:0}}}
-	if err := sim.Spawn(entity, 6, 0.35, 0.5); err != nil { t.Fatal(err) }
+	entity := world.EntityState{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{Layer: 0}}}
+	if err := sim.Spawn(entity, 6, 0.35, 0.5); err != nil {
+		t.Fatal(err)
+	}
 
 	rt := New(sim, DefaultConfig())
-	connection := &vitalsRetryConnection{backpressureOnce:true}
-	s, err := session.New(1,1,20,connection)
-	if err != nil { t.Fatal(err) }
-	if err := rt.sessions.Add(s); err != nil { t.Fatal(err) }
+	connection := &vitalsRetryConnection{backpressureOnce: true}
+	s, err := session.New(1, 1, 20, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.sessions.Add(s); err != nil {
+		t.Fatal(err)
+	}
 	rt.replication.Register(s.ID)
-	if err := rt.characters.Register(1); err != nil { t.Fatal(err) }
+	if err := rt.characters.Register(1); err != nil {
+		t.Fatal(err)
+	}
 	rt.ensureEntityVitalsRevision(1)
 
-	// S3-E.2 起 initial vitals 只由「Reliable Spawn 已成功」這個 lifecycle transition 排入 pending。
+	// Initial Vitals 只由「Reliable Spawn 已成功」這個 lifecycle transition 排入 pending。
 	// 此測試直接模擬該 transition，不經完整 Step delivery loop。
 	rt.replication.Build(s.ID, 1, 0, 1, []world.EntityState{entity})
 	rt.replication.ConfirmSpawn(s.ID, entity.ID)
 	rt.queueEntityVitalsForSession(s.ID, entity.ID)
 
+	// tick 1 是兩個 snapshot 中間的 world tick，第一次 TrySend 遇到 backpressure。
 	first := StepReport{}
 	rt.replicateEntityVitals(1, &first)
-	if len(first.DeliveryErrors) != 0 { t.Fatalf("backpressure should defer, errors=%#v", first.DeliveryErrors) }
-	if rt.sessionVitalsRevision[s.ID][1] != 0 { t.Fatalf("revision advanced on backpressure: %d", rt.sessionVitalsRevision[s.ID][1]) }
+	if len(first.DeliveryErrors) != 0 {
+		t.Fatalf("backpressure should defer, errors=%#v", first.DeliveryErrors)
+	}
+	if rt.sessionVitalsRevision[s.ID][1] != 0 {
+		t.Fatalf("revision advanced on backpressure: %d", rt.sessionVitalsRevision[s.ID][1])
+	}
 
-	second := StepReport{}
-	rt.replicateEntityVitals(2, &second)
-	if len(second.DeliveryErrors) != 0 { t.Fatalf("retry errors=%#v", second.DeliveryErrors) }
-	if rt.sessionVitalsRevision[s.ID][1] != 1 { t.Fatalf("revision=%d want=1", rt.sessionVitalsRevision[s.ID][1]) }
+	// Default SnapshotEveryTicks=2；tick 2 刻意不送 initial Vitals，避免與 lifecycle snapshot 疊載。
+	snapshotTick := StepReport{}
+	rt.replicateEntityVitals(2, &snapshotTick)
+	if rt.sessionVitalsRevision[s.ID][1] != 0 {
+		t.Fatalf("snapshot tick unexpectedly advanced revision: %d", rt.sessionVitalsRevision[s.ID][1])
+	}
+	if len(connection.sent) != 0 {
+		t.Fatalf("snapshot tick sent initial vitals: %d", len(connection.sent))
+	}
+
+	// tick 3 再 retry，成功才推進 delivered revision 並移除 pending。
+	third := StepReport{}
+	rt.replicateEntityVitals(3, &third)
+	if len(third.DeliveryErrors) != 0 {
+		t.Fatalf("retry errors=%#v", third.DeliveryErrors)
+	}
+	if rt.sessionVitalsRevision[s.ID][1] != 1 {
+		t.Fatalf("revision=%d want=1", rt.sessionVitalsRevision[s.ID][1])
+	}
 	if len(connection.sent) != 1 {
 		t.Fatalf("sent=%d want=1 successful vitals", len(connection.sent))
 	}
