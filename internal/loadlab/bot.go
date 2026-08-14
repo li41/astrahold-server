@@ -17,6 +17,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+const shutdownSendErrorCorrelationWindow = 50 * time.Millisecond
+
 type BotConfig struct {
 	TCPAddress     string
 	Clients        int
@@ -229,14 +231,28 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 		case <-ticker.C:
 			sequence++
 			if err := sendMove(udp, token, codec, config.Scenario, welcome.EntityID, sequence, time.Since(started), collector); err != nil {
-				// Reliable reader 在 Server 正常關閉 TCP 時會先 cancel botCtx；
-				// 與取消競態中的 UDP send error 屬於正常 shutdown，不應重複計成 network error。
-				if botCtx.Err() == nil {
-					collector.networkErrors.Add(1)
-				}
+				recordMoveSendFailure(botCtx, collector)
 				return nil
 			}
 		}
+	}
+}
+
+// recordMoveSendFailure 給 TCP shutdown 一個極短 bounded correlation window。
+// Server 關閉共享 UDP socket 與 peer TCP connection 時，Linux loopback 可能先回報 UDP ECONNREFUSED，
+// TCP EOF 才隨後抵達並 cancel botCtx。若 TCP 在 window 內同步結束，該 UDP error 屬正常 shutdown；
+// 若 TCP 仍存活，仍照常記為真實 network error。
+func recordMoveSendFailure(botCtx context.Context, collector *botCollector) {
+	if botCtx == nil || collector == nil || botCtx.Err() != nil {
+		return
+	}
+	timer := time.NewTimer(shutdownSendErrorCorrelationWindow)
+	defer timer.Stop()
+	select {
+	case <-botCtx.Done():
+		return
+	case <-timer.C:
+		collector.networkErrors.Add(1)
 	}
 }
 
