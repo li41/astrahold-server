@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "revision": "s3d1-001",
+  "revision": "s3d3-001",
   "actions": [
     {
       "id": "basic-attack",
-      "targets": ["gate"],
+      "targets": ["gate", "entity"],
       "range": 4.5,
       "base_damage": 100,
       "damage_type": "physical",
