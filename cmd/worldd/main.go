@@ -134,9 +134,13 @@ func main() {
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
 	runtimeConfig.PostReviveProtectionTicks = protectionTicks
-	characterStateWorld := characterstate.WorldRef{
+	worldIdentity := protocol.WorldIdentity{
 		WorldID: loadedWorld.Definition.WorldID, Revision: loadedWorld.Definition.Revision, GameplaySHA256: loadedWorld.SHA256,
 	}
+	characterStateWorld := characterstate.WorldRef{
+		WorldID: worldIdentity.WorldID, Revision: worldIdentity.Revision, GameplaySHA256: worldIdentity.GameplaySHA256,
+	}
+	characterStatePersistence := newCharacterStatePersistence(characterStateOutbox, characterStateStore, worldIdentity)
 	runtime := worldruntime.New(
 		sim,
 		runtimeConfig,
@@ -158,7 +162,8 @@ func main() {
 	networkConfig.UDPAddress = *udpAddress
 	networkConfig.TickRateHz = uint16(*tickRate)
 	networkConfig.SnapshotRateHz = uint16(*snapshotRate)
-	networkConfig.WorldIdentity = protocol.WorldIdentity{WorldID: loadedWorld.Definition.WorldID, Revision: loadedWorld.Definition.Revision, GameplaySHA256: loadedWorld.SHA256}
+	networkConfig.WorldIdentity = worldIdentity
+	networkConfig.CharacterRestoreFactory = characterStatePersistence.LoadRestore
 	server := tcpudp.NewServer(networkConfig, runtime, gamev1.Codec{})
 	if err := server.Open(); err != nil {
 		log.Fatal(err)
@@ -185,7 +190,7 @@ func main() {
 	characterStateCtx, stopCharacterState := context.WithCancel(context.Background())
 	characterStateDone := make(chan error, 1)
 	go func() {
-		err := runCharacterStateStore(characterStateCtx, characterStateOutbox, characterStateStore)
+		err := runCharacterStateStore(characterStateCtx, characterStatePersistence)
 		if err != nil {
 			log.Printf("character state persistence worker stopped with error: %v", err)
 			stop()
@@ -195,7 +200,7 @@ func main() {
 
 	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("death outcome durability: journal=%s checkpoint=%s append_fsync=true checkpoint_atomic_rename=true", deathJournal.Path(), deathCheckpointStore.Path())
-	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true", characterStateStore.Path(), characterStateOutbox.Capacity())
+	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true restore_exact_world=true defeated_restore=false", characterStateStore.Path(), characterStateOutbox.Capacity())
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	if err := server.Serve(ctx); err != nil {
 		stop()
