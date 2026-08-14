@@ -1,6 +1,6 @@
-# S3-E.4：Replication Buffer Ownership Reuse
+# S3-E.4：Replication Buffer Ownership / Bounded Selection
 
-S3-E.4 延續 S3-E.3 的量測結果，不預設 Quantized / Delta，也不拆 mutable World ownership。這一階段先用 measurement-window allocation profile 找出 500-client Gate Zerg 剩餘 allocation 的實際來源，再針對 ownership boundary 做最小改動。
+S3-E.4 延續 S3-E.3，不預設 Quantized / Delta，也不拆 mutable World ownership。本階段先用 measurement-window allocation profile 找出 500-client Gate Zerg 剩餘 allocation 的實際來源，再針對 ownership boundary 與 64-transform budget selection 做實測導向的修正。
 
 本階段維持：
 
@@ -17,17 +17,7 @@ Client wire contract 沒有改變，因此不需要 Client 修改。
 
 ## S3-E.3 起點
 
-S3-E.3 已把 realtime writer 從：
-
-```text
-payload allocation
-→ ASTR frame allocation
-→ ASTU datagram allocation
-```
-
-收斂成 append-based single-pass encode 與 per-writer reusable MTU buffer。
-
-500-client Gate Zerg 的 S3-E.3 代表性結果：
+S3-E.3 已把 realtime writer 的多層 allocation/copy 收斂成 append-based single-pass encode 與 reusable MTU buffer。500-client 代表性結果：
 
 ```text
 Tick avg                  7.732 ms
@@ -39,24 +29,20 @@ Realtime throughput       53.241 Mbit/s
 Encode avg                 0.48 us/datagram
 ```
 
-因此 S3-E.4 不再猜測 wire encode，而是直接 profile 剩餘 allocation。
+S3-E.4 不再猜測 wire encode，而是先 profile 剩餘 allocation。
 
 ## Measurement-window Allocation Profile
 
-`cmd/loadserver` 新增可選 allocation profiler：
+`cmd/loadserver` 新增可選診斷參數：
 
 ```text
 -alloc-profile-prefix
 -alloc-profile-rate
 ```
 
-指定 prefix 時，Load Lab 在所有 Client ready 後、正式 measurement 開始前寫一份 `allocs` profile，measurement 結束後再寫一份；診斷 workflow 使用 `go tool pprof -base` 取得 measurement-window allocation delta。
+指定 prefix 時，Load Lab 會在正式 measurement 前後各寫一份 `allocs` profile，利用 `go tool pprof -base` 取得 measurement-window delta。正式 capacity run 不開 profiler，避免 sampling 擾動 tail latency。
 
-這個 profiler 只作診斷。正式 24 / 100 / 500 acceptance run 不開 profiler，避免 sampling 對 tail latency 造成干擾。
-
-### 500-client 診斷結果
-
-S3-E.3 code path 的 sampled `alloc_space`：
+S3-E.3 code path 的 500-client sampled `alloc_space`：
 
 | 函式 | Flat alloc | 比例 |
 |---|---:|---:|
@@ -67,11 +53,11 @@ S3-E.3 code path 的 sampled `alloc_space`：
 
 `buildFrame + rebuildDesiredTracks` 合計約 **75.7% sampled alloc_space**。
 
-因此數據沒有指向 UDP ingress decode，也沒有要求修改 wire；最明確的問題是 Replication 建出的資料在 `TrySend` 後仍可能被 asynchronous transport 持有，迫使 Server 每 Session / snapshot pass 配置新的 backing storage。
+因此資料沒有指向 UDP ingress decode，也沒有要求升 Protocol；主要問題在 Replication ownership 與 AOI membership buffer lifecycle。
 
-## 問題：TrySend 後到底誰擁有 Snapshot backing storage？
+## 問題：TrySend 後誰擁有 Snapshot backing storage？
 
-S3-E.3 前的正確保守規則是：
+原本正確但保守的 lifetime：
 
 ```text
 Replication Build
@@ -81,21 +67,13 @@ Replication Build
 → asynchronous mailbox / writer
 ```
 
-`TrySend` 返回不代表 writer 已 encode，因此 Replication 不能直接覆寫 `WorldSnapshot.Entities` backing array。
+`TrySend` 返回不代表 writer 已 encode，所以 Replication 不能直接覆寫 `WorldSnapshot.Entities` backing array。若只把 `make([]EntityTransform, ...)` 改成 reused slice，下一 tick 可能在 writer 尚未讀取舊 snapshot 時覆寫資料，造成 silent wire corruption。
 
-如果只把：
+因此本階段先把 ownership contract type 化，而不是用 `sync.Pool` 掩蓋 lifetime 問題。
 
-```go
-make([]protocol.EntityTransform, selectedCount)
-```
+## Immediate Realtime Ownership Capability
 
-改成 per-session reused slice，下一 tick 可能在 writer 尚未讀取舊 snapshot 時覆寫同一塊記憶體，造成 silent wire corruption。
-
-所以本階段不是單純「加 buffer pool」，而是先把 ownership contract 明確化。
-
-## Optional Immediate Realtime Ownership Capability
-
-`session.Connection` 原 contract 保留：
+原 `session.Connection` contract 保留：
 
 ```go
 type Connection interface {
@@ -104,7 +82,7 @@ type Connection interface {
 }
 ```
 
-S3-E.4 另外增加 optional capability：
+新增 optional capability：
 
 ```go
 type ImmediateRealtimeConnection interface {
@@ -113,85 +91,49 @@ type ImmediateRealtimeConnection interface {
 }
 ```
 
-語意只適用 `DeliveryRealtimeSequenced`：
+只對 `DeliveryRealtimeSequenced` 表示：
 
 ```text
 TrySend success returns
-→ message 已被 materialize / encode / copy 到 Connection-owned storage
-→ Connection / writer 不再引用 caller mutable backing storage
-→ caller 可以立即重用 snapshot scratch
+→ realtime message 已 materialize / encode / copy 到 Connection-owned storage
+→ Connection 不再引用 caller mutable backing storage
+→ caller 可立即重用 snapshot scratch
 ```
 
-ReliableOrdered 不受影響。
+ReliableOrdered 不受此 capability 影響。
 
-`session.QueueConnection` 仍直接保存 Envelope，因此刻意**不**實作這個 capability；generic / test connection 仍走 owned snapshot allocation path。
+`session.QueueConnection` 仍直接保存 Envelope，因此刻意不實作這個 capability；generic / test connection 仍走 owned snapshot allocation path。
 
-## TCP/UDP Connection：TrySend 時取得 Realtime Ownership
+## TCP/UDP Mailbox Ownership
 
 production `tcpudp.clientConnection` 實作 `ImmediateRealtimeConnection`。
 
-S3-E.3 是：
+Realtime mailbox 不再保存 caller 的 Realtime Envelope，而是保存 connection-owned bounded packet slots：
 
 ```text
-World Owner
-→ TrySend(Envelope)
-→ mailbox retains Envelope
-→ writer
-→ encode into writer reusable MTU buffer
-→ WriteToUDP
-```
-
-S3-E.4 改成：
-
-```text
-World Owner
-→ TrySend(Envelope)
-→ mailbox lock
-→ encode ASTU + ASTR + GameV1
-→ connection-owned bounded packet slot
-→ TrySend returns
-
-writer
-→ copy mailbox slot into writer-owned reusable MTU buffer
-→ unlock mailbox
-→ WriteToUDP
-```
-
-這裡刻意保留一次 bounded packet copy。原因是 mailbox slot 可能被下一 tick 覆寫，而 `WriteToUDP` 必須在 lock 外執行；writer 先在 lock 內複製到自己專屬的 1200-byte scratch，就可以同時滿足：
-
-- World Owner 不做 blocking socket I/O
-- TrySend 返回後 Replication 可重用原 transform storage
-- mailbox 可 coalesce / replace 舊 snapshot set
-- writer 不會讀到被 producer 覆寫的 slot
-- 每 datagram 不需要 heap allocate packet buffer
-
-## Mailbox Ownership
-
-`realtimeMailbox` 不再保存 Realtime Envelope，而是保存 encoded packet slots：
-
-```text
-latest PositionCorrection slot
+latest PositionCorrection packet slot
 
 current WorldSnapshot set
-├── chunk 0 slot
-├── chunk 1 slot
+├── chunk 0 packet slot
+├── chunk 1 packet slot
 └── ...
 ```
 
-每個 slot 是 bounded `MaxDatagramSize` storage，並保留 message type / encode duration 供 metrics 使用。
+`TrySend` 成功返回前，ASTU + ASTR + GameV1 已 materialize 到 mailbox-owned storage。writer 會在 mailbox lock 內複製到自己的 reusable 1200-byte scratch，再於 lock 外 `WriteToUDP`。
 
-原本的 semantic stream contract不變：
+這保留了以下不變量：
 
-- correction 只保留最新
-- snapshot 以 Tick / ChunkCount 為 set
-- 新 tick chunk 0 可以取代舊的未送完 set
-- Client 仍只有收齊同 Tick 全部 chunks 才 commit batch
+- World Owner 不做 blocking socket I/O
+- caller 在 TrySend 返回後可重用 transform storage
+- mailbox 可 coalesce / replace 舊 snapshot set
+- writer 不會讀到被下一 tick 覆寫的 slot
+- 每 datagram 不需要新的 heap packet buffer
 
-新增 regression test 會在 `PutEncoded` 返回後立即修改 caller 的 `[]EntityTransform`，再 decode mailbox packet；wire bytes 必須仍保持 Put 時的原值，以驗證 Connection 沒有偷留 caller backing storage。
+Regression test 會在 `PutEncoded` 返回後立即修改 caller 的 `[]EntityTransform`，再 decode mailbox packet；wire bytes 必須仍保持 Put 時的原值。
 
 ## Replication Borrowed Snapshot Path
 
-`replication.Service` 保留兩條 path：
+Replication 保留兩條 path：
 
 ```text
 BuildFrame
@@ -203,107 +145,185 @@ BuildFrameBorrowed
 → per-session reusable []EntityTransform
 ```
 
-Runtime 只在 Connection 明確實作 capability 時使用 borrowed path。
+Runtime 只有在 Connection 明確宣告 capability 時才走 borrowed path，因此 lifetime 假設不是 hidden convention。
 
-因此 lifetime 假設不是 hidden convention，而是 type-level capability boundary。
-
-另外新增 regression test，要求連續 `BuildFrameBorrowed` 在容量足夠時重用相同 backing array。
+另有 regression test 要求連續 `BuildFrameBorrowed` 在 capacity 足夠時重用同一 backing array。
 
 ## Dense AOI Membership Buffer Reuse
 
-Profile 另外指出 `rebuildDesiredTracks` 單獨約 20 MB sampled alloc_space。
-
-S3-E.2 原本在 AOI membership 改變時會建立：
+`rebuildDesiredTracks` 原本在 membership 改變時配置新的：
 
 ```text
-new desiredIDs
-new tracks
+desiredIDs
+tracks
 ```
 
-S3-E.4 改成 reusable dense buffers：
+S3-E.4 改為 resize / clear 既有 dense buffers，再從 lifecycle/map mirrors 重建 rare-path state。容量足夠時不更換 backing array。
 
-```text
-resize / clear existing desiredIDs
-resize / clear existing tracks
-→ 從 known + delivered-generation mirrors 重建 rare-path state
-```
-
-容量足夠時不換 backing array；只有 membership 超過既有 capacity 時才擴張。
-
-這不改 lifecycle truth：`known` map 仍是 Reliable Spawn / Despawn 的 authoritative knowledge。
-
-## 診斷後 Profile 變化
-
-帶 profiler 的實作 run 中，`rebuildDesiredTracks` 已由原本：
+帶 profiler 的實作 run 中，`rebuildDesiredTracks` 已由約：
 
 ```text
 19.99 MB flat
 ```
 
-下降到約：
+下降到：
 
 ```text
-2.55 MB cumulative
+約 2.55 MB cumulative
 ```
 
-此數據只用來確認 hot path 被命中，不拿來做 capacity gate，因為 profiler sampling 會擾動 tail latency。
+此 profile 只用來確認 hot path 被命中，不作 capacity gate。
 
-## 無 Profiler 24-client Vertical Siege
+## 第一輪無 profiler 500：allocation 成功、p99 邊界失敗
 
-S3-E.3 → S3-E.4 第一輪正式 run：
-
-| 指標 | S3-E.3 | S3-E.4 | 變化 |
-|---|---:|---:|---:|
-| Tick avg | 0.084 ms | 0.131 ms | runner noise |
-| Tick p99 | 0.202 ms | 0.438 ms | runner noise |
-| TotalAlloc | 4.62 MB | 4.07 MB | 約 -11.9% |
-| Mallocs | 27,594 | 20,334 | 約 -26.3% |
-| Encode avg | 0.32 us | 0.307 us | 約 -4% |
-| Realtime throughput | 0.662 Mbit/s | 0.660 Mbit/s | 約相同 |
-
-24-client workload 本來就很輕；主要確認 correctness 與低規模沒有 allocation regression。
-
-## 無 Profiler 100-client Gate Zerg
-
-| 指標 | S3-E.3 | S3-E.4 | 變化 |
-|---|---:|---:|---:|
-| Tick avg | 0.615 ms | 0.543 ms | 約 -11.7% |
-| Tick p99 | 4.349 ms | 4.612 ms | 約 +6.0% |
-| TotalAlloc | 16.70 MB | 10.92 MB | **約 -34.6%** |
-| Mallocs | 171,645 | 123,621 | **約 -28.0%** |
-| Encode avg | 0.43 us | 0.209 us | 約 -51% |
-| Realtime throughput | 3.919 Mbit/s | 3.919 Mbit/s | 約相同 |
-
-wire volume 沒有被縮減；allocation 下降來自 ownership / buffer reuse。
-
-## 無 Profiler 500-client Gate Zerg：第一輪
-
-第一輪無 profiler run：
+ownership reuse 後的第一輪正式 500 run：
 
 ```text
-measurement                10.004s
-completed ticks                 200
-Tick avg                    10.54 ms
 Tick p95                    20.05 ms
 Tick p99                    50.138 ms
-Replication Build            8.20 ms
-Delivery                     0.749 ms
 TotalAlloc                   85.02 MB
 Mallocs                       0.996 M
 Realtime throughput          53.04 Mbit/s
-Encode avg                   0.364 us/datagram
+```
+
+相對 S3-E.3，TotalAlloc 已下降約 52%，但 `p99 = 50.138ms` 超過 50ms，因此沒有把它四捨五入成 PASS。
+
+第二次無 profiler hard-gate run 又觀察到：
+
+```text
+Tick p99                    65.934 ms
+TotalAlloc                   66.82 MB
+Realtime throughput          53.27 Mbit/s
+```
+
+這證明不能只用「單次 Hosted Runner noise」解釋，需要直接拆 slow tick stage。
+
+## Slow Tick Stage Breakdown
+
+Load Server 新增固定上限的 top slow-tick report，不改 simulation/wire，也不在 hot path 做無界 allocation。
+
+第三個無 profiler樣本通過 hard gate：
+
+```text
+Tick avg                     9.03 ms
+Tick p95                    19.80 ms
+Tick p99                    32.44 ms
+TotalAlloc                   48.89 MB
+```
+
+但最慢單 tick 仍是 68.47ms。stage breakdown：
+
+```text
+Tick 124 total              68.47 ms
+Replication Build           61.53 ms
+Delivery                     3.33 ms
+AOI                          1.28 ms
+Vitals                       1.45 ms
+```
+
+因此 synchronous ownership handoff 並不是主要 spike；尖峰仍在 `Replication Build`。
+
+該 tick 同時具有：
+
+```text
+Snapshot candidates         28,393
+Snapshot transforms         20,908
+Snapshot deferred            7,485
+```
+
+這代表大量 Session 正在 bootstrap / convergence，且候選數超過每 Session 64-transform budget。
+
+## 64-budget Full Sort 問題
+
+原 scheduler 在 candidates 超過 budget 時會：
+
+```text
+all due candidates
+→ full sort by normalized overdue fairness
+→ take first 64
+```
+
+在 hotspot convergence 中，一個 Session 可同時有接近 500 candidates，但實際只需要最佳 64 個。Full sort 做了不必要的 `N log N` 工作。
+
+S3-E.4 改成 bounded top-K heap selection：
+
+```text
+all due candidates
+→ maintain best 64 only
+→ heap root = current worst selected candidate
+→ better candidate replaces root
+→ final selected transforms 再依 EntityID 排序供 deterministic wire order
+```
+
+Priority comparator 完全不變：
+
+1. normalized overdue fairness
+2. dirty 優先
+3. Near / Mid / Far tier
+4. age
+5. EntityID deterministic tie-break
+
+單元測試會把 bounded top-K 的選出集合與舊 full sort 的前 64 名直接比較，要求完全等價；另驗證 top-K buffer 可重用。
+
+## 最終 24-client Vertical Siege
+
+| 指標 | S3-E.3 | S3-E.4 final |
+|---|---:|---:|
+| Tick avg | 0.084 ms | 0.121 ms |
+| Tick p99 | 0.202 ms | 0.330 ms |
+| TotalAlloc | 4.62 MB | 4.09 MB |
+| Mallocs | 27,594 | 20,423 |
+| Realtime | 0.662 Mbit/s | 0.662 Mbit/s |
+
+Errors / delivery / MTU 全部為 0。
+
+## 最終 100-client Gate Zerg
+
+| 指標 | S3-E.3 | S3-E.4 final |
+|---|---:|---:|
+| Tick avg | 0.615 ms | 0.635 ms |
+| Tick p99 | 4.349 ms | 3.257 ms |
+| TotalAlloc | 16.70 MB | 10.90 MB |
+| Mallocs | 171,645 | 122,818 |
+| Realtime | 3.919 Mbit/s | 3.919 Mbit/s |
+
+TotalAlloc 約再下降 35%，wire throughput 基本不變。
+
+## 最終 500-client Gate Zerg
+
+最終 top-K + ownership exact code head：
+
+```text
+measurement                 10.001s
+completed ticks                 199
+Tick avg                     9.224 ms
+Tick p50                    14.800 ms
+Tick p95                    18.545 ms
+Tick p99                    31.018 ms
+Tick max                   110.755 ms
+
+AOI avg                      0.755 ms
+Replication Build            7.254 ms
+Delivery                     0.575 ms
+Vitals                       0.022 ms
+
+TotalAlloc                   46.09 MB
+Mallocs                       0.759 M
+Realtime throughput          53.224 Mbit/s
+Encode avg                   0.347 us/datagram
 ```
 
 相對 S3-E.3：
 
-| 指標 | S3-E.3 | S3-E.4 第一輪 | 變化 |
+| 指標 | S3-E.3 | S3-E.4 final | 結果 |
 |---|---:|---:|---:|
-| TotalAlloc | 178.39 MB | 85.02 MB | **約 -52.3%** |
-| Mallocs | 1.251M | 0.996M | **約 -20.4%** |
-| Realtime throughput | 53.241 Mbit/s | 53.044 Mbit/s | 約 -0.4% |
-| Encode avg | 0.48 us | 0.364 us | 約 -24% |
+| Tick p99 | 19.825 ms | 31.018 ms | 仍 < 50ms |
+| TotalAlloc | 178.39 MB | 46.09 MB | **約 -74%** |
+| Mallocs | 1.251M | 0.759M | **約 -39%** |
+| Realtime throughput | 53.241 Mbit/s | 53.224 Mbit/s | 約相同 |
+| Encode avg | 0.48 us | 0.347 us | 約 -28% |
 
-500 correctness 仍成立：
+500 correctness：
 
 ```text
 connected / ready              500 / 500
@@ -316,28 +336,33 @@ Datagram too large                 0
 Incomplete snapshot resets         0
 ```
 
-但 `p99 = 50.138 ms` 比既定 20Hz capacity gate 的 50ms 高 0.138ms，因此**這一輪不單獨判定 capacity PASS**。
+## Capacity Gate
 
-它的 p95 只有約 20ms、GC pause 只有約 0.079ms，尾端存在少數 Hosted Runner spike；無論原因是 runner noise 或 implementation tail cost，都不應把 50.138ms 四捨五入成 PASS。
-
-因此 S3-E.4 把 500 workflow 正式加入：
+S3-E.4 將 500 workflow 正式加入硬性 assertion：
 
 ```text
 Tick p99 < 50 ms
 ```
 
-硬性 assertion。PR 只有在後續無 profiler exact-head run 真正通過這個 assertion 後才可 merge。
+最終 code head：
 
-## Allocation 與 CPU 的取捨
+```text
+p99 = 31.018 ms < 50 ms
+```
 
-S3-E.4 將 realtime encode 從 writer goroutine 移到 `TrySend` ownership handoff，因此 encode cost 現在屬於 World Owner 的 Delivery stage，而不是 writer background cost。
+因此 **目前 500-client Gate Zerg 20Hz capacity gate PASS**。
 
-這是刻意且可量測的 tradeoff：
+但單次 max 仍有 `110.755ms` spike。slow-tick report 顯示該筆仍主要來自 Replication Build：
 
-- 好處：Replication snapshot backing storage 可安全重用，大幅降低 heap churn
-- 成本：Delivery stage 多了 bounded encode + mailbox packet copy
+```text
+Tick 130 total             110.75 ms
+Replication Build           98.22 ms
+Delivery                     5.10 ms
+AOI                          3.24 ms
+Vitals                       3.11 ms
+```
 
-第一輪 500 run 的 Delivery 約 0.75ms/tick，仍遠小於 50ms tick budget；但最終是否接受仍由完整 p99 gate 決定，而不是只看平均值。
+因此這個 PASS 只代表目前 regression 的 p99 capacity gate，不是宣告所有地圖、所有 bootstrap pattern、所有 gameplay workload 或 Internet production deployment 已具備 500-player SLA。
 
 ## 本階段沒有做的事
 
@@ -350,15 +375,17 @@ S3-E.4 將 realtime encode 從 writer goroutine 移到 `TrySend` ownership hando
 - 不拆 Cell Actor
 - 不改 Client interpolation / lifecycle contract
 
-## S3-E.4 決策
+## S3-E.4 結論
 
-目前數據支持：
+實測支持：
 
-1. 剩餘 Server allocation 的主要問題在 Replication ownership，而不是 wire encode / decode。
+1. 剩餘 allocation 的主要來源在 Replication ownership / membership buffers，而不是 realtime wire encode/decode。
 2. generic asynchronous `Connection` 必須維持 owned snapshot storage。
-3. production TCP/UDP connection 可以透過明確的 immediate-realtime capability 安全啟用 borrowed buffer path。
-4. AOI membership rare-path 可以重用 dense buffers，而不改 Reliable lifecycle truth。
-5. 500-client TotalAlloc 已再下降約一半，且 wire throughput 維持約 53 Mbit/s。
-6. 是否維持 20Hz capacity gate，必須由無 profiler `p99 < 50ms` 的最終 workflow assertion 決定。
+3. production TCP/UDP connection 可用明確的 immediate-realtime capability 安全啟用 borrowed snapshot path。
+4. AOI membership rare-path 可重用 dense buffers，而不改 Reliable lifecycle truth。
+5. 64-transform scheduler 不需要 full sort 全部 candidates；bounded top-K 可保留完全相同的 fairness selection。
+6. 500-client TotalAlloc 由 S3-E.3 的約 178 MB 再降到約 46 MB，wire throughput 仍約 53 Mbit/s。
+7. 500 hard gate 已正式把 `p99 < 50ms` 寫入 workflow，最終 run 為 31.018ms PASS。
+8. max spike 仍存在，且 slow-tick 證據指向 bootstrap / convergence 時的 Replication Build；後續不能把這個風險隱藏成「已完全解決」。
 
-下一階段不應自動進 Quantized / Delta。若 S3-E.4 最終 capacity gate 通過，新的 profile 已顯示剩餘 allocation 更偏向 Reliable bootstrap / lifecycle / vitals 與 generic JSON encode；後續應先區分「登入 / AOI convergence burst」與「steady-state siege」的目標，再決定是否值得優化 Reliable bootstrap serialization、measurement readiness gate，或轉向 Internet egress / 大型戰場 bandwidth。
+下一階段不應自動進 Quantized / Delta。新的證據更支持先把 **bootstrap / AOI convergence burst** 與 **steady-state siege** 分開量測，必要時再優化 Reliable lifecycle convergence、candidate construction 或 readiness semantics；若目標轉為 Internet egress / 更大戰場頻寬，才重新評估 Quantized / Delta。
