@@ -48,7 +48,30 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 	state.messages = state.messages[:0]
 	batch := Batch{Messages: state.messages}
 
-	// 從最早未完成的 desired track 開始；一旦 Spawn quantum 用完就立即停止。
+	// AOI churn 同時產生 departed + unknown 時先清掉 stale known lifecycle。
+	// 這可避免 combined/global budget 下舊 Entity 長時間留在 Client；mass join 沒有 departed，因此不改 S3-E.6 bootstrap throughput。
+	state.departed = state.departed[:0]
+	for id := range state.known {
+		if !containsDesiredID(state.desiredIDs, id) {
+			state.departed = append(state.departed, id)
+		}
+	}
+	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
+	batch.Stats.DespawnCandidates = len(state.departed)
+	for i, id := range state.departed {
+		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+		if !limits.allowMessage(totalLifecycle) || !limits.allowDespawn(batch.Stats.DespawnSelected) {
+			batch.Stats.DespawnDeferred = len(state.departed) - i
+			break
+		}
+		batch.Messages = append(batch.Messages, Outbound{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Message:  protocol.EntityDespawn{EntityID: id},
+		})
+		batch.Stats.DespawnSelected++
+	}
+
+	// 從最早未完成的 desired track 開始；一旦 per-session 或 combined quantum 用完就立即停止。
 	// Deferred work 不應為了完整統計而先掃過一次，下一個 build 會從新的 firstUnknown 繼續。
 	for i := firstUnknown; i < len(visibleIndices) && i < len(state.tracks); i++ {
 		index := visibleIndices[i]
@@ -60,7 +83,8 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 			continue
 		}
 		batch.Stats.SpawnCandidates++
-		if !limits.allowSpawn(batch.Stats.SpawnSelected) {
+		totalLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
+		if !limits.allowMessage(totalLifecycle) || !limits.allowSpawn(batch.Stats.SpawnSelected) {
 			// lifecycle-first path 的 Deferred 只表示「本 build 尚有更多工作」，
 			// 不為了取得完整 deferred cardinality 而掃完整份 AOI。
 			batch.Stats.SpawnDeferred = 1
@@ -81,26 +105,6 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 			},
 		})
 		batch.Stats.SpawnSelected++
-	}
-
-	state.departed = state.departed[:0]
-	for id := range state.known {
-		if !containsDesiredID(state.desiredIDs, id) {
-			state.departed = append(state.departed, id)
-		}
-	}
-	sort.Slice(state.departed, func(i, j int) bool { return state.departed[i] < state.departed[j] })
-	batch.Stats.DespawnCandidates = len(state.departed)
-	for _, id := range state.departed {
-		if !limits.allowDespawn(batch.Stats.DespawnSelected) {
-			batch.Stats.DespawnDeferred++
-			continue
-		}
-		batch.Messages = append(batch.Messages, Outbound{
-			Delivery: protocol.DeliveryReliableOrdered,
-			Message:  protocol.EntityDespawn{EntityID: id},
-		})
-		batch.Stats.DespawnSelected++
 	}
 
 	if self, _, ok := frame.Entity(selfID); ok {
