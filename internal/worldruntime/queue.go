@@ -37,6 +37,9 @@ type teleportCommand struct {
 }
 func (teleportCommand) name() string { return "teleport_entity" }
 
+type teleportBatchCommand struct{ requests []TeleportRequest }
+func (teleportBatchCommand) name() string { return "teleport_batch" }
+
 type useActionCommand struct {
 	sessionID session.ID
 	sequence  uint32
