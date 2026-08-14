@@ -9,7 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestBuildProducesSpawnRemoteSnapshotAndSelfCorrection(t *testing.T) {
+func TestBuildProducesReliableSpawnBeforeRemoteSnapshot(t *testing.T) {
 	svc := NewService()
 	sid := session.ID(7)
 	svc.Register(sid)
@@ -17,12 +17,32 @@ func TestBuildProducesSpawnRemoteSnapshotAndSelfCorrection(t *testing.T) {
 		{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 1}}},
 		{ID: 2, Kind: world.EntityMonster, Transform: world.Transform{Position: world.Position{X: 2}}},
 	}
-	batch := svc.Build(sid, 1, 12, 20, visible)
-	var spawn, snapshot, correction int
-	for _, m := range batch.Messages {
-		switch message := m.Message.(type) {
+
+	first := svc.Build(sid, 1, 12, 20, visible)
+	var spawn int
+	for _, outbound := range first.Messages {
+		switch message := outbound.Message.(type) {
 		case protocol.EntitySpawn:
 			spawn++
+			if svc.Knows(sid, message.EntityID) {
+				t.Fatalf("entity %d became known before delivery confirmation", message.EntityID)
+			}
+		case protocol.WorldSnapshot:
+			if len(message.Entities) != 0 {
+				t.Fatalf("unknown entities must not enter realtime snapshot: %+v", message)
+			}
+		}
+	}
+	if spawn != 2 {
+		t.Fatalf("spawn=%d want=2", spawn)
+	}
+
+	svc.ConfirmSpawn(sid, 1)
+	svc.ConfirmSpawn(sid, 2)
+	second := svc.Build(sid, 1, 12, 21, visible)
+	var snapshot, correction int
+	for _, outbound := range second.Messages {
+		switch message := outbound.Message.(type) {
 		case protocol.WorldSnapshot:
 			snapshot++
 			if message.ChunkIndex != 0 || message.ChunkCount != 1 || len(message.Entities) != 1 || message.Entities[0].EntityID != 2 {
@@ -35,8 +55,57 @@ func TestBuildProducesSpawnRemoteSnapshotAndSelfCorrection(t *testing.T) {
 			}
 		}
 	}
-	if spawn != 2 || snapshot != 1 || correction != 1 {
-		t.Fatalf("unexpected counts spawn=%d snapshot=%d correction=%d", spawn, snapshot, correction)
+	if snapshot != 1 || correction != 1 {
+		t.Fatalf("snapshot=%d correction=%d want=1/1", snapshot, correction)
+	}
+}
+
+func TestLifecycleRequiresDeliveryConfirmationAndRetries(t *testing.T) {
+	svc := NewService()
+	sid := session.ID(8)
+	svc.Register(sid)
+	visible := []world.EntityState{
+		{ID: 1, Kind: world.EntityPlayer},
+		{ID: 2, Kind: world.EntityPlayer},
+	}
+
+	first := svc.Build(sid, 1, 0, 1, visible)
+	if got := lifecycleIDs(first, true); !equalIDs(got, []world.EntityID{1, 2}) {
+		t.Fatalf("first spawn ids=%v", got)
+	}
+	second := svc.Build(sid, 1, 0, 2, visible)
+	if got := lifecycleIDs(second, true); !equalIDs(got, []world.EntityID{1, 2}) {
+		t.Fatalf("unconfirmed spawns were not retried: %v", got)
+	}
+
+	svc.ConfirmSpawn(sid, 1)
+	svc.ConfirmSpawn(sid, 2)
+	third := svc.Build(sid, 1, 0, 3, visible)
+	if got := lifecycleIDs(third, true); len(got) != 0 {
+		t.Fatalf("confirmed spawns repeated: %v", got)
+	}
+	if !svc.Knows(sid, 1) || !svc.Knows(sid, 2) {
+		t.Fatal("confirmed entities should be known")
+	}
+
+	departed := svc.Build(sid, 1, 0, 4, visible[:1])
+	if got := lifecycleIDs(departed, false); !equalIDs(got, []world.EntityID{2}) {
+		t.Fatalf("despawn ids=%v want=[2]", got)
+	}
+	if !svc.Knows(sid, 2) {
+		t.Fatal("entity must remain known until despawn delivery succeeds")
+	}
+	retry := svc.Build(sid, 1, 0, 5, visible[:1])
+	if got := lifecycleIDs(retry, false); !equalIDs(got, []world.EntityID{2}) {
+		t.Fatalf("unconfirmed despawn was not retried: %v", got)
+	}
+	svc.ConfirmDespawn(sid, 2)
+	if svc.Knows(sid, 2) {
+		t.Fatal("confirmed despawn should clear known")
+	}
+	settled := svc.Build(sid, 1, 0, 6, visible[:1])
+	if got := lifecycleIDs(settled, false); len(got) != 0 {
+		t.Fatalf("confirmed despawn repeated: %v", got)
 	}
 }
 
@@ -52,6 +121,7 @@ func TestBuildCapsSnapshotTransformsPerSession(t *testing.T) {
 			Transform: world.Transform{Position: world.Position{X: float32(i)}},
 		}
 	}
+	primeKnown(svc, sid, 1, visible)
 
 	batch := svc.Build(sid, 1, 99, 50, visible)
 	var chunks []protocol.WorldSnapshot
@@ -103,25 +173,26 @@ func TestBuildAppliesTierCadenceToDirtyTransforms(t *testing.T) {
 		{ID: 3, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 20}}},
 		{ID: 4, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 50}}},
 	}
+	primeKnown(svc, sid, 1, visible)
 
-	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 1, visible)); !equalIDs(got, []world.EntityID{2, 3, 4}) {
-		t.Fatalf("build1 ids=%v", got)
+	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 2, visible)); !equalIDs(got, []world.EntityID{2, 3, 4}) {
+		t.Fatalf("initial known batch ids=%v", got)
 	}
 	moveRemotes(visible)
-	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 2, visible)); !equalIDs(got, []world.EntityID{2}) {
-		t.Fatalf("build2 ids=%v want near only", got)
+	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 3, visible)); !equalIDs(got, []world.EntityID{2}) {
+		t.Fatalf("next batch ids=%v want near only", got)
 	}
 	moveRemotes(visible)
-	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 3, visible)); !equalIDs(got, []world.EntityID{2, 3}) {
-		t.Fatalf("build3 ids=%v want near+mid", got)
+	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 4, visible)); !equalIDs(got, []world.EntityID{2, 3}) {
+		t.Fatalf("mid cadence ids=%v want near+mid", got)
 	}
-	moveRemotes(visible)
-	_ = svc.Build(sid, 1, 0, 4, visible)
 	moveRemotes(visible)
 	_ = svc.Build(sid, 1, 0, 5, visible)
 	moveRemotes(visible)
-	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 6, visible)); !containsID(got, 4) {
-		t.Fatalf("build6 ids=%v want far entity due at cadence 5", got)
+	_ = svc.Build(sid, 1, 0, 6, visible)
+	moveRemotes(visible)
+	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 7, visible)); !containsID(got, 4) {
+		t.Fatalf("far entity not due after five builds: %v", got)
 	}
 }
 
@@ -144,9 +215,10 @@ func TestBuildBudgetUsesOverdueFairness(t *testing.T) {
 	for i := range visible {
 		visible[i] = world.EntityState{ID: world.EntityID(i + 1), Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: float32(i)}}}
 	}
+	primeKnown(svc, sid, 1, visible)
 
 	seen := make(map[world.EntityID]bool)
-	for build := uint64(1); build <= 3; build++ {
+	for build := uint64(2); build <= 4; build++ {
 		for _, id := range snapshotEntityIDs(svc.Build(sid, 1, 0, build, visible)) {
 			seen[id] = true
 		}
@@ -178,19 +250,20 @@ func TestBuildSkipsCleanTransformUntilPeriodicRefresh(t *testing.T) {
 		{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 0}}},
 		{ID: 2, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 5}}},
 	}
+	primeKnown(svc, sid, 1, visible)
 
-	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 1, visible)); !equalIDs(got, []world.EntityID{2}) {
-		t.Fatalf("build1 ids=%v", got)
-	}
-	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 2, visible)); len(got) != 0 {
-		t.Fatalf("build2 clean ids=%v want none", got)
+	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 2, visible)); !equalIDs(got, []world.EntityID{2}) {
+		t.Fatalf("initial ids=%v", got)
 	}
 	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 3, visible)); len(got) != 0 {
-		t.Fatalf("build3 clean ids=%v want none", got)
+		t.Fatalf("clean ids=%v want none", got)
 	}
-	batch := svc.Build(sid, 1, 0, 4, visible)
+	if got := snapshotEntityIDs(svc.Build(sid, 1, 0, 4, visible)); len(got) != 0 {
+		t.Fatalf("clean ids=%v want none", got)
+	}
+	batch := svc.Build(sid, 1, 0, 5, visible)
 	if got := snapshotEntityIDs(batch); !equalIDs(got, []world.EntityID{2}) || batch.Stats.ForcedRefreshCandidates != 1 {
-		t.Fatalf("build4 refresh ids=%v stats=%+v", got, batch.Stats)
+		t.Fatalf("refresh ids=%v stats=%+v", got, batch.Stats)
 	}
 }
 
@@ -226,12 +299,37 @@ func TestPolicyValidation(t *testing.T) {
 	}
 }
 
+func primeKnown(svc *Service, sid session.ID, selfID world.EntityID, visible []world.EntityState) {
+	_ = svc.Build(sid, selfID, 0, 1, visible)
+	for _, entity := range visible {
+		svc.ConfirmSpawn(sid, entity.ID)
+	}
+}
+
 func snapshotEntityIDs(batch Batch) []world.EntityID {
 	var ids []world.EntityID
 	for _, outbound := range batch.Messages {
 		if snapshot, ok := outbound.Message.(protocol.WorldSnapshot); ok {
 			for _, entity := range snapshot.Entities {
 				ids = append(ids, entity.EntityID)
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+func lifecycleIDs(batch Batch, spawn bool) []world.EntityID {
+	var ids []world.EntityID
+	for _, outbound := range batch.Messages {
+		switch message := outbound.Message.(type) {
+		case protocol.EntitySpawn:
+			if spawn {
+				ids = append(ids, message.EntityID)
+			}
+		case protocol.EntityDespawn:
+			if !spawn {
+				ids = append(ids, message.EntityID)
 			}
 		}
 	}
