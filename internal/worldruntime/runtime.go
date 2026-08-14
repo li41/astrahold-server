@@ -9,6 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
+	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
@@ -85,6 +86,8 @@ type StepMetrics struct {
 	CommandQueueDepthAfter                   int
 	CommandsDrained                         int
 	EntityActionsApplied                    int
+	RespawnsScheduled                       int
+	RespawnPolicyDue                        int
 	RespawnsApplied                         int
 	DirtyVitalsGlobalBudget                 int
 	DirtyVitalsSelected                     int
@@ -165,6 +168,7 @@ type Runtime struct {
 	dynamic                   DynamicWorld
 	siege                     *siege.Service
 	combat                    *combat.Service
+	respawnPolicy             *respawnpolicy.Service
 	dynamicRevision           uint64
 	sessionDynamicRevision    map[session.ID]uint64
 	entityVitalsRevision      map[world.EntityID]uint64

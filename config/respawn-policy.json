@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "revision": "s3f3-001",
+  "respawn_delay_seconds": 5.0,
+  "default_spawn_point": "field-camp",
+  "spawn_points": [
+    {
+      "id": "field-camp",
+      "x": 0,
+      "y": 0,
+      "z": -35,
+      "layer": 0
+    },
+    {
+      "id": "courtyard-checkpoint",
+      "x": 0,
+      "y": 0,
+      "z": 25,
+      "layer": 0
+    }
+  ]
+}
