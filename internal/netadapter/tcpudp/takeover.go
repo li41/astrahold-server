@@ -46,7 +46,13 @@ func (s *Server) retireTakenOverPeer(expected worldruntime.SessionOwnershipFence
 	s.mu.RLock()
 	var old *peer
 	for _, candidate := range s.peers {
-		if candidate.ownership == expected && candidate.joined.Load() {
+		// joined is the publication barrier for ownership. Load it before reading the
+		// immutable fence; the F.18/F.20 handle path writes ownership and only then stores
+		// joined=true. Reversing this order creates a race with a peer still publishing.
+		if !candidate.joined.Load() {
+			continue
+		}
+		if candidate.ownership == expected {
 			old = candidate
 			break
 		}
