@@ -9,9 +9,12 @@ import (
 )
 
 var (
-	ErrMatchUnavailable       = errors.New("siege: match unavailable")
-	ErrInvalidMatchDefinition = errors.New("siege: invalid match definition")
-	ErrInvalidParticipant     = errors.New("siege: invalid participant")
+	ErrMatchUnavailable            = errors.New("siege: match unavailable")
+	ErrInvalidMatchDefinition      = errors.New("siege: invalid match definition")
+	ErrInvalidParticipant          = errors.New("siege: invalid participant")
+	ErrInvalidCastleOwnership      = errors.New("siege: invalid castle ownership")
+	ErrInvalidCastleTransfer       = errors.New("siege: invalid castle ownership transfer")
+	ErrThroneResolutionUnavailable = errors.New("siege: throne resolution unavailable")
 )
 
 type Team uint8
@@ -72,8 +75,8 @@ type MatchState struct {
 	WinnerID          string
 }
 
-// CastleOwnershipState is Server-authoritative ownership for the castle defended by this
-// configured match. D.3A keeps it process-local; durable/cross-process ownership is a later stage.
+// CastleOwnershipState is the Server-authoritative owner snapshot for the castle defended by
+// this match. D.3B may restore it from durable single-writer storage before the world loop starts.
 type CastleOwnershipState struct {
 	Revision            uint64
 	OwnerID             string
@@ -81,10 +84,32 @@ type CastleOwnershipState struct {
 	LastTransferMatchID string
 }
 
+// CastleOwnershipTransfer is the compare-and-swap intent emitted by a ready throne capture.
+// ExpectedRevision and PreviousOwnerID fence stale storage writers; MatchID is provenance.
+type CastleOwnershipTransfer struct {
+	ExpectedRevision uint64
+	PreviousOwnerID  string
+	OwnerID          string
+	MatchID          string
+}
+
+func (t CastleOwnershipTransfer) Valid() bool {
+	return t.ExpectedRevision > 0 && t.PreviousOwnerID != "" && t.OwnerID != "" && t.MatchID != ""
+}
+
+func (t CastleOwnershipTransfer) RequiresOwnershipChange() bool {
+	return t.Valid() && t.PreviousOwnerID != t.OwnerID
+}
+
+// CastleOwnershipCommitter durably applies exactly one ownership transfer and returns the
+// committed authoritative snapshot. The production worldd implementation performs fsync + CAS.
+type CastleOwnershipCommitter func(CastleOwnershipTransfer) (CastleOwnershipState, error)
+
 type matchRuntime struct {
 	definition              MatchDefinition
 	state                   MatchState
 	ownership               CastleOwnershipState
+	ownershipCommitter      CastleOwnershipCommitter
 	participantTeams        map[world.EntityID]Team
 	trustedParticipantTeams map[characteridentity.ID]Team
 	throne                  *throneRuntime
@@ -146,6 +171,23 @@ func (s *Service) CastleOwnershipState() (CastleOwnershipState, bool) {
 		return CastleOwnershipState{}, false
 	}
 	return s.match.ownership, true
+}
+
+// ConfigureCastleOwnershipPersistence restores the durable owner before gameplay starts and
+// installs the commit barrier used by throne resolution. It is intentionally startup-only.
+func (s *Service) ConfigureCastleOwnershipPersistence(state CastleOwnershipState, committer CastleOwnershipCommitter) error {
+	if s == nil || s.match == nil {
+		return ErrMatchUnavailable
+	}
+	if s.match.state.Phase != MatchPhaseGate || s.match.state.GateBreached || s.match.state.WinnerTeam != TeamUnknown || s.match.state.WinnerID != "" {
+		return ErrInvalidCastleOwnership
+	}
+	if !validCastleOwnership(state) || (state.OwnerID != s.match.definition.AttackerID && state.OwnerID != s.match.definition.DefenderID) || committer == nil {
+		return ErrInvalidCastleOwnership
+	}
+	s.match.ownership = state
+	s.match.ownershipCommitter = committer
+	return nil
 }
 
 // AssignResolvedParticipant maps only an already-trusted CharacterID through this match's
@@ -211,19 +253,44 @@ func (s *Service) ObserveGateState(state GateState) bool {
 	return true
 }
 
-// ResolveThroneCapture performs the D.3A authoritative completion transaction. Only a ready
-// attacker capture may complete the match. The same world-owner call records the winner,
-// advances Throne -> Completed, and transfers castle ownership from defender to attacker.
-func (s *Service) ResolveThroneCapture() bool {
+// PrepareThroneCaptureResolution exposes a deterministic CAS intent but does not mutate match
+// or ownership state. Persistence may fail/retry while the D.2B readiness latch remains set.
+func (s *Service) PrepareThroneCaptureResolution() (CastleOwnershipTransfer, bool) {
 	if s == nil || s.match == nil || s.match.throne == nil || s.match.throne.capture == nil {
-		return false
+		return CastleOwnershipTransfer{}, false
 	}
 	if s.match.state.Phase != MatchPhaseThrone || s.match.state.WinnerTeam != TeamUnknown || s.match.state.WinnerID != "" {
-		return false
+		return CastleOwnershipTransfer{}, false
 	}
-	capture := s.match.throne.capture.state
-	if !capture.ReadyForResolution {
-		return false
+	if !s.match.throne.capture.state.ReadyForResolution || !validCastleOwnership(s.match.ownership) {
+		return CastleOwnershipTransfer{}, false
+	}
+	return CastleOwnershipTransfer{
+		ExpectedRevision: s.match.ownership.Revision,
+		PreviousOwnerID:  s.match.ownership.OwnerID,
+		OwnerID:          s.match.definition.AttackerID,
+		MatchID:          s.match.definition.ID,
+	}, true
+}
+
+// CommitThroneCaptureResolution publishes a previously durable ownership snapshot and then
+// completes the match. No match revision changes unless the ownership result validates against
+// the current prepared transfer.
+func (s *Service) CommitThroneCaptureResolution(ownership CastleOwnershipState) error {
+	transfer, ok := s.PrepareThroneCaptureResolution()
+	if !ok {
+		return ErrThroneResolutionUnavailable
+	}
+	if !validCastleOwnership(ownership) {
+		return ErrInvalidCastleOwnership
+	}
+	current := s.match.ownership
+	if transfer.RequiresOwnershipChange() {
+		if transfer.ExpectedRevision == ^uint64(0) || ownership.Revision != transfer.ExpectedRevision+1 || ownership.PreviousOwnerID != transfer.PreviousOwnerID || ownership.OwnerID != transfer.OwnerID || ownership.LastTransferMatchID != transfer.MatchID {
+			return ErrInvalidCastleOwnership
+		}
+	} else if ownership != current {
+		return ErrInvalidCastleOwnership
 	}
 
 	nextMatch := s.match.state
@@ -235,20 +302,57 @@ func (s *Service) ResolveThroneCapture() bool {
 		nextMatch.Revision = 1
 	}
 
-	nextOwnership := s.match.ownership
-	nextOwnership.PreviousOwnerID = nextOwnership.OwnerID
-	nextOwnership.OwnerID = s.match.definition.AttackerID
-	nextOwnership.LastTransferMatchID = s.match.definition.ID
-	nextOwnership.Revision++
-	if nextOwnership.Revision == 0 {
-		nextOwnership.Revision = 1
-	}
-
-	// Publish the match and ownership results together before settling objective activity.
-	// WorldRuntime invokes this only on the single world-owner tick.
 	s.match.state = nextMatch
-	s.match.ownership = nextOwnership
+	s.match.ownership = ownership
 	s.ObserveThronePresence(nil)
 	s.AdvanceThroneCapture(0)
-	return true
+	return nil
+}
+
+// ResolveThroneCaptureWithError enforces the D.3B durable completion barrier when configured.
+// Storage failure leaves the match in Throne with ReadyForResolution latched so a later tick can retry.
+func (s *Service) ResolveThroneCaptureWithError() (bool, error) {
+	transfer, ok := s.PrepareThroneCaptureResolution()
+	if !ok {
+		return false, nil
+	}
+	current := s.match.ownership
+	committed := current
+	if transfer.RequiresOwnershipChange() {
+		if s.match.ownershipCommitter != nil {
+			var err error
+			committed, err = s.match.ownershipCommitter(transfer)
+			if err != nil {
+				return false, err
+			}
+		} else {
+			if transfer.ExpectedRevision == ^uint64(0) {
+				return false, ErrInvalidCastleOwnership
+			}
+			committed = CastleOwnershipState{
+				Revision:            transfer.ExpectedRevision + 1,
+				OwnerID:             transfer.OwnerID,
+				PreviousOwnerID:     transfer.PreviousOwnerID,
+				LastTransferMatchID: transfer.MatchID,
+			}
+		}
+	}
+	if err := s.CommitThroneCaptureResolution(committed); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ResolveThroneCapture preserves the D.3A bool-only call site. Production worldd configures a
+// committer whose failures are logged at the persistence boundary; failure remains a no-op here.
+func (s *Service) ResolveThroneCapture() bool {
+	resolved, _ := s.ResolveThroneCaptureWithError()
+	return resolved
+}
+
+func validCastleOwnership(state CastleOwnershipState) bool {
+	if state.Revision == 0 || state.OwnerID == "" {
+		return false
+	}
+	return (state.PreviousOwnerID == "") == (state.LastTransferMatchID == "")
 }

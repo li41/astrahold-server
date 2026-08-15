@@ -61,8 +61,8 @@ func (r *Runtime) SiegeMatchState() (siege.MatchState, bool) {
 	return r.siege.MatchState()
 }
 
-// SiegeCastleOwnershipState exposes the process-local Server-authoritative castle owner.
-// D.3A does not make this durable or add it to Protocol v7.
+// SiegeCastleOwnershipState exposes Server-authoritative castle ownership. Production worldd
+// restores this from durable single-writer storage before the world loop starts in D.3B.
 func (r *Runtime) SiegeCastleOwnershipState() (siege.CastleOwnershipState, bool) {
 	if r == nil || r.siege == nil {
 		return siege.CastleOwnershipState{}, false
@@ -80,7 +80,7 @@ func (r *Runtime) SiegeThronePresenceState() (siege.ThronePresenceState, bool) {
 }
 
 // SiegeThroneCaptureState exposes Server-clock capture progress for observability/tests.
-// D.3A consumes ReadyForResolution internally; the progress itself remains off-wire.
+// D.3B keeps progress off-wire and only publishes Completed after ownership durability succeeds.
 func (r *Runtime) SiegeThroneCaptureState() (siege.ThroneCaptureState, bool) {
 	if r == nil || r.siege == nil {
 		return siege.ThroneCaptureState{}, false
