@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
@@ -20,10 +21,12 @@ import (
 )
 
 const (
-	trustedCharacterAuthSchemaVersion      uint16 = 1
-	trustedCharacterAuthMagic                     = "ASTRAH1\x00"
-	trustedCharacterAuthHeaderBytes               = len(trustedCharacterAuthMagic) + 2
-	trustedCharacterAuthMaxCredentialBytes        = 256
+	trustedCharacterAuthLegacySchemaVersion uint16 = 1
+	trustedCharacterAuthSchemaVersion       uint16 = 2
+	trustedCharacterAuthMagic                      = "ASTRAH1\x00"
+	trustedCharacterAuthHeaderBytes                = len(trustedCharacterAuthMagic) + 2
+	trustedCharacterAuthMaxCredentialBytes         = 256
+	trustedCharacterAuthMaxCredentialIDBytes       = 128
 )
 
 var trustedCharacterAuthFile = flag.String(
@@ -33,12 +36,12 @@ var trustedCharacterAuthFile = flag.String(
 )
 
 var (
-	errTrustedCharacterAuthConfig             = errors.New("worldd: invalid trusted character auth config")
-	errTrustedCharacterAuthRequiresLoopback   = errors.New("worldd: trusted character auth requires loopback TCP listen address")
-	errTrustedCharacterAuthPreface            = errors.New("worldd: invalid trusted character auth preface")
-	errTrustedCharacterAuthCredential         = errors.New("worldd: trusted character credential rejected")
+	errTrustedCharacterAuthConfig              = errors.New("worldd: invalid trusted character auth config")
+	errTrustedCharacterAuthRequiresLoopback    = errors.New("worldd: trusted character auth requires loopback TCP listen address")
+	errTrustedCharacterAuthPreface             = errors.New("worldd: invalid trusted character auth preface")
+	errTrustedCharacterAuthCredential          = errors.New("worldd: trusted character credential rejected")
 	errTrustedCharacterCredentialProviderGrant = errors.New("worldd: trusted character credential provider returned invalid grant")
-	errTrustedCharacterTakeoverScope          = errors.New("worldd: trusted character takeover credential scope mismatch")
+	errTrustedCharacterTakeoverScope           = errors.New("worldd: trusted character takeover credential scope mismatch")
 )
 
 type trustedCharacterAuthDefinition struct {
@@ -48,14 +51,25 @@ type trustedCharacterAuthDefinition struct {
 }
 
 type trustedCharacterAuthCredential struct {
+	CredentialID        string `json:"credential_id,omitempty"`
 	TokenSHA256         string `json:"token_sha256"`
 	CharacterID         string `json:"character_id"`
 	AllowActiveTakeover bool   `json:"allow_active_takeover,omitempty"`
+	NotBefore           string `json:"not_before,omitempty"`
+	ExpiresAt           string `json:"expires_at,omitempty"`
+	RevokedAt           string `json:"revoked_at,omitempty"`
+}
+
+type staticTrustedCharacterCredentialEntry struct {
+	credentialID string
+	grant        sessioncredential.Grant
+	lifecycle    sessioncredential.Lifecycle
 }
 
 type staticTrustedCharacterCredentialProvider struct {
 	revision    string
-	credentials map[[sha256.Size]byte]sessioncredential.Grant
+	credentials map[[sha256.Size]byte]staticTrustedCharacterCredentialEntry
+	now         func() time.Time
 }
 
 type trustedCharacterAuthenticator struct {
@@ -113,10 +127,15 @@ func newTrustedCharacterAuthenticatorWithProvider(provider sessioncredential.Pro
 }
 
 func newStaticTrustedCharacterCredentialProvider(definition trustedCharacterAuthDefinition) (*staticTrustedCharacterCredentialProvider, error) {
-	if definition.SchemaVersion != trustedCharacterAuthSchemaVersion || strings.TrimSpace(definition.Revision) == "" || len(definition.Credentials) == 0 {
+	if strings.TrimSpace(definition.Revision) == "" || len(definition.Credentials) == 0 {
 		return nil, errTrustedCharacterAuthConfig
 	}
-	credentials := make(map[[sha256.Size]byte]sessioncredential.Grant, len(definition.Credentials))
+	if definition.SchemaVersion != trustedCharacterAuthLegacySchemaVersion && definition.SchemaVersion != trustedCharacterAuthSchemaVersion {
+		return nil, errTrustedCharacterAuthConfig
+	}
+
+	credentials := make(map[[sha256.Size]byte]staticTrustedCharacterCredentialEntry, len(definition.Credentials))
+	credentialIDs := make(map[string]struct{}, len(definition.Credentials))
 	for index, item := range definition.Credentials {
 		if len(item.TokenSHA256) != sha256.Size*2 || strings.ToLower(item.TokenSHA256) != item.TokenSHA256 {
 			return nil, fmt.Errorf("%w: credential[%d] token_sha256 must be 64 lowercase hex characters", errTrustedCharacterAuthConfig, index)
@@ -130,20 +149,86 @@ func newStaticTrustedCharacterCredentialProvider(definition trustedCharacterAuth
 		if _, exists := credentials[digest]; exists {
 			return nil, fmt.Errorf("%w: duplicate credential digest at index %d", errTrustedCharacterAuthConfig, index)
 		}
+
 		binding, err := characteridentity.NewTrusted(item.CharacterID)
 		if err != nil {
 			return nil, fmt.Errorf("%w: credential[%d] character_id: %v", errTrustedCharacterAuthConfig, index, err)
 		}
-		credentials[digest] = sessioncredential.Grant{
-			Identity:            binding,
-			AllowActiveTakeover: item.AllowActiveTakeover,
+
+		credentialID := ""
+		lifecycle := sessioncredential.Lifecycle{}
+		if definition.SchemaVersion == trustedCharacterAuthLegacySchemaVersion {
+			if item.CredentialID != "" || item.NotBefore != "" || item.ExpiresAt != "" || item.RevokedAt != "" {
+				return nil, fmt.Errorf("%w: credential[%d] lifecycle fields require schema_version %d", errTrustedCharacterAuthConfig, index, trustedCharacterAuthSchemaVersion)
+			}
+		} else {
+			credentialID = strings.TrimSpace(item.CredentialID)
+			if credentialID == "" || credentialID != item.CredentialID || len(credentialID) > trustedCharacterAuthMaxCredentialIDBytes {
+				return nil, fmt.Errorf("%w: credential[%d] credential_id must be 1..%d trimmed bytes", errTrustedCharacterAuthConfig, index, trustedCharacterAuthMaxCredentialIDBytes)
+			}
+			if _, exists := credentialIDs[credentialID]; exists {
+				return nil, fmt.Errorf("%w: duplicate credential_id %q", errTrustedCharacterAuthConfig, credentialID)
+			}
+			credentialIDs[credentialID] = struct{}{}
+			lifecycle, err = parseTrustedCharacterCredentialLifecycle(item)
+			if err != nil {
+				return nil, fmt.Errorf("%w: credential[%d] %q lifecycle: %v", errTrustedCharacterAuthConfig, index, credentialID, err)
+			}
+		}
+
+		credentials[digest] = staticTrustedCharacterCredentialEntry{
+			credentialID: credentialID,
+			grant: sessioncredential.Grant{
+				Identity:            binding,
+				AllowActiveTakeover: item.AllowActiveTakeover,
+			},
+			lifecycle: lifecycle,
 		}
 	}
-	return &staticTrustedCharacterCredentialProvider{revision: definition.Revision, credentials: credentials}, nil
+	return &staticTrustedCharacterCredentialProvider{
+		revision:    definition.Revision,
+		credentials: credentials,
+		now:         time.Now,
+	}, nil
+}
+
+func parseTrustedCharacterCredentialLifecycle(item trustedCharacterAuthCredential) (sessioncredential.Lifecycle, error) {
+	notBefore, err := parseOptionalTrustedCharacterCredentialTime(item.NotBefore)
+	if err != nil {
+		return sessioncredential.Lifecycle{}, fmt.Errorf("not_before: %w", err)
+	}
+	expiresAt, err := parseOptionalTrustedCharacterCredentialTime(item.ExpiresAt)
+	if err != nil {
+		return sessioncredential.Lifecycle{}, fmt.Errorf("expires_at: %w", err)
+	}
+	revokedAt, err := parseOptionalTrustedCharacterCredentialTime(item.RevokedAt)
+	if err != nil {
+		return sessioncredential.Lifecycle{}, fmt.Errorf("revoked_at: %w", err)
+	}
+	lifecycle := sessioncredential.Lifecycle{
+		NotBefore: notBefore,
+		ExpiresAt: expiresAt,
+		RevokedAt: revokedAt,
+	}
+	if err := lifecycle.Validate(); err != nil {
+		return sessioncredential.Lifecycle{}, err
+	}
+	return lifecycle, nil
+}
+
+func parseOptionalTrustedCharacterCredentialTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.UTC(), nil
 }
 
 func (p *staticTrustedCharacterCredentialProvider) Resolve(ctx context.Context, credential []byte) (sessioncredential.Grant, error) {
-	if p == nil || len(p.credentials) == 0 || len(credential) == 0 {
+	if p == nil || len(p.credentials) == 0 || len(credential) == 0 || p.now == nil {
 		return sessioncredential.Grant{}, errTrustedCharacterAuthCredential
 	}
 	if ctx != nil {
@@ -154,11 +239,20 @@ func (p *staticTrustedCharacterCredentialProvider) Resolve(ctx context.Context, 
 		}
 	}
 	digest := sha256.Sum256(credential)
-	grant, ok := p.credentials[digest]
+	entry, ok := p.credentials[digest]
 	if !ok {
 		return sessioncredential.Grant{}, errTrustedCharacterAuthCredential
 	}
-	return grant, nil
+	if err := entry.lifecycle.ValidateAt(p.now().UTC()); err != nil {
+		if entry.credentialID == "" {
+			return sessioncredential.Grant{}, errors.Join(errTrustedCharacterAuthCredential, err)
+		}
+		return sessioncredential.Grant{}, errors.Join(
+			errTrustedCharacterAuthCredential,
+			fmt.Errorf("credential_id %q: %w", entry.credentialID, err),
+		)
+	}
+	return entry.grant, nil
 }
 
 func validateTrustedCharacterAuthListenAddress(address string) error {
