@@ -88,6 +88,8 @@ func (r *takeoverRuntime) EnqueueFencedLeave(fence worldruntime.SessionOwnership
 	return nil
 }
 
+func allowCharacterTakeoverForTest(context.Context, CharacterTakeoverRequest) error { return nil }
+
 func TestTrustedActiveTakeoverReusesEntityEvictsOldPeerAndRoutesNewOwner(t *testing.T) {
 	runtime := newTakeoverRuntime()
 	cfg := DefaultConfig()
@@ -99,6 +101,7 @@ func TestTrustedActiveTakeoverReusesEntityEvictsOldPeerAndRoutesNewOwner(t *test
 		t.Fatal(err)
 	}
 	cfg.CharacterIdentityFactory = func(session.ID, world.EntityID) (characteridentity.Binding, error) { return identity, nil }
+	cfg.CharacterTakeoverAuthorizer = allowCharacterTakeoverForTest
 	var restoreCalls atomic.Int32
 	cfg.CharacterRestoreFactory = func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error) {
 		restoreCalls.Add(1)
@@ -233,6 +236,7 @@ func TestTrustedActiveTakeoverTransferFailureKeepsOldPeerActive(t *testing.T) {
 	cfg.WorldIdentity = protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: testGameplaySHA}
 	identity, _ := characteridentity.NewTrusted("character:tcp-takeover-fail")
 	cfg.CharacterIdentityFactory = func(session.ID, world.EntityID) (characteridentity.Binding, error) { return identity, nil }
+	cfg.CharacterTakeoverAuthorizer = allowCharacterTakeoverForTest
 	codec := gamev1.Codec{}
 	server, cancel, serveDone := startTCPUDPTestServer(t, cfg, runtime, codec)
 	defer stopTCPUDPTestServer(t, server, cancel, serveDone)

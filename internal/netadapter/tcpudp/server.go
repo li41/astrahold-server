@@ -21,15 +21,15 @@ import (
 )
 
 var (
-	ErrNotOpen                       = errors.New("tcpudp: server is not open")
-	ErrAlreadyOpen                   = errors.New("tcpudp: server already open")
-	ErrInvalidPlayerSpec             = errors.New("tcpudp: invalid player bootstrap spec")
-	ErrInvalidWorldIdentity          = errors.New("tcpudp: invalid world identity")
-	ErrInvalidCharacterIdentity      = errors.New("tcpudp: invalid character identity")
+	ErrNotOpen                        = errors.New("tcpudp: server is not open")
+	ErrAlreadyOpen                    = errors.New("tcpudp: server already open")
+	ErrInvalidPlayerSpec              = errors.New("tcpudp: invalid player bootstrap spec")
+	ErrInvalidWorldIdentity           = errors.New("tcpudp: invalid world identity")
+	ErrInvalidCharacterIdentity       = errors.New("tcpudp: invalid character identity")
 	ErrInvalidCharacterConnectionPlan = errors.New("tcpudp: invalid trusted character connection plan")
-	ErrInvalidCharacterOwnership     = errors.New("tcpudp: invalid trusted character ownership fence")
-	ErrTCPChannelMismatch            = errors.New("tcpudp: realtime message received on TCP")
-	ErrUDPChannelMismatch            = errors.New("tcpudp: reliable message received on UDP")
+	ErrInvalidCharacterOwnership      = errors.New("tcpudp: invalid trusted character ownership fence")
+	ErrTCPChannelMismatch             = errors.New("tcpudp: realtime message received on TCP")
+	ErrUDPChannelMismatch             = errors.New("tcpudp: reliable message received on UDP")
 )
 
 type RuntimeSink interface {
@@ -68,15 +68,16 @@ type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentit
 type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
 
 type Config struct {
-	TCPAddress               string
-	UDPAddress               string
-	TickRateHz               uint16
-	SnapshotRateHz           uint16
-	ReliableQueueCapacity    int
-	PlayerFactory            PlayerFactory
-	CharacterIdentityFactory CharacterIdentityFactory
-	CharacterRestoreFactory  CharacterRestoreFactory
-	WorldIdentity            protocol.WorldIdentity
+	TCPAddress                  string
+	UDPAddress                  string
+	TickRateHz                  uint16
+	SnapshotRateHz              uint16
+	ReliableQueueCapacity       int
+	PlayerFactory               PlayerFactory
+	CharacterIdentityFactory    CharacterIdentityFactory
+	CharacterRestoreFactory     CharacterRestoreFactory
+	CharacterTakeoverAuthorizer CharacterTakeoverAuthorizer
+	WorldIdentity               protocol.WorldIdentity
 }
 
 func DefaultConfig() Config {
@@ -317,6 +318,17 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 				s.emit(sid, "character_admission_release", err)
 			}
 		}()
+	}
+	if takeoverExpected.Valid() {
+		remoteAddress := ""
+		if addr := raw.RemoteAddr(); addr != nil {
+			remoteAddress = addr.String()
+		}
+		if err := s.authorizeCharacterTakeover(ctx, sid, identity, takeoverExpected, remoteAddress); err != nil {
+			s.emit(sid, "character_takeover_authorize", err)
+			_ = raw.Close()
+			return
+		}
 	}
 
 	spec := s.config.PlayerFactory(sid, entityID)
