@@ -32,7 +32,8 @@ var (
 
 type RuntimeSink interface {
 	gateway.MoveCommandSink
-	AwaitCharacterAdmission(context.Context, characteridentity.Binding) error
+	AwaitCharacterAdmission(context.Context, characteridentity.Binding) (worldruntime.CharacterAdmissionLease, error)
+	ReleaseCharacterAdmission(context.Context, worldruntime.CharacterAdmissionLease) error
 	AwaitJoin(context.Context, worldruntime.JoinRequest) error
 	EnqueueLeave(session.ID) error
 }
@@ -54,9 +55,9 @@ type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentity.Binding, error)
 
 // CharacterRestoreFactory resolves already-durable state for a trusted identity after the
-// world-owner admission barrier and before SessionWelcome is sent. It is never called for
-// the default ephemeral identity path. Implementations may perform storage I/O because
-// handleTCP is not the world-owner tick.
+// world-owner admission lease is acquired and before SessionWelcome is sent. It is never
+// called for the default ephemeral identity path. Implementations may perform storage I/O
+// because handleTCP is not the world-owner tick.
 type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
 
 type Config struct {
@@ -292,12 +293,23 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 
+	var admissionLease *worldruntime.CharacterAdmissionLease
 	if identity.Assurance == characteridentity.AssuranceTrusted {
-		if err := s.runtime.AwaitCharacterAdmission(ctx, identity); err != nil {
+		lease, err := s.runtime.AwaitCharacterAdmission(ctx, identity)
+		if err != nil {
 			s.emit(sid, "character_admission", err)
 			_ = raw.Close()
 			return
 		}
+		admissionLease = &lease
+		defer func() {
+			if admissionLease == nil {
+				return
+			}
+			if err := s.runtime.ReleaseCharacterAdmission(context.Background(), *admissionLease); err != nil {
+				s.emit(sid, "character_admission_release", err)
+			}
+		}()
 	}
 
 	var restore *worldruntime.CharacterRestore
@@ -331,16 +343,19 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	s.mu.Unlock()
 
 	if err := s.runtime.AwaitJoin(ctx, worldruntime.JoinRequest{
-		Session:       sess,
-		Entity:        spec.Entity,
-		Speed:         spec.Speed,
-		Radius:        spec.Radius,
-		MaxStepHeight: spec.MaxStepHeight,
-		Restore:       restore,
+		Session:        sess,
+		Entity:         spec.Entity,
+		Speed:          spec.Speed,
+		Radius:         spec.Radius,
+		MaxStepHeight:  spec.MaxStepHeight,
+		Restore:        restore,
+		AdmissionLease: admissionLease,
 	}); err != nil {
 		s.closePeer(p, "join_world", err)
 		return
 	}
+	// The world-owner join consumed the matching reservation atomically with active ownership.
+	admissionLease = nil
 	p.joined.Store(true)
 
 	udpPort := uint16(0)
