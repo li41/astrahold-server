@@ -77,6 +77,10 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
+	// Autosave captures the post-simulation authoritative state into the bounded process-local
+	// outbox only. Journal fsync / Store CAS remain outside the world owner.
+	r.autosaveCharacterStates(tick, &report)
+
 	if measure {
 		stageStart = time.Now()
 	}

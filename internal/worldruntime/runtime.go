@@ -36,6 +36,8 @@ type Config struct {
 	SnapshotEveryTicks                   uint64
 	CharacterMaxHP                       uint32
 	PostReviveProtectionTicks            uint64
+	CharacterStateAutosaveEveryTicks     uint64
+	MaxCharacterStateAutosavesPerTick    int
 	AOIOptions                           spatial.QueryOptions
 	ReplicationPolicy                    replication.Policy
 	MaxSpawnsPerSessionBuild             int
@@ -55,6 +57,7 @@ func DefaultConfig() Config {
 		MaxCommandsPerTick:                   2048,
 		SnapshotEveryTicks:                   2,
 		CharacterMaxHP:                       1000,
+		MaxCharacterStateAutosavesPerTick:    32,
 		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
 		ReplicationPolicy:                    replication.DefaultPolicy(),
 		MaxSpawnsPerSessionBuild:             32,
@@ -92,6 +95,10 @@ type StepMetrics struct {
 	EntityActionsApplied                     int
 	CharacterStateSaveIntentsEnqueued         int
 	CharacterStateSaveIntentFailures          int
+	CharacterStateAutosaveBudget              int
+	CharacterStateAutosaveAttempts            int
+	CharacterStateAutosaveEnqueued            int
+	CharacterStateAutosaveBudgetExhausted     bool
 	DeathOutcomesRecorded                    int
 	DeathOutcomeEventsEnqueued                int
 	DeathOutcomeEventEnqueueFailures          int
@@ -171,40 +178,43 @@ type dirtyVitalsProgress struct {
 }
 
 type Runtime struct {
-	world                     *simulation.World
-	sessions                  *session.Registry
-	characterIdentities       *characterIdentityRegistry
-	characterStateOutbox      *characterstate.Outbox
-	characterStateWorld       characterstate.WorldRef
-	replication               *replication.Service
-	replicationFrameBuilder   *simulation.ReplicationFrameBuilder
-	replicationVisibleScratch []int
-	characters                *character.Service
-	queue                     *commandQueue
-	config                    Config
-	dynamic                   DynamicWorld
-	siege                     *siege.Service
-	combat                    *combat.Service
-	respawnPolicy             *respawnpolicy.Service
-	deathPenalty              *deathpenalty.Service
-	deathOutbox               *deathoutcome.Outbox
-	deathRevision             map[world.EntityID]uint64
-	dynamicRevision           uint64
-	sessionDynamicRevision    map[session.ID]uint64
-	entityVitalsRevision      map[world.EntityID]uint64
-	dirtyVitalsEntities       map[world.EntityID]struct{}
-	dirtyVitalsScratch        []world.EntityID
-	dirtyVitalsNextEntity     world.EntityID
-	dirtyVitalsNextSession    map[world.EntityID]session.ID
-	dirtyVitalsProgress       map[world.EntityID]dirtyVitalsProgress
-	respawnVitalsPhases       map[world.EntityID]respawnVitalsPhase
-	reviveProtectionUntil     map[world.EntityID]uint64
-	sessionVitalsRevision     map[session.ID]map[world.EntityID]uint64
-	sessionVitalsPending      map[session.ID]map[world.EntityID]struct{}
-	lifecycleSessionCursor    int
-	vitalsSessionCursor       int
-	lifecycleChurnActive      bool
-	initialBootstrapState     uint8
+	world                           *simulation.World
+	sessions                        *session.Registry
+	characterIdentities             *characterIdentityRegistry
+	characterStateOutbox            *characterstate.Outbox
+	characterStateWorld             characterstate.WorldRef
+	characterStateAutosaveLastTick  map[world.EntityID]uint64
+	characterStateAutosaveCursor    int
+	characterStateAutosaveNextTick  uint64
+	replication                     *replication.Service
+	replicationFrameBuilder         *simulation.ReplicationFrameBuilder
+	replicationVisibleScratch       []int
+	characters                      *character.Service
+	queue                           *commandQueue
+	config                          Config
+	dynamic                         DynamicWorld
+	siege                           *siege.Service
+	combat                          *combat.Service
+	respawnPolicy                   *respawnpolicy.Service
+	deathPenalty                    *deathpenalty.Service
+	deathOutbox                     *deathoutcome.Outbox
+	deathRevision                   map[world.EntityID]uint64
+	dynamicRevision                 uint64
+	sessionDynamicRevision          map[session.ID]uint64
+	entityVitalsRevision            map[world.EntityID]uint64
+	dirtyVitalsEntities             map[world.EntityID]struct{}
+	dirtyVitalsScratch              []world.EntityID
+	dirtyVitalsNextEntity           world.EntityID
+	dirtyVitalsNextSession          map[world.EntityID]session.ID
+	dirtyVitalsProgress             map[world.EntityID]dirtyVitalsProgress
+	respawnVitalsPhases             map[world.EntityID]respawnVitalsPhase
+	reviveProtectionUntil           map[world.EntityID]uint64
+	sessionVitalsRevision           map[session.ID]map[world.EntityID]uint64
+	sessionVitalsPending            map[session.ID]map[world.EntityID]struct{}
+	lifecycleSessionCursor          int
+	vitalsSessionCursor             int
+	lifecycleChurnActive            bool
+	initialBootstrapState           uint8
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -222,6 +232,9 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.CharacterMaxHP == 0 {
 		config.CharacterMaxHP = 1000
+	}
+	if config.CharacterStateAutosaveEveryTicks > 0 && config.MaxCharacterStateAutosavesPerTick <= 0 {
+		config.MaxCharacterStateAutosavesPerTick = 32
 	}
 	if config.MaxSpawnsPerSessionBuild <= 0 {
 		config.MaxSpawnsPerSessionBuild = 32
@@ -252,24 +265,25 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		panic(err)
 	}
 	r := &Runtime{
-		world:                   w,
-		sessions:                session.NewRegistry(),
-		characterIdentities:     newCharacterIdentityRegistry(),
-		replication:             replication.NewService(config.ReplicationPolicy),
-		replicationFrameBuilder: simulation.NewReplicationFrameBuilder(),
-		characters:              characters,
-		queue:                   newCommandQueue(config.CommandQueueCapacity),
-		config:                  config,
-		deathRevision:           make(map[world.EntityID]uint64),
-		sessionDynamicRevision:  make(map[session.ID]uint64),
-		entityVitalsRevision:    make(map[world.EntityID]uint64),
-		dirtyVitalsEntities:     make(map[world.EntityID]struct{}),
-		dirtyVitalsNextSession:  make(map[world.EntityID]session.ID),
-		dirtyVitalsProgress:     make(map[world.EntityID]dirtyVitalsProgress),
-		respawnVitalsPhases:     make(map[world.EntityID]respawnVitalsPhase),
-		reviveProtectionUntil:   make(map[world.EntityID]uint64),
-		sessionVitalsRevision:   make(map[session.ID]map[world.EntityID]uint64),
-		sessionVitalsPending:    make(map[session.ID]map[world.EntityID]struct{}),
+		world:                          w,
+		sessions:                       session.NewRegistry(),
+		characterIdentities:            newCharacterIdentityRegistry(),
+		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
+		replication:                    replication.NewService(config.ReplicationPolicy),
+		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),
+		characters:                     characters,
+		queue:                          newCommandQueue(config.CommandQueueCapacity),
+		config:                         config,
+		deathRevision:                  make(map[world.EntityID]uint64),
+		sessionDynamicRevision:         make(map[session.ID]uint64),
+		entityVitalsRevision:           make(map[world.EntityID]uint64),
+		dirtyVitalsEntities:            make(map[world.EntityID]struct{}),
+		dirtyVitalsNextSession:         make(map[world.EntityID]session.ID),
+		dirtyVitalsProgress:            make(map[world.EntityID]dirtyVitalsProgress),
+		respawnVitalsPhases:            make(map[world.EntityID]respawnVitalsPhase),
+		reviveProtectionUntil:          make(map[world.EntityID]uint64),
+		sessionVitalsRevision:          make(map[session.ID]map[world.EntityID]uint64),
+		sessionVitalsPending:           make(map[session.ID]map[world.EntityID]struct{}),
 	}
 	for _, option := range options {
 		if option != nil {

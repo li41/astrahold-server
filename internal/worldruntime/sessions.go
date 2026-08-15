@@ -41,6 +41,7 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 		return
 	}
 	r.characterIdentities.bindSession(c.session)
+	r.markCharacterStateAutosaveBaseline(c.session.EntityID, report.Tick)
 	r.replication.Register(c.session.ID)
 }
 
@@ -50,6 +51,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
 		return
 	}
+	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
 	_ = s.Connection().Close()
@@ -130,6 +132,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	r.characterIdentities.bindSession(request.Session)
+	r.markCharacterStateAutosaveBaseline(request.Entity.ID, report.Tick)
 	r.replication.Register(request.Session.ID)
 }
 
@@ -142,6 +145,7 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 	// Capture authoritative trusted-character state before any leave cleanup mutates or
 	// removes character/world truth. Persistence itself runs outside the world owner.
 	r.enqueueCharacterStateSave(id, s.EntityID, report)
+	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(id)
 	r.removeSessionVitals(id)
 	r.removeEntityVitals(s.EntityID)
