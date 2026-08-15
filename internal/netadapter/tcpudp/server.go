@@ -68,30 +68,33 @@ type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentit
 type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
 
 type Config struct {
-	TCPAddress                    string
-	UDPAddress                    string
-	TickRateHz                    uint16
-	SnapshotRateHz                uint16
-	ReliableQueueCapacity         int
-	PlayerFactory                 PlayerFactory
-	CharacterIdentityFactory      CharacterIdentityFactory
-	CharacterRestoreFactory       CharacterRestoreFactory
-	CharacterTakeoverAuthorizer   CharacterTakeoverAuthorizer
-	CharacterTakeoverCandidateTTL time.Duration
-	CharacterTakeoverCooldown     time.Duration
-	WorldIdentity                 protocol.WorldIdentity
+	TCPAddress                              string
+	UDPAddress                              string
+	TickRateHz                              uint16
+	SnapshotRateHz                          uint16
+	ReliableQueueCapacity                   int
+	PlayerFactory                           PlayerFactory
+	CharacterIdentityFactory                CharacterIdentityFactory
+	TrustedCharacterConnectionAuthenticator TrustedCharacterConnectionAuthenticator
+	TrustedCharacterAuthenticationTimeout   time.Duration
+	CharacterRestoreFactory                 CharacterRestoreFactory
+	CharacterTakeoverAuthorizer             CharacterTakeoverAuthorizer
+	CharacterTakeoverCandidateTTL           time.Duration
+	CharacterTakeoverCooldown               time.Duration
+	WorldIdentity                           protocol.WorldIdentity
 }
 
 func DefaultConfig() Config {
 	return Config{
-		TCPAddress:                    "127.0.0.1:7777",
-		UDPAddress:                    "127.0.0.1:7778",
-		TickRateHz:                    20,
-		SnapshotRateHz:                10,
-		ReliableQueueCapacity:         128,
-		CharacterIdentityFactory:      defaultCharacterIdentityFactory,
-		CharacterTakeoverCandidateTTL: defaultCharacterTakeoverCandidateTTL,
-		CharacterTakeoverCooldown:     defaultCharacterTakeoverCooldown,
+		TCPAddress:                            "127.0.0.1:7777",
+		UDPAddress:                            "127.0.0.1:7778",
+		TickRateHz:                            20,
+		SnapshotRateHz:                        10,
+		ReliableQueueCapacity:                 128,
+		CharacterIdentityFactory:              defaultCharacterIdentityFactory,
+		TrustedCharacterAuthenticationTimeout: defaultTrustedCharacterAuthenticationTimeout,
+		CharacterTakeoverCandidateTTL:         defaultCharacterTakeoverCandidateTTL,
+		CharacterTakeoverCooldown:             defaultCharacterTakeoverCooldown,
 	}
 }
 
@@ -157,6 +160,9 @@ func NewServer(config Config, runtime RuntimeSink, codec transport.PayloadCodec)
 	}
 	if config.CharacterIdentityFactory == nil {
 		config.CharacterIdentityFactory = defaultCharacterIdentityFactory
+	}
+	if config.TrustedCharacterAuthenticationTimeout <= 0 {
+		config.TrustedCharacterAuthenticationTimeout = defaultTrustedCharacterAuthenticationTimeout
 	}
 	if config.CharacterTakeoverCandidateTTL <= 0 {
 		config.CharacterTakeoverCandidateTTL = defaultCharacterTakeoverCandidateTTL
@@ -297,16 +303,32 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	}
 	sid := session.ID(s.nextSession.Add(1))
 	allocatedEntityID := world.EntityID(s.nextEntity.Add(1))
-	identity, err := s.config.CharacterIdentityFactory(sid, allocatedEntityID)
-	if err != nil {
-		s.emit(sid, "character_identity_factory", err)
-		_ = raw.Close()
-		return
-	}
-	if !identity.Valid() {
-		s.emit(sid, "character_identity_factory", ErrInvalidCharacterIdentity)
-		_ = raw.Close()
-		return
+
+	var identity characteridentity.Binding
+	takeoverAuthorizer := s.config.CharacterTakeoverAuthorizer
+	if s.config.TrustedCharacterConnectionAuthenticator != nil {
+		authentication, err := s.authenticateTrustedCharacterConnection(ctx, raw, sid, allocatedEntityID)
+		if err != nil {
+			s.emit(sid, "character_connection_authenticate", err)
+			_ = raw.Close()
+			return
+		}
+		identity = authentication.Identity
+		// Authenticated connections never fall back to the config-global F.21 authorizer.
+		// Active takeover authority must remain bound to this connection's authentication result.
+		takeoverAuthorizer = authentication.TakeoverAuthorizer
+	} else {
+		identity, err = s.config.CharacterIdentityFactory(sid, allocatedEntityID)
+		if err != nil {
+			s.emit(sid, "character_identity_factory", err)
+			_ = raw.Close()
+			return
+		}
+		if !identity.Valid() {
+			s.emit(sid, "character_identity_factory", ErrInvalidCharacterIdentity)
+			_ = raw.Close()
+			return
+		}
 	}
 
 	entityID := allocatedEntityID
@@ -356,7 +378,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 				s.takeoverCandidates.release(*takeoverCandidateLease)
 			}
 		}()
-		if err := s.authorizeCharacterTakeover(ctx, sid, identity, takeoverExpected, remoteAddress); err != nil {
+		if err := authorizeCharacterTakeoverWith(ctx, sid, identity, takeoverExpected, remoteAddress, takeoverAuthorizer); err != nil {
 			s.emit(sid, "character_takeover_authorize", err)
 			_ = raw.Close()
 			return
