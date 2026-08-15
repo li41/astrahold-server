@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "revision": "s4e1-001",
+  "spawn_points": [
+    {
+      "id": "field-camp",
+      "class": "safe",
+      "x": 0,
+      "y": 0,
+      "z": -35,
+      "layer": 0,
+      "checkpoint_activation_radius": 0
+    },
+    {
+      "id": "courtyard-checkpoint",
+      "class": "checkpoint",
+      "x": 0,
+      "y": 0,
+      "z": 25,
+      "layer": 0,
+      "checkpoint_activation_radius": 4
+    },
+    {
+      "id": "siege-rally",
+      "class": "siege",
+      "x": 20,
+      "y": 0,
+      "z": -35,
+      "layer": 0,
+      "checkpoint_activation_radius": 0
+    }
+  ],
+  "contexts": [
+    {
+      "context": "pve",
+      "respawn_delay_seconds": 1,
+      "default_spawn_point": "field-camp",
+      "allowed_spawn_classes": ["safe", "checkpoint"]
+    },
+    {
+      "context": "pvp",
+      "respawn_delay_seconds": 1,
+      "default_spawn_point": "field-camp",
+      "allowed_spawn_classes": ["safe"]
+    },
+    {
+      "context": "siege",
+      "respawn_delay_seconds": 1,
+      "default_spawn_point": "siege-rally",
+      "allowed_spawn_classes": ["safe", "siege"]
+    }
+  ]
+}
