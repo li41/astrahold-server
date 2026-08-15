@@ -46,6 +46,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in entityVitalsState
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
 		return protocol.EntityVitalsState{EntityID:world.EntityID(in.EntityID),HP:in.HP,MaxHP:in.MaxHP,Defeated:in.Defeated},nil
+	case protocol.MessageSiegeMatchState:
+		var in siegeMatchState
+		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
+		return protocol.SiegeMatchState{Revision:in.Revision,MatchID:in.MatchID,AttackerID:in.AttackerID,DefenderID:in.DefenderID,YourTeam:protocol.SiegeTeam(in.YourTeam),Phase:protocol.SiegePhase(in.Phase),BreachGateID:in.BreachGateID,ThroneObjectiveID:in.ThroneObjectiveID,GateBreached:in.GateBreached},nil
 	default:
 		return nil, ErrUnsupportedMessage
 	}

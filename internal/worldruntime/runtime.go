@@ -201,6 +201,7 @@ type Runtime struct {
 	deathRevision                   map[world.EntityID]uint64
 	dynamicRevision                 uint64
 	sessionDynamicRevision          map[session.ID]uint64
+	sessionSiegeState               map[session.ID]siegeDeliveryStamp
 	entityVitalsRevision            map[world.EntityID]uint64
 	dirtyVitalsEntities             map[world.EntityID]struct{}
 	dirtyVitalsScratch              []world.EntityID
@@ -276,6 +277,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config:                         config,
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
+		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),
 		entityVitalsRevision:           make(map[world.EntityID]uint64),
 		dirtyVitalsEntities:            make(map[world.EntityID]struct{}),
 		dirtyVitalsNextSession:         make(map[world.EntityID]session.ID),

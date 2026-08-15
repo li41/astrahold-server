@@ -22,6 +22,7 @@ import (
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
+	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/worldruntime"
@@ -40,6 +41,7 @@ func main() {
 		snapshotRate                     = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
 		worldPath                        = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
 		combatPath                       = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		siegeMatchPath                   = flag.String("siege-match", "config/siege-match.json", "Authoritative Siege Match config JSON path")
 		respawnPolicyPath                = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
 		deathPenaltyPath                 = flag.String("death-penalty", "config/death-penalty.json", "Server death penalty policy JSON path")
 		deathOutcomeOutboxCapacity       = flag.Int("death-outcome-outbox-capacity", 4096, "Process-local death outcome outbox capacity")
@@ -117,6 +119,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("load gameplay world %q: %v", *worldPath, err)
 	}
+	loadedSiegeMatch, err := siege.LoadMatchFile(*siegeMatchPath)
+	if err != nil {
+		log.Fatalf("load siege match %q: %v", *siegeMatchPath, err)
+	}
+	if err := siege.ValidateMatchAgainstGates(loadedSiegeMatch.Definition, loadedWorld.Definition.Gates); err != nil {
+		log.Fatalf("validate siege match %q against gameplay world: %v", *siegeMatchPath, err)
+	}
 	loadedCombat, err := combat.LoadFile(*combatPath)
 	if err != nil {
 		log.Fatalf("load combat actions %q: %v", *combatPath, err)
@@ -180,6 +189,7 @@ func main() {
 		runtimeConfig,
 		worldruntime.WithDynamicWorld(nav),
 		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
+		worldruntime.WithSiegeMatch(loadedSiegeMatch.Definition),
 		worldruntime.WithCombatService(combatService),
 		worldruntime.WithRespawnPolicy(respawnService),
 		worldruntime.WithDeathPenalty(deathPenaltyService),
@@ -232,7 +242,7 @@ func main() {
 		characterStateDone <- err
 	}()
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d character_state_save_journal_id=%s character_state_save_journal_last_record=%d character_state_save_checkpoint_record=%d character_state_save_recovered_records=%d character_state_autosave_ticks=%d character_state_autosaves_per_tick=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, characterStateSaveJournal.ID(), characterStateSaveJournal.LastRecordID(), characterStateSaveCheckpoint.RecordID, recoveredCharacterStateSaves, autosaveTicks, *characterStateAutosavesPerTick, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d siege_match_revision=%s siege_match=%s attacker=%s defender=%s breach_gate=%s throne=%s respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d character_state_save_journal_id=%s character_state_save_journal_last_record=%d character_state_save_checkpoint_record=%d character_state_save_recovered_records=%d character_state_autosave_ticks=%d character_state_autosaves_per_tick=%d post_revive_protection_ticks=%d spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), loadedSiegeMatch.Revision, loadedSiegeMatch.Definition.ID, loadedSiegeMatch.Definition.AttackerID, loadedSiegeMatch.Definition.DefenderID, loadedSiegeMatch.Definition.BreachGateID, loadedSiegeMatch.Definition.ThroneObjectiveID, respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, characterStateSaveJournal.ID(), characterStateSaveJournal.LastRecordID(), characterStateSaveCheckpoint.RecordID, recoveredCharacterStateSaves, autosaveTicks, *characterStateAutosavesPerTick, protectionTicks, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("death outcome durability: journal=%s checkpoint=%s append_fsync=true checkpoint_atomic_rename=true", deathJournal.Path(), deathCheckpointStore.Path())
 	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true save_journal=%s save_checkpoint=%s journal_append_fsync=true checkpoint_atomic_rename=true startup_recovery=true restore_exact_world=true defeated_restore=true autosave_ticks=%d autosaves_per_tick=%d autosave_capture_process_local=true", characterStateStore.Path(), characterStateOutbox.Capacity(), characterStateSaveJournal.Path(), characterStateSaveCheckpointStore.Path(), autosaveTicks, *characterStateAutosavesPerTick)
 	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")

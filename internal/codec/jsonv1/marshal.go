@@ -32,6 +32,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		out:=worldDynamicState{Revision:m.Revision,Blockers:make([]worldBlockerState,len(m.Blockers)),Gates:make([]worldGateState,len(m.Gates))};for i,b:=range m.Blockers{out.Blockers[i]=worldBlockerState{ID:b.ID,Enabled:b.Enabled}};for i,g:=range m.Gates{out.Gates[i]=worldGateState{ID:g.ID,HP:g.HP,MaxHP:g.MaxHP,Destroyed:g.Destroyed}};return json.Marshal(out)
 	case protocol.EntityVitalsState:
 		return json.Marshal(entityVitalsState{EntityID:uint64(m.EntityID),HP:m.HP,MaxHP:m.MaxHP,Defeated:m.Defeated})
+	case protocol.SiegeMatchState:
+		return json.Marshal(siegeMatchState{Revision:m.Revision,MatchID:m.MatchID,AttackerID:m.AttackerID,DefenderID:m.DefenderID,YourTeam:string(m.YourTeam),Phase:string(m.Phase),BreachGateID:m.BreachGateID,ThroneObjectiveID:m.ThroneObjectiveID,GateBreached:m.GateBreached})
 	default:
 		return nil, ErrUnsupportedMessage
 	}
