@@ -68,26 +68,30 @@ type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentit
 type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
 
 type Config struct {
-	TCPAddress                  string
-	UDPAddress                  string
-	TickRateHz                  uint16
-	SnapshotRateHz              uint16
-	ReliableQueueCapacity       int
-	PlayerFactory               PlayerFactory
-	CharacterIdentityFactory    CharacterIdentityFactory
-	CharacterRestoreFactory     CharacterRestoreFactory
-	CharacterTakeoverAuthorizer CharacterTakeoverAuthorizer
-	WorldIdentity               protocol.WorldIdentity
+	TCPAddress                    string
+	UDPAddress                    string
+	TickRateHz                    uint16
+	SnapshotRateHz                uint16
+	ReliableQueueCapacity         int
+	PlayerFactory                 PlayerFactory
+	CharacterIdentityFactory      CharacterIdentityFactory
+	CharacterRestoreFactory       CharacterRestoreFactory
+	CharacterTakeoverAuthorizer   CharacterTakeoverAuthorizer
+	CharacterTakeoverCandidateTTL time.Duration
+	CharacterTakeoverCooldown     time.Duration
+	WorldIdentity                 protocol.WorldIdentity
 }
 
 func DefaultConfig() Config {
 	return Config{
-		TCPAddress:               "127.0.0.1:7777",
-		UDPAddress:               "127.0.0.1:7778",
-		TickRateHz:               20,
-		SnapshotRateHz:           10,
-		ReliableQueueCapacity:    128,
-		CharacterIdentityFactory: defaultCharacterIdentityFactory,
+		TCPAddress:                    "127.0.0.1:7777",
+		UDPAddress:                    "127.0.0.1:7778",
+		TickRateHz:                    20,
+		SnapshotRateHz:                10,
+		ReliableQueueCapacity:         128,
+		CharacterIdentityFactory:      defaultCharacterIdentityFactory,
+		CharacterTakeoverCandidateTTL: defaultCharacterTakeoverCandidateTTL,
+		CharacterTakeoverCooldown:     defaultCharacterTakeoverCooldown,
 	}
 }
 
@@ -111,10 +115,11 @@ type peer struct {
 }
 
 type Server struct {
-	config  Config
-	runtime RuntimeSink
-	ingress *gateway.Ingress
-	codec   transport.PayloadCodec
+	config             Config
+	runtime            RuntimeSink
+	ingress            *gateway.Ingress
+	codec              transport.PayloadCodec
+	takeoverCandidates *takeoverCandidateGate
 
 	tcp net.Listener
 	udp *net.UDPConn
@@ -153,13 +158,20 @@ func NewServer(config Config, runtime RuntimeSink, codec transport.PayloadCodec)
 	if config.CharacterIdentityFactory == nil {
 		config.CharacterIdentityFactory = defaultCharacterIdentityFactory
 	}
+	if config.CharacterTakeoverCandidateTTL <= 0 {
+		config.CharacterTakeoverCandidateTTL = defaultCharacterTakeoverCandidateTTL
+	}
+	if config.CharacterTakeoverCooldown < 0 {
+		config.CharacterTakeoverCooldown = 0
+	}
 	return &Server{
-		config:  config,
-		runtime: runtime,
-		ingress: gateway.NewIngress(runtime),
-		codec:   codec,
-		peers:   make(map[Token]*peer),
-		errors:  make(chan NetworkError, 256),
+		config:             config,
+		runtime:            runtime,
+		ingress:            gateway.NewIngress(runtime),
+		codec:              codec,
+		takeoverCandidates: newTakeoverCandidateGate(config.CharacterTakeoverCandidateTTL, config.CharacterTakeoverCooldown),
+		peers:              make(map[Token]*peer),
+		errors:             make(chan NetworkError, 256),
 	}
 }
 
@@ -319,11 +331,31 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 			}
 		}()
 	}
+
+	var takeoverCandidateLease *characterTakeoverCandidateLease
 	if takeoverExpected.Valid() {
 		remoteAddress := ""
 		if addr := raw.RemoteAddr(); addr != nil {
 			remoteAddress = addr.String()
 		}
+		request := CharacterTakeoverRequest{
+			CandidateSessionID: sid,
+			Identity:           identity,
+			ExpectedOwnership:  takeoverExpected,
+			RemoteAddress:      remoteAddress,
+		}
+		lease, err := s.takeoverCandidates.acquire(request)
+		if err != nil {
+			s.emit(sid, "character_takeover_candidate_acquire", err)
+			_ = raw.Close()
+			return
+		}
+		takeoverCandidateLease = &lease
+		defer func() {
+			if takeoverCandidateLease != nil {
+				s.takeoverCandidates.release(*takeoverCandidateLease)
+			}
+		}()
 		if err := s.authorizeCharacterTakeover(ctx, sid, identity, takeoverExpected, remoteAddress); err != nil {
 			s.emit(sid, "character_takeover_authorize", err)
 			_ = raw.Close()
@@ -370,6 +402,14 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 
 	var ownership worldruntime.SessionOwnershipFence
 	if takeoverExpected.Valid() {
+		if takeoverCandidateLease == nil {
+			s.closePeer(p, "character_takeover_candidate_validate", ErrInvalidCharacterTakeoverCandidate)
+			return
+		}
+		if err := s.takeoverCandidates.validate(*takeoverCandidateLease); err != nil {
+			s.closePeer(p, "character_takeover_candidate_validate", err)
+			return
+		}
 		ownership, err = s.runtime.AwaitOwnershipTransfer(ctx, takeoverExpected, sess)
 	} else {
 		ownership, err = s.runtime.AwaitJoinOwned(ctx, worldruntime.JoinRequest{
@@ -410,6 +450,15 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		p.ingress = gateway.NewIngress(peerCommandSink{runtime: s.runtime, ownership: ownership})
 	} else {
 		p.ownership = ownership
+	}
+	if takeoverExpected.Valid() && takeoverCandidateLease != nil {
+		if err := s.takeoverCandidates.commit(*takeoverCandidateLease, ownership); err != nil {
+			// Ownership transfer already committed. Candidate-gate bookkeeping must never
+			// roll back or invalidate the new authoritative owner.
+			s.emit(sid, "character_takeover_candidate_commit", err)
+		} else {
+			takeoverCandidateLease = nil
+		}
 	}
 	// Publish joined only after all state closePeer may read is immutable. The atomic flag is
 	// the publication barrier for ownership and preserves the existing late-close leave seam.
