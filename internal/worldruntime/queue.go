@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -18,7 +19,16 @@ func (registerSessionCommand) name() string { return "register_session" }
 type unregisterSessionCommand struct{ id session.ID }
 func (unregisterSessionCommand) name() string { return "unregister_session" }
 
-type joinCommand struct{ request JoinRequest }
+type characterAdmissionCommand struct {
+	identity   characteridentity.Binding
+	completion chan error
+}
+func (characterAdmissionCommand) name() string { return "admit_character" }
+
+type joinCommand struct {
+	request    JoinRequest
+	completion chan error
+}
 func (joinCommand) name() string { return "join_world" }
 
 type leaveCommand struct{ id session.ID }
