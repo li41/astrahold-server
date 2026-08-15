@@ -2,7 +2,6 @@ package worldruntime
 
 import (
 	"context"
-	"errors"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 )
@@ -21,28 +20,10 @@ func (p CharacterConnectionPlan) Valid() bool {
 
 func (p CharacterConnectionPlan) Takeover() bool { return p.Ownership.Valid() }
 
-// prepareConnectionPlan keeps the inactive admission reservation and active ownership lookup
-// in one world-owner FIFO position. Active is a normal connection plan, not an admission
-// error. Inactive still uses the exact S3-F.17 lease reservation semantics.
-func (r *characterIdentityRegistry) prepareConnectionPlan(identity characteridentity.Binding) (CharacterConnectionPlan, error) {
-	ownership, err := r.currentOwnership(identity)
-	if err == nil {
-		return CharacterConnectionPlan{Ownership: ownership}, nil
-	}
-	if !errors.Is(err, ErrCharacterOwnershipNotActive) {
-		return CharacterConnectionPlan{}, err
-	}
-
-	lease := CharacterAdmissionLease{}
-	if err := r.validateAdmission(characterAdmissionOperation{identity: identity, lease: &lease}); err != nil {
-		return CharacterConnectionPlan{}, err
-	}
-	return CharacterConnectionPlan{AdmissionLease: lease}, nil
-}
-
-// AwaitCharacterConnectionPlan is the transport-facing trusted connection barrier for
-// S3-F.20. Once queued, the caller observes completion because the command may reserve an
-// admission lease. The active branch only returns current process-local ownership truth.
+// AwaitCharacterConnectionPlan reuses the S3-F.17 admission command as the transport-facing
+// S3-F.20 trusted connection barrier. In one world-owner FIFO position it either reserves an
+// inactive CharacterID or returns the exact active S3-F.19 ownership fence. Once queued, the
+// caller observes completion because the inactive branch may have created a reservation.
 func (r *Runtime) AwaitCharacterConnectionPlan(ctx context.Context, identity characteridentity.Binding) (CharacterConnectionPlan, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -53,14 +34,17 @@ func (r *Runtime) AwaitCharacterConnectionPlan(ctx context.Context, identity cha
 	default:
 	}
 
-	result := CharacterConnectionPlan{}
+	lease := CharacterAdmissionLease{}
+	ownership := SessionOwnershipFence{}
 	completion := make(chan error, 1)
-	if err := r.queue.tryPush(characterConnectionPlanCommand{identity: identity, result: &result, completion: completion}); err != nil {
+	operation := characterAdmissionOperation{identity: identity, lease: &lease, ownership: &ownership}
+	if err := r.queue.tryPush(characterAdmissionCommand{identity: operation, completion: completion}); err != nil {
 		return CharacterConnectionPlan{}, err
 	}
 	if err := <-completion; err != nil {
 		return CharacterConnectionPlan{}, err
 	}
+	result := CharacterConnectionPlan{AdmissionLease: lease, Ownership: ownership}
 	if !result.Valid() {
 		return CharacterConnectionPlan{}, ErrCharacterOwnershipFenceInvalid
 	}
