@@ -12,12 +12,12 @@ import (
 
 var (
 	ErrUnknownGate          = errors.New("siege: unknown gate")
-	ErrGateDestroyed       = errors.New("siege: gate destroyed")
-	ErrGateWrongLayer      = errors.New("siege: gate wrong layer")
-	ErrGateOutOfRange      = errors.New("siege: gate out of range")
-	ErrGateNoLineOfSight   = errors.New("siege: gate no line of sight")
-	ErrGateAttackCooldown  = errors.New("siege: gate attack cooldown")
-	ErrGateBlockerDisabled = errors.New("siege: gate blocker disabled before destruction")
+	ErrGateDestroyed        = errors.New("siege: gate destroyed")
+	ErrGateWrongLayer       = errors.New("siege: gate wrong layer")
+	ErrGateOutOfRange       = errors.New("siege: gate out of range")
+	ErrGateNoLineOfSight    = errors.New("siege: gate no line of sight")
+	ErrGateAttackCooldown   = errors.New("siege: gate attack cooldown")
+	ErrGateBlockerDisabled  = errors.New("siege: gate blocker disabled before destruction")
 )
 
 type World interface {
@@ -48,6 +48,7 @@ type Service struct {
 	gates          map[string]*gateRuntime
 	order          []string
 	nextAttackTick map[attackKey]uint64
+	match          *matchRuntime
 }
 
 func NewService(definitions []gameplayworld.Gate) *Service {

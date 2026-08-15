@@ -25,7 +25,8 @@ func (r *Runtime) dispatchPreparedAction(name string, command useActionCommand, 
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrSiegeUnavailable})
 			return
 		}
-		if _, err := r.siege.ApplyActionDamage(actor.Transform.Position, prepared.Target.ID, prepared.Definition.Range, prepared.Damage, r.dynamic); err != nil {
+		gateState, err := r.siege.ApplyActionDamage(actor.Transform.Position, prepared.Target.ID, prepared.Definition.Range, prepared.Damage, r.dynamic)
+		if err != nil {
 			if isExpectedGateRejection(err) {
 				report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: err})
 			} else {
@@ -37,6 +38,7 @@ func (r *Runtime) dispatchPreparedAction(name string, command useActionCommand, 
 		if prepared.Definition.Effect == combat.EffectDamage {
 			r.cancelReviveProtectionByDamageAction(actor.ID, report)
 		}
+		r.siege.ObserveGateState(gateState)
 		r.bumpDynamicRevision()
 	case combat.TargetEntity:
 		if r.applyEntityAction(name, command.sessionID, actor, prepared, tick, report) {
