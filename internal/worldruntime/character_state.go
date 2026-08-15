@@ -1,11 +1,15 @@
 package worldruntime
 
 import (
+	"errors"
+
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
 )
+
+var ErrCharacterStateDefeatedRespawnMissing = errors.New("worldruntime: defeated character durable respawn truth missing")
 
 func WithCharacterStateOutbox(outbox *characterstate.Outbox, worldRef characterstate.WorldRef) Option {
 	return func(r *Runtime) {
@@ -48,6 +52,32 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 		Defeated: state.Defeated,
 		Position: entity.Transform.Position,
 		Yaw:      entity.Transform.Yaw,
+	}
+	if state.Defeated {
+		// A v2 defeated record is written only when the already-established death-time
+		// binding exists. Never invent a context/destination during persistence.
+		if r.respawnPolicy == nil {
+			recordCharacterStateSaveFailure(report, sessionID, ErrCharacterStateDefeatedRespawnMissing)
+			return
+		}
+		scheduled, ok := r.respawnPolicy.Pending(entityID)
+		if !ok {
+			recordCharacterStateSaveFailure(report, sessionID, ErrCharacterStateDefeatedRespawnMissing)
+			return
+		}
+		remaining := uint64(0)
+		if report != nil && scheduled.DueTick > report.Tick {
+			remaining = scheduled.DueTick - report.Tick
+		}
+		checkpointID, _ := r.respawnPolicy.Checkpoint(entityID)
+		snapshot.Respawn = characterstate.DefeatedRespawn{
+			Context:        scheduled.Context,
+			SpawnPointID:   scheduled.SpawnPointID,
+			SpawnClass:     scheduled.SpawnClass,
+			Position:       scheduled.Position,
+			RemainingTicks: remaining,
+			CheckpointID:   checkpointID,
+		}
 	}
 	if _, err := r.characterStateOutbox.Enqueue(binding, snapshot); err != nil {
 		recordCharacterStateSaveFailure(report, sessionID, err)

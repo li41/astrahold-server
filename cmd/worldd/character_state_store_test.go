@@ -9,6 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
@@ -112,18 +113,28 @@ func TestLoadRestoreRejectsWorldMismatch(t *testing.T) {
 	}
 }
 
-func TestLoadRestoreRejectsDefeatedRecord(t *testing.T) {
+func TestLoadRestoreAcceptsCompleteDefeatedV2Record(t *testing.T) {
 	store, _ := characterstate.Open(filepath.Join(t.TempDir(), "characters"))
 	outbox, _ := characterstate.NewOutbox(2)
 	identity := worlddTrustedIdentity(t, "character:defeated")
 	snapshot := worlddCharacterSnapshot(0)
 	snapshot.Defeated = true
+	snapshot.Respawn = characterstate.DefeatedRespawn{
+		Context: respawnpolicy.DeathContextPvP,
+		SpawnPointID: "safe", SpawnClass: respawnpolicy.SpawnClassSafe,
+		Position: world.Position{X: 12, Z: -6, Layer: 1}, RemainingTicks: 23,
+		CheckpointID: "checkpoint",
+	}
 	if _, err := store.Save(identity, 0, snapshot); err != nil {
 		t.Fatal(err)
 	}
 	persistence := newCharacterStatePersistence(outbox, store, worlddCharacterWorld)
-	if _, ok, err := persistence.LoadRestore(identity); ok || !errors.Is(err, worldruntime.ErrCharacterRestoreDefeatedUnsupported) {
-		t.Fatalf("ok=%v err=%v", ok, err)
+	restore, ok, err := persistence.LoadRestore(identity)
+	if err != nil || !ok {
+		t.Fatalf("restore=%#v ok=%v err=%v", restore, ok, err)
+	}
+	if !restore.Defeated || restore.SchemaVersion != characterstate.SchemaVersion || restore.Respawn != snapshot.Respawn {
+		t.Fatalf("restore=%#v", restore)
 	}
 }
 
