@@ -422,10 +422,10 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	}
 	route := token.RoutingID()
 	p := &peer{sessionID: sid, entityID: entityID, token: token, route: route, conn: connection, ingress: s.ingress}
-	s.mu.Lock()
-	s.peers[token] = p
-	s.routes[route] = p
-	s.mu.Unlock()
+	if err := s.registerPeer(p); err != nil {
+		s.closePeer(p, "realtime_register", err)
+		return
+	}
 
 	var ownership worldruntime.SessionOwnershipFence
 	if takeoverExpected.Valid() {
@@ -606,14 +606,7 @@ func (s *Server) closePeer(p *peer, operation string, cause error) {
 	}
 	p.closeOnce.Do(func() {
 		p.ready.Store(false)
-		s.mu.Lock()
-		if current := s.peers[p.token]; current == p {
-			delete(s.peers, p.token)
-		}
-		if current := s.routes[p.route]; current == p {
-			delete(s.routes, p.route)
-		}
-		s.mu.Unlock()
+		s.revokePeerRealtime(p)
 		_ = p.conn.Close()
 		if cause != nil && !errors.Is(cause, net.ErrClosed) && !errors.Is(cause, io.EOF) {
 			s.emit(p.sessionID, operation, cause)
