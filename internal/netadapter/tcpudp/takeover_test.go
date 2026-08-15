@@ -276,6 +276,53 @@ func TestTrustedActiveTakeoverTransferFailureKeepsOldPeerActive(t *testing.T) {
 	}
 }
 
+func TestRetireTakenOverPeerBeforeOwnershipPublicationSuppressesLateLeave(t *testing.T) {
+	runtime := newTakeoverRuntime()
+	server := NewServer(DefaultConfig(), runtime, gamev1.Codec{})
+	identity, err := characteridentity.NewTrusted("character:prepublish-retire")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := worldruntime.SessionOwnershipFence{SessionID: 9, EntityID: 11, CharacterID: identity.ID, Epoch: 3}
+	token, err := NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := net.Pipe()
+	defer right.Close()
+	connection := newClientConnection(left, nil, token, gamev1.Codec{}, 8, &server.metrics)
+	old := &peer{sessionID: expected.SessionID, entityID: expected.EntityID, token: token, conn: connection, ingress: server.ingress}
+	server.mu.Lock()
+	server.peers[token] = old
+	server.mu.Unlock()
+
+	// Model the F.20 window where worldruntime has already published active ownership but
+	// the old transport goroutine has not yet copied the fence or stored joined=true.
+	server.retireTakenOverPeer(expected)
+	server.mu.RLock()
+	_, stillPresent := server.peers[token]
+	server.mu.RUnlock()
+	if stillPresent {
+		t.Fatal("pre-publication old peer remained in transport map")
+	}
+
+	// The old handle can still return from its already-committed join after retirement.
+	// Publishing ownership/joined and calling closePeer again must not enqueue any Leave.
+	old.ownership = expected
+	old.joined.Store(true)
+	server.closePeer(old, "late_join_completion", net.ErrClosed)
+	select {
+	case fence := <-runtime.fencedLeaves:
+		t.Fatalf("late old join enqueued fenced Leave=%#v", fence)
+	default:
+	}
+	select {
+	case id := <-runtime.leaves:
+		t.Fatalf("late old join enqueued legacy Leave=%d", id)
+	default:
+	}
+}
+
 func readSessionWelcome(t *testing.T, conn net.Conn, codec transport.PayloadCodec) protocol.SessionWelcome {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
