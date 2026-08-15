@@ -21,22 +21,24 @@ import (
 )
 
 var (
-	ErrNotOpen                   = errors.New("tcpudp: server is not open")
-	ErrAlreadyOpen               = errors.New("tcpudp: server already open")
-	ErrInvalidPlayerSpec         = errors.New("tcpudp: invalid player bootstrap spec")
-	ErrInvalidWorldIdentity      = errors.New("tcpudp: invalid world identity")
-	ErrInvalidCharacterIdentity  = errors.New("tcpudp: invalid character identity")
-	ErrInvalidCharacterOwnership = errors.New("tcpudp: invalid trusted character ownership fence")
-	ErrTCPChannelMismatch        = errors.New("tcpudp: realtime message received on TCP")
-	ErrUDPChannelMismatch        = errors.New("tcpudp: reliable message received on UDP")
+	ErrNotOpen                       = errors.New("tcpudp: server is not open")
+	ErrAlreadyOpen                   = errors.New("tcpudp: server already open")
+	ErrInvalidPlayerSpec             = errors.New("tcpudp: invalid player bootstrap spec")
+	ErrInvalidWorldIdentity          = errors.New("tcpudp: invalid world identity")
+	ErrInvalidCharacterIdentity      = errors.New("tcpudp: invalid character identity")
+	ErrInvalidCharacterConnectionPlan = errors.New("tcpudp: invalid trusted character connection plan")
+	ErrInvalidCharacterOwnership     = errors.New("tcpudp: invalid trusted character ownership fence")
+	ErrTCPChannelMismatch            = errors.New("tcpudp: realtime message received on TCP")
+	ErrUDPChannelMismatch            = errors.New("tcpudp: reliable message received on UDP")
 )
 
 type RuntimeSink interface {
 	gateway.MoveCommandSink
 	gateway.ActionCommandSink
-	AwaitCharacterAdmission(context.Context, characteridentity.Binding) (worldruntime.CharacterAdmissionLease, error)
+	AwaitCharacterConnectionPlan(context.Context, characteridentity.Binding) (worldruntime.CharacterConnectionPlan, error)
 	ReleaseCharacterAdmission(context.Context, worldruntime.CharacterAdmissionLease) error
 	AwaitJoinOwned(context.Context, worldruntime.JoinRequest) (worldruntime.SessionOwnershipFence, error)
+	AwaitOwnershipTransfer(context.Context, worldruntime.SessionOwnershipFence, *session.Session) (worldruntime.SessionOwnershipFence, error)
 	EnqueueLeave(session.ID) error
 	EnqueueFencedLeave(worldruntime.SessionOwnershipFence) error
 	EnqueueFencedMove(worldruntime.SessionOwnershipFence, uint32, protocol.ClientMoveInput) error
@@ -59,10 +61,10 @@ type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 // identity per connection and does not authenticate returning characters.
 type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentity.Binding, error)
 
-// CharacterRestoreFactory resolves already-durable state for a trusted identity after the
-// world-owner admission lease is acquired and before SessionWelcome is sent. It is never
-// called for the default ephemeral identity path. Implementations may perform storage I/O
-// because handleTCP is not the world-owner tick.
+// CharacterRestoreFactory resolves already-durable state for an inactive trusted identity
+// after the world-owner admission lease is acquired and before SessionWelcome is sent. Active
+// S3-F.20 takeover deliberately skips this lookup because live world state remains authoritative.
+// Implementations may perform storage I/O because handleTCP is not the world-owner tick.
 type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
 
 type Config struct {
@@ -281,14 +283,8 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 	sid := session.ID(s.nextSession.Add(1))
-	eid := world.EntityID(s.nextEntity.Add(1))
-	spec := s.config.PlayerFactory(sid, eid)
-	if spec.Entity.ID != eid || spec.AOIRadius <= 0 || spec.Speed <= 0 || spec.Radius <= 0 {
-		s.emit(sid, "player_factory", ErrInvalidPlayerSpec)
-		_ = raw.Close()
-		return
-	}
-	identity, err := s.config.CharacterIdentityFactory(sid, eid)
+	allocatedEntityID := world.EntityID(s.nextEntity.Add(1))
+	identity, err := s.config.CharacterIdentityFactory(sid, allocatedEntityID)
 	if err != nil {
 		s.emit(sid, "character_identity_factory", err)
 		_ = raw.Close()
@@ -300,15 +296,19 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 
+	entityID := allocatedEntityID
 	var admissionLease *worldruntime.CharacterAdmissionLease
+	var takeoverExpected worldruntime.SessionOwnershipFence
 	if identity.Assurance == characteridentity.AssuranceTrusted {
-		lease, err := s.runtime.AwaitCharacterAdmission(ctx, identity)
+		plan, err := s.prepareTrustedConnection(ctx, identity, allocatedEntityID)
 		if err != nil {
-			s.emit(sid, "character_admission", err)
+			s.emit(sid, "character_connection_plan", err)
 			_ = raw.Close()
 			return
 		}
-		admissionLease = &lease
+		entityID = plan.entityID
+		admissionLease = plan.admissionLease
+		takeoverExpected = plan.takeover
 		defer func() {
 			if admissionLease == nil {
 				return
@@ -319,8 +319,15 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		}()
 	}
 
+	spec := s.config.PlayerFactory(sid, entityID)
+	if spec.Entity.ID != entityID || spec.AOIRadius <= 0 || spec.Speed <= 0 || spec.Radius <= 0 {
+		s.emit(sid, "player_factory", ErrInvalidPlayerSpec)
+		_ = raw.Close()
+		return
+	}
+
 	var restore *worldruntime.CharacterRestore
-	if identity.Assurance == characteridentity.AssuranceTrusted && s.config.CharacterRestoreFactory != nil {
+	if admissionLease != nil && s.config.CharacterRestoreFactory != nil {
 		candidate, exists, err := s.config.CharacterRestoreFactory(identity)
 		if err != nil {
 			s.emit(sid, "character_restore_factory", err)
@@ -339,37 +346,51 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	}
 
 	connection := newClientConnection(raw, s.udp, token, s.codec, s.config.ReliableQueueCapacity, &s.metrics)
-	sess, err := session.NewWithCharacterIdentity(sid, eid, identity, spec.AOIRadius, connection)
+	sess, err := session.NewWithCharacterIdentity(sid, entityID, identity, spec.AOIRadius, connection)
 	if err != nil {
 		_ = raw.Close()
 		return
 	}
-	p := &peer{sessionID: sid, entityID: eid, token: token, conn: connection, ingress: s.ingress}
+	p := &peer{sessionID: sid, entityID: entityID, token: token, conn: connection, ingress: s.ingress}
 	s.mu.Lock()
 	s.peers[token] = p
 	s.mu.Unlock()
 
-	ownership, err := s.runtime.AwaitJoinOwned(ctx, worldruntime.JoinRequest{
-		Session:        sess,
-		Entity:         spec.Entity,
-		Speed:          spec.Speed,
-		Radius:         spec.Radius,
-		MaxStepHeight:  spec.MaxStepHeight,
-		Restore:        restore,
-		AdmissionLease: admissionLease,
-	})
+	var ownership worldruntime.SessionOwnershipFence
+	if takeoverExpected.Valid() {
+		ownership, err = s.runtime.AwaitOwnershipTransfer(ctx, takeoverExpected, sess)
+	} else {
+		ownership, err = s.runtime.AwaitJoinOwned(ctx, worldruntime.JoinRequest{
+			Session:        sess,
+			Entity:         spec.Entity,
+			Speed:          spec.Speed,
+			Radius:         spec.Radius,
+			MaxStepHeight:  spec.MaxStepHeight,
+			Restore:        restore,
+			AdmissionLease: admissionLease,
+		})
+		if err == nil {
+			// The world-owner join consumed the matching reservation atomically with active ownership.
+			admissionLease = nil
+		}
+	}
 	if err != nil {
-		s.closePeer(p, "join_world", err)
+		operation := "join_world"
+		if takeoverExpected.Valid() {
+			operation = "ownership_transfer"
+		}
+		s.closePeer(p, operation, err)
 		return
 	}
-	// The world-owner join consumed the matching reservation atomically with active ownership.
-	admissionLease = nil
 	if identity.Assurance == characteridentity.AssuranceTrusted {
-		if !ownership.Valid() || ownership.SessionID != sid || ownership.EntityID != eid || ownership.CharacterID != identity.ID {
-			// The world join committed, so teardown is still required. Publish joined only
+		if !ownership.Valid() || ownership.SessionID != sid || ownership.EntityID != entityID || ownership.CharacterID != identity.ID {
+			// Join/transfer committed, so teardown is still required. Publish joined only
 			// after ownership has been left at its zero value so closePeer deterministically
 			// uses the legacy cleanup fallback for this impossible integration fault.
 			p.joined.Store(true)
+			if takeoverExpected.Valid() {
+				s.retireTakenOverPeer(takeoverExpected)
+			}
 			s.closePeer(p, "join_ownership", ErrInvalidCharacterOwnership)
 			return
 		}
@@ -381,6 +402,11 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	// Publish joined only after all state closePeer may read is immutable. The atomic flag is
 	// the publication barrier for ownership and preserves the existing late-close leave seam.
 	p.joined.Store(true)
+	if takeoverExpected.Valid() {
+		// Transfer is irreversible at this point. Retire the old peer before Welcome so a
+		// failed new Welcome cannot leave a stale transport alive after ownership advanced.
+		s.retireTakenOverPeer(takeoverExpected)
+	}
 
 	udpPort := uint16(0)
 	if addr := s.UDPAddr(); addr != nil && addr.Port >= 0 && addr.Port <= 65535 {
@@ -392,7 +418,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		ServerTick: 0,
 		Message: protocol.SessionWelcome{
 			SessionID:      uint64(sid),
-			EntityID:       eid,
+			EntityID:       entityID,
 			RealtimePort:   udpPort,
 			RealtimeToken:  token.String(),
 			TickRateHz:     s.config.TickRateHz,
