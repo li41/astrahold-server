@@ -5,6 +5,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
 func TestE2ECharacterIdentityFactory(t *testing.T) {
@@ -39,5 +40,21 @@ func TestValidateHarnessAddressLoopbackOnly(t *testing.T) {
 		if err := validateHarnessAddress(address); err == nil {
 			t.Fatalf("expected %q to be rejected", address)
 		}
+	}
+}
+
+func TestApplyHarnessCompletedHold(t *testing.T) {
+	config := worldruntime.DefaultConfig()
+	defaultMin := config.SiegeCompletedMinHold
+	defaultMax := config.SiegeCompletedMaxHold
+
+	applyHarnessCompletedHold(&config, false)
+	if config.SiegeCompletedMinHold != defaultMin || config.SiegeCompletedMaxHold != defaultMax {
+		t.Fatal("disabled hold must preserve production-like runtime defaults")
+	}
+
+	applyHarnessCompletedHold(&config, true)
+	if config.SiegeCompletedMinHold != 0 || config.SiegeCompletedMaxHold != 0 {
+		t.Fatalf("hold must disable automatic Completed scheduling, got min=%v max=%v", config.SiegeCompletedMinHold, config.SiegeCompletedMaxHold)
 	}
 }

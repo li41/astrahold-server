@@ -1,4 +1,4 @@
-// Command e2eserver is the S4-E.1 CI-only real-process server harness.
+// Command e2eserver is the S4-E CI-only real-process server harness.
 // It composes the production transport/runtime/gameplay packages while deliberately
 // keeping deterministic test identity assignment out of cmd/worldd.
 package main
@@ -39,15 +39,16 @@ const (
 
 func main() {
 	var (
-		tcpAddress     = flag.String("tcp", "127.0.0.1:27777", "Reliable TCP listen address; loopback only")
-		udpAddress     = flag.String("udp", "127.0.0.1:27778", "Realtime UDP listen address; loopback only")
-		tickRate       = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
-		snapshotRate   = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
-		worldPath      = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
-		combatPath     = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
-		siegeMatchPath = flag.String("siege-match", "testdata/s4e/siege-match.json", "S4-E.1 Siege Match fixture")
-		respawnPath    = flag.String("respawn-policy", "testdata/s4e/respawn-policy.json", "S4-E.1 respawn fixture")
-		ownershipDir   = flag.String("siege-ownership-dir", "artifacts/s4e1-ownership", "Durable S4-E.1 castle ownership directory")
+		tcpAddress      = flag.String("tcp", "127.0.0.1:27777", "Reliable TCP listen address; loopback only")
+		udpAddress      = flag.String("udp", "127.0.0.1:27778", "Realtime UDP listen address; loopback only")
+		tickRate        = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
+		snapshotRate    = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
+		worldPath       = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
+		combatPath      = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
+		siegeMatchPath  = flag.String("siege-match", "testdata/s4e/siege-match.json", "S4-E Siege Match fixture")
+		respawnPath     = flag.String("respawn-policy", "testdata/s4e/respawn-policy.json", "S4-E respawn fixture")
+		ownershipDir    = flag.String("siege-ownership-dir", "artifacts/s4e1-ownership", "Durable S4-E castle ownership directory")
+		holdCompleted   = flag.Bool("hold-completed", false, "Disable automatic next-round scheduling while Completed; E2E restart/recovery only")
 	)
 	flag.Parse()
 
@@ -115,6 +116,7 @@ func main() {
 	simulationWorld := simulation.New(spatial.NewGrid(32), moveService)
 	runtimeConfig := worldruntime.DefaultConfig()
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
+	applyHarnessCompletedHold(&runtimeConfig, *holdCompleted)
 	worldRuntime := worldruntime.New(
 		simulationWorld,
 		runtimeConfig,
@@ -153,12 +155,14 @@ func main() {
 	defer stop()
 	loopDone := make(chan error, 1)
 	serverDone := make(chan error, 1)
+	var completedOnce sync.Once
 	var roundTwoOnce sync.Once
 	go func() {
 		loopDone <- loop.RunObserved(ctx, func(report worldruntime.StepReport) {
 			for _, commandErr := range report.CommandErrors {
-				log.Printf("S4-E.1 command error tick=%d command=%s session=%d err=%v", report.Tick, commandErr.Command, commandErr.SessionID, commandErr.Err)
+				log.Printf("S4-E command error tick=%d command=%s session=%d err=%v", report.Tick, commandErr.Command, commandErr.SessionID, commandErr.Err)
 			}
+			observeCompletedDurability(worldRuntime, ownershipStore, loadedWorld.Definition.WorldID, &completedOnce)
 			observeRoundTwoDurability(worldRuntime, ownershipStore, loadedWorld.Definition.WorldID, &roundTwoOnce)
 		})
 	}()
@@ -169,13 +173,18 @@ func main() {
 			case <-ctx.Done():
 				return
 			case networkErr := <-server.Errors():
-				log.Printf("S4-E.1 network error session=%d operation=%s err=%v", networkErr.SessionID, networkErr.Operation, networkErr.Err)
+				log.Printf("S4-E network error session=%d operation=%s err=%v", networkErr.SessionID, networkErr.Operation, networkErr.Err)
 			}
 		}
 	}()
 
+	startupMatch, matchOK := worldRuntime.SiegeMatchState()
+	startupOwnership, ownershipOK := worldRuntime.SiegeCastleOwnershipState()
+	if !matchOK || !ownershipOK {
+		log.Fatal("S4-E harness failed to expose startup Siege state")
+	}
 	log.Printf(
-		"ASTRAHOLD_E2E_SERVER_READY protocol=%d tcp=%s udp=%s world=%s@%s siege=%s respawn=%s",
+		"ASTRAHOLD_E2E_SERVER_READY protocol=%d tcp=%s udp=%s world=%s@%s siege=%s respawn=%s round=%d attacker=%s defender=%s owner=%s ownership_revision=%d hold_completed=%t",
 		protocol.Version,
 		server.TCPAddr(),
 		server.UDPAddr(),
@@ -183,7 +192,23 @@ func main() {
 		worldIdentity.Revision,
 		loadedSiege.Revision,
 		loadedRespawn.Definition.Revision,
+		startupMatch.Round,
+		startupMatch.AttackerID,
+		startupMatch.DefenderID,
+		startupOwnership.OwnerID,
+		startupOwnership.Revision,
+		*holdCompleted,
 	)
+	if startupOwnership.Revision > 1 {
+		log.Printf(
+			"ASTRAHOLD_E2E_SERVER_RECOVERED round=%d attacker=%s defender=%s owner=%s ownership_revision=%d",
+			startupMatch.Round,
+			startupMatch.AttackerID,
+			startupMatch.DefenderID,
+			startupOwnership.OwnerID,
+			startupOwnership.Revision,
+		)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -200,6 +225,14 @@ func main() {
 	}
 }
 
+func applyHarnessCompletedHold(config *worldruntime.Config, hold bool) {
+	if config == nil || !hold {
+		return
+	}
+	config.SiegeCompletedMinHold = 0
+	config.SiegeCompletedMaxHold = 0
+}
+
 func validateHarnessAddress(address string) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -207,7 +240,7 @@ func validateHarnessAddress(address string) error {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("S4-E.1 harness only permits loopback listen addresses: %q", address)
+		return fmt.Errorf("S4-E harness only permits loopback listen addresses: %q", address)
 	}
 	return nil
 }
@@ -220,7 +253,7 @@ func e2eCharacterIdentityFactory(sessionID session.ID, _ world.EntityID) (charac
 	case 2:
 		characterID = e2eDefenderCharacterID
 	default:
-		return characteridentity.Binding{}, fmt.Errorf("S4-E.1 supports exactly two sessions: %d", sessionID)
+		return characteridentity.Binding{}, fmt.Errorf("S4-E supports exactly two sessions: %d", sessionID)
 	}
 	return characteridentity.NewTrusted(characterID)
 }
@@ -243,6 +276,32 @@ func e2ePlayerFactory(sessionID session.ID, entityID world.EntityID) tcpudp.Play
 	}
 }
 
+func observeCompletedDurability(runtime *worldruntime.Runtime, store *siegeownership.Store, worldID string, once *sync.Once) {
+	match, matchOK := runtime.SiegeMatchState()
+	ownership, ownershipOK := runtime.SiegeCastleOwnershipState()
+	if !matchOK || !ownershipOK || match.Round != 1 || match.Phase != siege.MatchPhaseCompleted ||
+		match.WinnerTeam != siege.TeamAttacker || match.WinnerID != "attackers" ||
+		ownership.OwnerID != "attackers" || ownership.Revision != 2 {
+		return
+	}
+	durable, exists, err := store.Load(worldID)
+	if err != nil || !exists || durable != ownership {
+		if err != nil {
+			log.Printf("S4-E durable Completed ownership verify failed: %v", err)
+		}
+		return
+	}
+	once.Do(func() {
+		log.Printf(
+			"ASTRAHOLD_E2E_SERVER_COMPLETED_DURABLE round=%d winner=%s owner=%s ownership_revision=%d",
+			match.Round,
+			match.WinnerID,
+			ownership.OwnerID,
+			ownership.Revision,
+		)
+	})
+}
+
 func observeRoundTwoDurability(runtime *worldruntime.Runtime, store *siegeownership.Store, worldID string, once *sync.Once) {
 	match, matchOK := runtime.SiegeMatchState()
 	ownership, ownershipOK := runtime.SiegeCastleOwnershipState()
@@ -254,7 +313,7 @@ func observeRoundTwoDurability(runtime *worldruntime.Runtime, store *siegeowners
 	durable, exists, err := store.Load(worldID)
 	if err != nil || !exists || durable != ownership {
 		if err != nil {
-			log.Printf("S4-E.1 durable ownership verify failed: %v", err)
+			log.Printf("S4-E durable ownership verify failed: %v", err)
 		}
 		return
 	}
