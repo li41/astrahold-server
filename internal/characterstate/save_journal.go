@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	SaveJournalSchemaVersion     uint16 = 1
-	saveCheckpointSchemaVersion  uint16 = 1
-	saveJournalIDSize                   = 16
-	maxSaveJournalPayload               = 1 << 20
+	SaveJournalSchemaVersion    uint16 = 1
+	saveCheckpointSchemaVersion uint16 = 1
+	saveJournalIDSize                  = 16
+	maxSaveJournalPayload              = 1 << 20
 )
 
 var (
@@ -42,10 +42,15 @@ var (
 	ErrSaveCheckpointOffsetMismatch  = errors.New("characterstate: save checkpoint offset mismatch")
 )
 
+// SaveJournalRecord is a durable Store-application command. ExpectedRevision is captured
+// immediately before journal append. It makes replay unambiguous: current==expected means
+// not yet applied; current==expected+1 with the same snapshot means this exact command was
+// applied before a crash but its checkpoint did not advance.
 type SaveJournalRecord struct {
-	RecordID  uint64
-	Intent    SaveIntent
-	EndOffset int64
+	RecordID         uint64
+	ExpectedRevision uint64
+	Intent           SaveIntent
+	EndOffset        int64
 }
 
 type SaveCheckpoint struct {
@@ -72,25 +77,26 @@ type SaveCheckpointStore struct {
 }
 
 type saveJournalWireRecord struct {
-	SchemaVersion uint16                  `json:"schema_version"`
-	RecordID      uint64                  `json:"record_id"`
-	IntentID      uint64                  `json:"intent_id"`
-	CharacterID   string                  `json:"character_id"`
-	Snapshot      saveJournalWireSnapshot `json:"snapshot"`
+	SchemaVersion    uint16                  `json:"schema_version"`
+	RecordID         uint64                  `json:"record_id"`
+	ExpectedRevision uint64                  `json:"expected_revision"`
+	IntentID         uint64                  `json:"intent_id"`
+	CharacterID      string                  `json:"character_id"`
+	Snapshot         saveJournalWireSnapshot `json:"snapshot"`
 }
 
 type saveJournalWireSnapshot struct {
-	WorldID         string                `json:"world_id"`
-	WorldRevision   string                `json:"world_revision"`
-	GameplaySHA256  string                `json:"gameplay_sha256"`
-	HP              uint32                `json:"hp"`
-	MaxHP           uint32                `json:"max_hp"`
-	Defeated        bool                  `json:"defeated"`
-	X               float32               `json:"x"`
-	Y               float32               `json:"y"`
-	Z               float32               `json:"z"`
-	Layer           world.LayerID         `json:"layer"`
-	Yaw             float32               `json:"yaw"`
+	WorldID         string               `json:"world_id"`
+	WorldRevision   string               `json:"world_revision"`
+	GameplaySHA256  string               `json:"gameplay_sha256"`
+	HP              uint32               `json:"hp"`
+	MaxHP           uint32               `json:"max_hp"`
+	Defeated        bool                 `json:"defeated"`
+	X               float32              `json:"x"`
+	Y               float32              `json:"y"`
+	Z               float32              `json:"z"`
+	Layer           world.LayerID        `json:"layer"`
+	Yaw             float32              `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
 }
 
@@ -171,9 +177,13 @@ func (j *SaveJournal) Close() error {
 }
 
 // Append advances durable save-intent truth only after the complete frame has been fsync'ed.
-func (j *SaveJournal) Append(intent SaveIntent) (SaveJournalRecord, error) {
+// expectedRevision is part of the durable command and therefore survives restart.
+func (j *SaveJournal) Append(intent SaveIntent, expectedRevision uint64) (SaveJournalRecord, error) {
 	if err := validateSaveIntent(intent); err != nil {
 		return SaveJournalRecord{}, err
+	}
+	if expectedRevision == ^uint64(0) {
+		return SaveJournalRecord{}, ErrRevisionOverflow
 	}
 
 	j.mu.Lock()
@@ -198,7 +208,7 @@ func (j *SaveJournal) Append(intent SaveIntent) (SaveJournalRecord, error) {
 	}
 
 	recordID := j.lastRecordID + 1
-	payload, err := encodeSaveJournalRecord(recordID, intent)
+	payload, err := encodeSaveJournalRecord(recordID, expectedRevision, intent)
 	if err != nil {
 		return SaveJournalRecord{}, err
 	}
@@ -218,7 +228,7 @@ func (j *SaveJournal) Append(intent SaveIntent) (SaveJournalRecord, error) {
 	j.lastRecordID = recordID
 	j.endOffset = end
 	j.recordEnds = append(j.recordEnds, end)
-	return SaveJournalRecord{RecordID: recordID, Intent: intent, EndOffset: end}, nil
+	return SaveJournalRecord{RecordID: recordID, ExpectedRevision: expectedRevision, Intent: intent, EndOffset: end}, nil
 }
 
 func (j *SaveJournal) RecordsAfter(checkpoint SaveCheckpoint, limit int) ([]SaveJournalRecord, error) {
@@ -240,19 +250,19 @@ func (j *SaveJournal) RecordsAfter(checkpoint SaveCheckpoint, limit int) ([]Save
 	}
 	out := make([]SaveJournalRecord, 0, count)
 	offset := checkpoint.Offset
-	expected := checkpoint.RecordID + 1
+	expectedRecordID := checkpoint.RecordID + 1
 	for len(out) < count {
 		record, next, err := j.readRecordAtLocked(offset)
 		if err != nil {
 			return nil, err
 		}
-		if record.RecordID != expected {
-			return nil, fmt.Errorf("%w: record id got=%d want=%d", ErrCorruptSaveJournal, record.RecordID, expected)
+		if record.RecordID != expectedRecordID {
+			return nil, fmt.Errorf("%w: record id got=%d want=%d", ErrCorruptSaveJournal, record.RecordID, expectedRecordID)
 		}
 		record.EndOffset = next
 		out = append(out, record)
 		offset = next
-		expected++
+		expectedRecordID++
 	}
 	return out, nil
 }
@@ -436,7 +446,7 @@ func (j *SaveJournal) openOrInitialize() error {
 
 func (j *SaveJournal) scanExisting(size int64) error {
 	offset := saveJournalHeaderSize()
-	expected := uint64(1)
+	expectedRecordID := uint64(1)
 	for offset < size {
 		remaining := size - offset
 		if remaining < 4 {
@@ -458,14 +468,14 @@ func (j *SaveJournal) scanExisting(size int64) error {
 		if err != nil {
 			return err
 		}
-		if next != frameEnd || record.RecordID != expected {
-			return fmt.Errorf("%w: record id got=%d want=%d", ErrCorruptSaveJournal, record.RecordID, expected)
+		if next != frameEnd || record.RecordID != expectedRecordID {
+			return fmt.Errorf("%w: record id got=%d want=%d", ErrCorruptSaveJournal, record.RecordID, expectedRecordID)
 		}
 		j.recordEnds = append(j.recordEnds, next)
 		j.lastRecordID = record.RecordID
 		j.endOffset = next
 		offset = next
-		expected++
+		expectedRecordID++
 	}
 	if j.endOffset == 0 {
 		j.endOffset = saveJournalHeaderSize()
@@ -507,21 +517,22 @@ func (j *SaveJournal) readRecordAtLocked(offset int64) (SaveJournalRecord, int64
 	if gotCRC != wantCRC {
 		return SaveJournalRecord{}, 0, fmt.Errorf("%w: crc mismatch at offset=%d", ErrCorruptSaveJournal, offset)
 	}
-	recordID, intent, err := decodeSaveJournalRecord(payload)
+	recordID, expectedRevision, intent, err := decodeSaveJournalRecord(payload)
 	if err != nil {
 		return SaveJournalRecord{}, 0, err
 	}
 	next := offset + 4 + int64(length) + 4
-	return SaveJournalRecord{RecordID: recordID, Intent: intent, EndOffset: next}, next, nil
+	return SaveJournalRecord{RecordID: recordID, ExpectedRevision: expectedRevision, Intent: intent, EndOffset: next}, next, nil
 }
 
-func encodeSaveJournalRecord(recordID uint64, intent SaveIntent) ([]byte, error) {
+func encodeSaveJournalRecord(recordID, expectedRevision uint64, intent SaveIntent) ([]byte, error) {
 	wire := saveJournalWireRecord{
-		SchemaVersion: SaveJournalSchemaVersion,
-		RecordID:      recordID,
-		IntentID:      intent.IntentID,
-		CharacterID:   string(intent.Identity.ID),
-		Snapshot:      snapshotToSaveJournalWire(intent.Snapshot),
+		SchemaVersion:    SaveJournalSchemaVersion,
+		RecordID:         recordID,
+		ExpectedRevision: expectedRevision,
+		IntentID:         intent.IntentID,
+		CharacterID:      string(intent.Identity.ID),
+		Snapshot:         snapshotToSaveJournalWire(intent.Snapshot),
 	}
 	payload, err := json.Marshal(wire)
 	if err != nil {
@@ -533,29 +544,29 @@ func encodeSaveJournalRecord(recordID uint64, intent SaveIntent) ([]byte, error)
 	return payload, nil
 }
 
-func decodeSaveJournalRecord(payload []byte) (uint64, SaveIntent, error) {
+func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error) {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	var wire saveJournalWireRecord
 	if err := decoder.Decode(&wire); err != nil {
-		return 0, SaveIntent{}, fmt.Errorf("%w: decode record: %v", ErrCorruptSaveJournal, err)
+		return 0, 0, SaveIntent{}, fmt.Errorf("%w: decode record: %v", ErrCorruptSaveJournal, err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return 0, SaveIntent{}, fmt.Errorf("%w: trailing record data", ErrCorruptSaveJournal)
+		return 0, 0, SaveIntent{}, fmt.Errorf("%w: trailing record data", ErrCorruptSaveJournal)
 	}
-	if wire.SchemaVersion != SaveJournalSchemaVersion || wire.RecordID == 0 || wire.IntentID == 0 {
-		return 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
+	if wire.SchemaVersion != SaveJournalSchemaVersion || wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
+		return 0, 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
 	}
 	identity, err := characteridentity.NewTrusted(wire.CharacterID)
 	if err != nil {
-		return 0, SaveIntent{}, fmt.Errorf("%w: character identity: %v", ErrCorruptSaveJournal, err)
+		return 0, 0, SaveIntent{}, fmt.Errorf("%w: character identity: %v", ErrCorruptSaveJournal, err)
 	}
 	intent := SaveIntent{IntentID: wire.IntentID, Identity: identity, Snapshot: saveJournalWireToSnapshot(wire.Snapshot)}
 	if err := validateSaveIntent(intent); err != nil {
-		return 0, SaveIntent{}, fmt.Errorf("%w: intent: %v", ErrCorruptSaveJournal, err)
+		return 0, 0, SaveIntent{}, fmt.Errorf("%w: intent: %v", ErrCorruptSaveJournal, err)
 	}
-	return wire.RecordID, intent, nil
+	return wire.RecordID, wire.ExpectedRevision, intent, nil
 }
 
 func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
