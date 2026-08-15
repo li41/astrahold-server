@@ -40,6 +40,10 @@ func (r CharacterTakeoverRequest) Valid() bool {
 type CharacterTakeoverAuthorizer func(context.Context, CharacterTakeoverRequest) error
 
 func (s *Server) authorizeCharacterTakeover(ctx context.Context, candidateSessionID session.ID, identity characteridentity.Binding, expected worldruntime.SessionOwnershipFence, remoteAddress string) error {
+	return authorizeCharacterTakeoverWith(ctx, candidateSessionID, identity, expected, remoteAddress, s.config.CharacterTakeoverAuthorizer)
+}
+
+func authorizeCharacterTakeoverWith(ctx context.Context, candidateSessionID session.ID, identity characteridentity.Binding, expected worldruntime.SessionOwnershipFence, remoteAddress string, authorizer CharacterTakeoverAuthorizer) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -52,10 +56,10 @@ func (s *Server) authorizeCharacterTakeover(ctx context.Context, candidateSessio
 	if !request.Valid() {
 		return ErrInvalidCharacterTakeoverRequest
 	}
-	if s.config.CharacterTakeoverAuthorizer == nil {
+	if authorizer == nil {
 		return ErrCharacterTakeoverUnauthorized
 	}
-	if err := s.config.CharacterTakeoverAuthorizer(ctx, request); err != nil {
+	if err := authorizer(ctx, request); err != nil {
 		return fmt.Errorf("%w: %w", ErrCharacterTakeoverUnauthorized, err)
 	}
 	return nil
