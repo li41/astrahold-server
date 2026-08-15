@@ -23,9 +23,16 @@ var (
 // credential validation result; callers may use it to construct a
 // connection-scoped takeover authorizer without exposing transport types to the
 // provider.
+//
+// RevocationScope is an optional opaque, server-owned identifier for the exact
+// credential proof/policy generation that produced this grant. It is never sent
+// to the Client. Providers that support live session invalidation should keep the
+// value stable while the credential record is unchanged and change it whenever a
+// security-relevant credential record changes.
 type Grant struct {
 	Identity            characteridentity.Binding
 	AllowActiveTakeover bool
+	RevocationScope     string
 }
 
 func (g Grant) Valid() bool {
@@ -38,8 +45,9 @@ func (g Grant) Valid() bool {
 // either cutoff.
 //
 // Lifecycle is intentionally independent from a live admitted session. A
-// provider validates these boundaries when Resolve runs; continuously revoking
-// an already-admitted session is a separate session-management concern.
+// provider validates these boundaries when Resolve runs; a runtime credential
+// controller may additionally use the same boundaries to retire already-admitted
+// sessions through the transport's normal teardown path.
 type Lifecycle struct {
 	NotBefore time.Time
 	ExpiresAt time.Time

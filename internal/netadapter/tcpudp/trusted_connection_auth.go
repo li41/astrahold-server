@@ -40,9 +40,15 @@ func (r TrustedCharacterConnectionAuthenticationRequest) Valid() bool {
 // must be trusted. TakeoverAuthorizer is intentionally connection-scoped so any active takeover
 // permission can remain bound to the same proof/claims that selected Identity. A nil authorizer
 // is valid for inactive join but fails closed if this connection later attempts active takeover.
+//
+// RevocationScope is optional transport-opaque metadata produced by the trusted authenticator.
+// When the Server has a trusted authentication-scope policy installed, this scope is checked
+// again at peer publication and can later be removed to retire matching live connections through
+// the normal closePeer/realtime-revocation/fenced-leave path.
 type TrustedCharacterConnectionAuthentication struct {
 	Identity           characteridentity.Binding
 	TakeoverAuthorizer CharacterTakeoverAuthorizer
+	RevocationScope    string
 }
 
 func (a TrustedCharacterConnectionAuthentication) Valid() bool {

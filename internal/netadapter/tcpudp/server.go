@@ -105,17 +105,19 @@ type NetworkError struct {
 }
 
 type peer struct {
-	sessionID session.ID
-	entityID  world.EntityID
-	token     Token
-	route     Token
-	conn      *clientConnection
-	ingress   *gateway.Ingress
-	ownership worldruntime.SessionOwnershipFence
-	joined    atomic.Bool
-	ready     atomic.Bool
-	closeOnce sync.Once
-	leaveOnce sync.Once
+	sessionID              session.ID
+	entityID               world.EntityID
+	token                  Token
+	route                  Token
+	conn                   *clientConnection
+	ingress                *gateway.Ingress
+	ownership              worldruntime.SessionOwnershipFence
+	trustedAuthenticated   bool
+	trustedRevocationScope string
+	joined                 atomic.Bool
+	ready                  atomic.Bool
+	closeOnce              sync.Once
+	leaveOnce              sync.Once
 }
 
 type Server struct {
@@ -128,14 +130,16 @@ type Server struct {
 	tcp net.Listener
 	udp *net.UDPConn
 
-	mu          sync.RWMutex
-	peers       map[Token]*peer
-	routes      map[Token]*peer
-	nextSession atomic.Uint64
-	nextEntity  atomic.Uint64
-	errors      chan NetworkError
-	metrics     networkCounters
-	closeOnce   sync.Once
+	mu                        sync.RWMutex
+	peers                     map[Token]*peer
+	routes                    map[Token]*peer
+	trustedScopePolicyEnabled bool
+	trustedScopes             map[string]struct{}
+	nextSession               atomic.Uint64
+	nextEntity                atomic.Uint64
+	errors                    chan NetworkError
+	metrics                   networkCounters
+	closeOnce                 sync.Once
 }
 
 func NewServer(config Config, runtime RuntimeSink, codec transport.PayloadCodec) *Server {
@@ -308,6 +312,8 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	allocatedEntityID := world.EntityID(s.nextEntity.Add(1))
 
 	var identity characteridentity.Binding
+	trustedAuthenticated := false
+	trustedRevocationScope := ""
 	takeoverAuthorizer := s.config.CharacterTakeoverAuthorizer
 	if s.config.TrustedCharacterConnectionAuthenticator != nil {
 		authentication, err := s.authenticateTrustedCharacterConnection(ctx, raw, sid, allocatedEntityID)
@@ -317,6 +323,8 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 			return
 		}
 		identity = authentication.Identity
+		trustedAuthenticated = true
+		trustedRevocationScope = authentication.RevocationScope
 		// Authenticated connections never fall back to the config-global F.21 authorizer.
 		// Active takeover authority must remain bound to this connection's authentication result.
 		takeoverAuthorizer = authentication.TakeoverAuthorizer
@@ -421,7 +429,16 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 	route := token.RoutingID()
-	p := &peer{sessionID: sid, entityID: entityID, token: token, route: route, conn: connection, ingress: s.ingress}
+	p := &peer{
+		sessionID:              sid,
+		entityID:               entityID,
+		token:                  token,
+		route:                  route,
+		conn:                   connection,
+		ingress:                s.ingress,
+		trustedAuthenticated:   trustedAuthenticated,
+		trustedRevocationScope: trustedRevocationScope,
+	}
 	if err := s.registerPeer(p); err != nil {
 		s.closePeer(p, "realtime_register", err)
 		return
