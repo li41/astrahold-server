@@ -1,5 +1,7 @@
 # S2-B：TCP Reliable + UDP Realtime 開發 Transport
 
+> **Historical milestone document.** 本文保留 S2-B 當時以 raw 128-bit realtime bearer token 做 ASTU routing 的開發 transport contract。這不是目前 production security boundary；現況請以 `README.md`、`docs/ARCHITECTURE.md`、S4-E.5～E.7 為準，目前使用 **Protocol v9 public RoutingID + HMAC-SHA256-128**，trusted bootstrap 可走 TLS 1.3。
+
 S2-B 的目標是讓 Godot Thin Client **真的可以連進 Astrahold Server**，同時維持 S0/S1/S2-A 已定義的 package 邊界。
 
 這是一個開發用 Transport Adapter，不是最終商用網路安全方案。

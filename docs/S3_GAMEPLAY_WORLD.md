@@ -1,5 +1,7 @@
 # S3-A：Gameplay World v1
 
+> **Historical milestone document.** 本文保留 S3-A 的 Gameplay World **schema v1** contract。Current production `castle-sandbox` 已是 **schema_version 2 / revision s3d-001**；現況請以 root `README.md`、`docs/ARCHITECTURE.md` 與目前 `worlds/castle-sandbox/gameplay.json` 為準。
+
 S3-A 的目標是讓 Astrahold Server 第一次脫離硬編碼平面地圖，改由 **版本化 Gameplay Proxy** 驅動權威 Movement、Layer transition、Gate blocker 與 LOS。
 
 這一層不是 Visual Mesh，也不是最終 Recast/Detour 格式；它是 World Compiler 與 Gameplay Runtime 之間的穩定 contract。

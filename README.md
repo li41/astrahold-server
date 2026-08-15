@@ -302,34 +302,41 @@ Dirty Vitals max               4000 / tick
 | S4-E.6 | Connection-generation realtime route rotation + old-generation revocation | ✅ |
 | S4-E.7 | NAT-like endpoint migration、rebind spoof protection、WAN impairment、long-session health | ✅ |
 
-## 主要文件
+## 文件入口
 
-基礎：
+### Current production contract
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/S2_PROTOCOL.md`](docs/S2_PROTOCOL.md)
-- [`docs/S2B_TRANSPORT.md`](docs/S2B_TRANSPORT.md)
-- [`docs/S3_GAMEPLAY_WORLD.md`](docs/S3_GAMEPLAY_WORLD.md)
-- [`docs/S3C6_REALTIME_REPLICATION.md`](docs/S3C6_REALTIME_REPLICATION.md)
+以下文件描述**目前**架構與 deployment / realtime security boundary：
 
-Scaling / durability：
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md) — TLS trusted ingress / takeover policy
+- [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md) — Protocol v9 authenticated ASTU
+- [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md) — connection-generation rotation / revocation
+- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md) — NAT / WAN / deployment readiness
 
-- [`docs/S3E1_REPLICATION_TIER_CADENCE.md`](docs/S3E1_REPLICATION_TIER_CADENCE.md)
-- [`docs/S3E6_LIFECYCLE_WORK_BUDGET.md`](docs/S3E6_LIFECYCLE_WORK_BUDGET.md)
-- [`docs/S3E9_LONG_MIXED_GAMEPLAY_SOAK.md`](docs/S3E9_LONG_MIXED_GAMEPLAY_SOAK.md)
+### Production E2E / durability evidence
+
+- [`docs/S4E1_TRUE_GO_GODOT_E2E_SERVER.md`](docs/S4E1_TRUE_GO_GODOT_E2E_SERVER.md)
+- [`docs/S4E2_RESTART_RECOVERY_HARNESS.md`](docs/S4E2_RESTART_RECOVERY_HARNESS.md)
+- [`docs/S4E3_PRODUCTION_WORLDD_CHARACTER_RESTORE_E2E_SERVER.md`](docs/S4E3_PRODUCTION_WORLDD_CHARACTER_RESTORE_E2E_SERVER.md)
+- [`docs/S4D4A_SIEGE_RESULT_CONTRACT.md`](docs/S4D4A_SIEGE_RESULT_CONTRACT.md)
 - [`docs/S3F18_TRUSTED_SESSION_OWNERSHIP_FENCE_SEAM.md`](docs/S3F18_TRUSTED_SESSION_OWNERSHIP_FENCE_SEAM.md)
 - [`docs/S3F20_TRUSTED_TCPUDP_ACTIVE_TAKEOVER_SEAM.md`](docs/S3F20_TRUSTED_TCPUDP_ACTIVE_TAKEOVER_SEAM.md)
 - [`docs/S3F23_TRUSTED_CONNECTION_AUTHENTICATION_CONTEXT_SEAM.md`](docs/S3F23_TRUSTED_CONNECTION_AUTHENTICATION_CONTEXT_SEAM.md)
 
-Siege / production E2E：
+### Historical milestone documents
 
-- [`docs/S4D4A_SIEGE_RESULT_CONTRACT.md`](docs/S4D4A_SIEGE_RESULT_CONTRACT.md)
-- [`docs/S4E1_TRUE_GO_GODOT_E2E_SERVER.md`](docs/S4E1_TRUE_GO_GODOT_E2E_SERVER.md)
-- [`docs/S4E2_RESTART_RECOVERY_HARNESS.md`](docs/S4E2_RESTART_RECOVERY_HARNESS.md)
-- [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md)
-- [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md)
-- [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md)
-- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md)
+`S1*` / `S2*` / `S3*` / early `S4*` 文件刻意保留該 milestone 當時的 protocol、schema、transport 與量測結果。看到 Protocol v1/v2/v3/v6/v8、raw bearer realtime token、Gameplay World schema v1、Full AOI snapshot 等內容時，**不要把它當成目前 production contract**。
+
+常用歷史文件：
+
+- [`docs/S2_PROTOCOL.md`](docs/S2_PROTOCOL.md)
+- [`docs/S2B_TRANSPORT.md`](docs/S2B_TRANSPORT.md)
+- [`docs/S3_GAMEPLAY_WORLD.md`](docs/S3_GAMEPLAY_WORLD.md)
+- [`docs/S3C6_REALTIME_REPLICATION.md`](docs/S3C6_REALTIME_REPLICATION.md)
+- [`docs/S3E1_REPLICATION_TIER_CADENCE.md`](docs/S3E1_REPLICATION_TIER_CADENCE.md)
+- [`docs/S3E6_LIFECYCLE_WORK_BUDGET.md`](docs/S3E6_LIFECYCLE_WORK_BUDGET.md)
+- [`docs/S3E9_LONG_MIXED_GAMEPLAY_SOAK.md`](docs/S3E9_LONG_MIXED_GAMEPLAY_SOAK.md)
 
 ## 開發
 
