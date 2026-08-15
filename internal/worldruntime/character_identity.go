@@ -40,6 +40,16 @@ func (r *characterIdentityRegistry) validateSession(s *session.Session) error {
 	return nil
 }
 
+func (r *characterIdentityRegistry) validateAdmission(identity characteridentity.Binding) error {
+	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted {
+		return ErrCharacterAdmissionRequiresTrustedIdentity
+	}
+	if entityID, ok := r.entityByCharacter[identity.ID]; ok {
+		return fmt.Errorf("%w: character=%s current_entity=%d", ErrCharacterIdentityActive, identity.ID, entityID)
+	}
+	return nil
+}
+
 func (r *characterIdentityRegistry) bindSession(s *session.Session) {
 	r.byEntity[s.EntityID] = s.CharacterIdentity
 	r.entityByCharacter[s.CharacterIdentity.ID] = s.EntityID
