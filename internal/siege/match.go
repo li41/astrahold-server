@@ -68,11 +68,23 @@ type MatchState struct {
 	BreachGateID      string
 	ThroneObjectiveID string
 	GateBreached      bool
+	WinnerTeam        Team
+	WinnerID          string
+}
+
+// CastleOwnershipState is Server-authoritative ownership for the castle defended by this
+// configured match. D.3A keeps it process-local; durable/cross-process ownership is a later stage.
+type CastleOwnershipState struct {
+	Revision            uint64
+	OwnerID             string
+	PreviousOwnerID     string
+	LastTransferMatchID string
 }
 
 type matchRuntime struct {
 	definition              MatchDefinition
 	state                   MatchState
+	ownership               CastleOwnershipState
 	participantTeams        map[world.EntityID]Team
 	trustedParticipantTeams map[characteridentity.ID]Team
 	throne                  *throneRuntime
@@ -111,6 +123,10 @@ func (s *Service) ConfigureMatch(definition MatchDefinition) error {
 			BreachGateID:      definition.BreachGateID,
 			ThroneObjectiveID: definition.ThroneObjectiveID,
 		},
+		ownership: CastleOwnershipState{
+			Revision: 1,
+			OwnerID:  definition.DefenderID,
+		},
 		participantTeams:        make(map[world.EntityID]Team),
 		trustedParticipantTeams: trustedTeams,
 		throne:                  throne,
@@ -123,6 +139,13 @@ func (s *Service) MatchState() (MatchState, bool) {
 		return MatchState{}, false
 	}
 	return s.match.state, true
+}
+
+func (s *Service) CastleOwnershipState() (CastleOwnershipState, bool) {
+	if s == nil || s.match == nil {
+		return CastleOwnershipState{}, false
+	}
+	return s.match.ownership, true
 }
 
 // AssignResolvedParticipant maps only an already-trusted CharacterID through this match's
@@ -185,5 +208,47 @@ func (s *Service) ObserveGateState(state GateState) bool {
 	if s.match.state.Revision == 0 {
 		s.match.state.Revision = 1
 	}
+	return true
+}
+
+// ResolveThroneCapture performs the D.3A authoritative completion transaction. Only a ready
+// attacker capture may complete the match. The same world-owner call records the winner,
+// advances Throne -> Completed, and transfers castle ownership from defender to attacker.
+func (s *Service) ResolveThroneCapture() bool {
+	if s == nil || s.match == nil || s.match.throne == nil || s.match.throne.capture == nil {
+		return false
+	}
+	if s.match.state.Phase != MatchPhaseThrone || s.match.state.WinnerTeam != TeamUnknown || s.match.state.WinnerID != "" {
+		return false
+	}
+	capture := s.match.throne.capture.state
+	if !capture.ReadyForResolution {
+		return false
+	}
+
+	nextMatch := s.match.state
+	nextMatch.Phase = MatchPhaseCompleted
+	nextMatch.WinnerTeam = TeamAttacker
+	nextMatch.WinnerID = s.match.definition.AttackerID
+	nextMatch.Revision++
+	if nextMatch.Revision == 0 {
+		nextMatch.Revision = 1
+	}
+
+	nextOwnership := s.match.ownership
+	nextOwnership.PreviousOwnerID = nextOwnership.OwnerID
+	nextOwnership.OwnerID = s.match.definition.AttackerID
+	nextOwnership.LastTransferMatchID = s.match.definition.ID
+	nextOwnership.Revision++
+	if nextOwnership.Revision == 0 {
+		nextOwnership.Revision = 1
+	}
+
+	// Publish the match and ownership results together before settling objective activity.
+	// WorldRuntime invokes this only on the single world-owner tick.
+	s.match.state = nextMatch
+	s.match.ownership = nextOwnership
+	s.ObserveThronePresence(nil)
+	s.AdvanceThroneCapture(0)
 	return true
 }

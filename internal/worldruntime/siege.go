@@ -61,6 +61,15 @@ func (r *Runtime) SiegeMatchState() (siege.MatchState, bool) {
 	return r.siege.MatchState()
 }
 
+// SiegeCastleOwnershipState exposes the process-local Server-authoritative castle owner.
+// D.3A does not make this durable or add it to Protocol v7.
+func (r *Runtime) SiegeCastleOwnershipState() (siege.CastleOwnershipState, bool) {
+	if r == nil || r.siege == nil {
+		return siege.CastleOwnershipState{}, false
+	}
+	return r.siege.CastleOwnershipState()
+}
+
 // SiegeThronePresenceState exposes Server-observed throne occupancy/contest eligibility.
 // It is intentionally not a network contract.
 func (r *Runtime) SiegeThronePresenceState() (siege.ThronePresenceState, bool) {
@@ -71,7 +80,7 @@ func (r *Runtime) SiegeThronePresenceState() (siege.ThronePresenceState, bool) {
 }
 
 // SiegeThroneCaptureState exposes Server-clock capture progress for observability/tests.
-// D.2B keeps it internal; winner/ownership resolution belongs to the next bounded stage.
+// D.3A consumes ReadyForResolution internally; the progress itself remains off-wire.
 func (r *Runtime) SiegeThroneCaptureState() (siege.ThroneCaptureState, bool) {
 	if r == nil || r.siege == nil {
 		return siege.ThroneCaptureState{}, false
