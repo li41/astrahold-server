@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/sessioncredential"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -81,6 +83,106 @@ func TestTrustedCharacterAuthenticatorConsumesOnlyPrefaceAndReturnsServerOwnedId
 	}
 }
 
+func TestTrustedCharacterAuthenticatorDelegatesOpaqueCredentialToProvider(t *testing.T) {
+	token := []byte("provider-owned-opaque-credential")
+	binding, err := characteridentity.NewTrusted("provider-character")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingSessionCredentialProvider{
+		grant: sessioncredential.Grant{Identity: binding, AllowActiveTakeover: true},
+	}
+	authenticator, err := newTrustedCharacterAuthenticatorWithProvider(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	writeDone := make(chan error, 1)
+	go func() {
+		payload := append(encodeTrustedAuthPrefaceForTest(token), []byte("GAME")...)
+		_, err := clientConn.Write(payload)
+		writeDone <- err
+	}()
+
+	result, err := authenticator.Authenticate(context.Background(), tcpudp.TrustedCharacterConnectionAuthenticationRequest{
+		CandidateSessionID: 1,
+		AllocatedEntityID:  1,
+		RemoteAddress:      "127.0.0.1:50000",
+		Connection:         serverConn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Identity != binding {
+		t.Fatalf("identity=%+v want=%+v", result.Identity, binding)
+	}
+	if result.TakeoverAuthorizer == nil {
+		t.Fatal("provider takeover claim must become a connection-scoped authorizer")
+	}
+	if string(provider.credential) != string(token) {
+		t.Fatalf("provider credential=%q want=%q", provider.credential, token)
+	}
+
+	extra := make([]byte, 4)
+	if _, err := serverConn.Read(extra); err != nil {
+		t.Fatal(err)
+	}
+	if string(extra) != "GAME" {
+		t.Fatalf("provider-backed authenticator consumed post-preface bytes: %q", extra)
+	}
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("client writer did not complete")
+	}
+}
+
+func TestTrustedCharacterAuthenticatorRejectsProviderErrorAndInvalidGrant(t *testing.T) {
+	providerErr := errors.New("credential backend unavailable")
+	cases := []struct {
+		name     string
+		provider *recordingSessionCredentialProvider
+		wantErr  error
+	}{
+		{
+			name:     "provider error",
+			provider: &recordingSessionCredentialProvider{err: providerErr},
+			wantErr:  providerErr,
+		},
+		{
+			name:     "invalid grant",
+			provider: &recordingSessionCredentialProvider{},
+			wantErr:  errTrustedCharacterCredentialProviderGrant,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			authenticator, err := newTrustedCharacterAuthenticatorWithProvider(tc.provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			serverConn, clientConn := net.Pipe()
+			defer serverConn.Close()
+			defer clientConn.Close()
+			go func() { _, _ = clientConn.Write(encodeTrustedAuthPrefaceForTest([]byte("opaque"))) }()
+
+			_, err = authenticator.Authenticate(context.Background(), tcpudp.TrustedCharacterConnectionAuthenticationRequest{
+				CandidateSessionID: 1, AllocatedEntityID: 1, Connection: serverConn,
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err=%v want errors.Is(_, %v)", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestTrustedCharacterAuthenticatorRejectsUnknownCredential(t *testing.T) {
 	path := writeTrustedAuthConfig(t, []byte("known-secret"), "e3-keeper")
 	authenticator, _, err := loadTrustedCharacterAuthenticator(path, "[::1]:7777")
@@ -123,6 +225,17 @@ func TestTrustedCharacterAuthConfigIsStrictAndRejectsDuplicateDigest(t *testing.
 			t.Fatalf("case %d should fail", index)
 		}
 	}
+}
+
+type recordingSessionCredentialProvider struct {
+	credential []byte
+	grant      sessioncredential.Grant
+	err        error
+}
+
+func (p *recordingSessionCredentialProvider) Resolve(_ context.Context, credential []byte) (sessioncredential.Grant, error) {
+	p.credential = append(p.credential[:0], credential...)
+	return p.grant, p.err
 }
 
 func writeTrustedAuthConfig(t *testing.T, token []byte, characterID string) string {
