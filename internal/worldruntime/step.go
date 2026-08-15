@@ -30,8 +30,20 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyRegister(cmd.name(), c, &report)
 		case unregisterSessionCommand:
 			r.applyUnregister(cmd.name(), c, &report)
+		case characterAdmissionCommand:
+			err := r.characterIdentities.validateAdmission(c.identity)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), Err: err})
+			}
+			completeWorldOwnerCommand(c.completion, err)
 		case joinCommand:
+			beforeErrors := len(report.CommandErrors)
 			r.applyJoin(cmd.name(), c.request, &report)
+			var joinErr error
+			if len(report.CommandErrors) > beforeErrors {
+				joinErr = report.CommandErrors[len(report.CommandErrors)-1].Err
+			}
+			completeWorldOwnerCommand(c.completion, joinErr)
 		case leaveCommand:
 			r.applyLeave(cmd.name(), c.id, &report)
 		case moveInputCommand:
