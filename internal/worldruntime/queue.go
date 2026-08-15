@@ -27,15 +27,11 @@ func (c characterAdmissionCommand) name() string {
 	if c.identity.release {
 		return "release_character_admission"
 	}
+	if c.identity.ownership != nil {
+		return "plan_character_connection"
+	}
 	return "admit_character"
 }
-
-type characterConnectionPlanCommand struct {
-	identity   characteridentity.Binding
-	result     *CharacterConnectionPlan
-	completion chan error
-}
-func (characterConnectionPlanCommand) name() string { return "plan_character_connection" }
 
 type joinCommand struct {
 	request    JoinRequest
