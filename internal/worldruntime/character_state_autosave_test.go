@@ -57,8 +57,8 @@ func TestTrustedCharacterAutosaveBudgetRoundRobinEventuallyVisitsAllDueSessions(
 		if report.Metrics.CharacterStateAutosaveAttempts != 1 || report.Metrics.CharacterStateAutosaveEnqueued != 1 || report.Metrics.CharacterStateSaveIntentsEnqueued != 1 {
 			t.Fatalf("tick=%d report=%#v", tick, report)
 		}
-		if report.Metrics.CharacterStateAutosaveDeferred != 1 {
-			t.Fatalf("tick=%d deferred=%d", tick, report.Metrics.CharacterStateAutosaveDeferred)
+		if !report.Metrics.CharacterStateAutosaveBudgetExhausted {
+			t.Fatalf("tick=%d budget did not report exhaustion", tick)
 		}
 	}
 	pending := outbox.Pending(0)
@@ -101,6 +101,9 @@ func TestCharacterAutosaveIgnoresEphemeralSession(t *testing.T) {
 	}
 	if report := rt.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 {
 		t.Fatalf("register=%#v", report.CommandErrors)
+	}
+	if _, ok := rt.characterStateAutosaveLastTick[1]; ok {
+		t.Fatal("ephemeral character entered autosave bookkeeping")
 	}
 	report := rt.Step(2, 50*time.Millisecond)
 	if report.Metrics.CharacterStateAutosaveAttempts != 1 || report.Metrics.CharacterStateAutosaveEnqueued != 1 || outbox.Depth() != 1 {
