@@ -21,21 +21,26 @@ import (
 )
 
 var (
-	ErrNotOpen                  = errors.New("tcpudp: server is not open")
-	ErrAlreadyOpen              = errors.New("tcpudp: server already open")
-	ErrInvalidPlayerSpec        = errors.New("tcpudp: invalid player bootstrap spec")
-	ErrInvalidWorldIdentity     = errors.New("tcpudp: invalid world identity")
-	ErrInvalidCharacterIdentity = errors.New("tcpudp: invalid character identity")
-	ErrTCPChannelMismatch       = errors.New("tcpudp: realtime message received on TCP")
-	ErrUDPChannelMismatch       = errors.New("tcpudp: reliable message received on UDP")
+	ErrNotOpen                   = errors.New("tcpudp: server is not open")
+	ErrAlreadyOpen               = errors.New("tcpudp: server already open")
+	ErrInvalidPlayerSpec         = errors.New("tcpudp: invalid player bootstrap spec")
+	ErrInvalidWorldIdentity      = errors.New("tcpudp: invalid world identity")
+	ErrInvalidCharacterIdentity  = errors.New("tcpudp: invalid character identity")
+	ErrInvalidCharacterOwnership = errors.New("tcpudp: invalid trusted character ownership fence")
+	ErrTCPChannelMismatch        = errors.New("tcpudp: realtime message received on TCP")
+	ErrUDPChannelMismatch        = errors.New("tcpudp: reliable message received on UDP")
 )
 
 type RuntimeSink interface {
 	gateway.MoveCommandSink
+	gateway.ActionCommandSink
 	AwaitCharacterAdmission(context.Context, characteridentity.Binding) (worldruntime.CharacterAdmissionLease, error)
 	ReleaseCharacterAdmission(context.Context, worldruntime.CharacterAdmissionLease) error
-	AwaitJoin(context.Context, worldruntime.JoinRequest) error
+	AwaitJoinOwned(context.Context, worldruntime.JoinRequest) (worldruntime.SessionOwnershipFence, error)
 	EnqueueLeave(session.ID) error
+	EnqueueFencedLeave(worldruntime.SessionOwnershipFence) error
+	EnqueueFencedMove(worldruntime.SessionOwnershipFence, uint32, protocol.ClientMoveInput) error
+	EnqueueFencedUseAction(worldruntime.SessionOwnershipFence, uint32, protocol.ClientUseAction) error
 }
 
 type PlayerSpec struct {
@@ -94,6 +99,8 @@ type peer struct {
 	entityID  world.EntityID
 	token     Token
 	conn      *clientConnection
+	ingress   *gateway.Ingress
+	ownership worldruntime.SessionOwnershipFence
 	joined    atomic.Bool
 	ready     atomic.Bool
 	closeOnce sync.Once
@@ -337,12 +344,12 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		_ = raw.Close()
 		return
 	}
-	p := &peer{sessionID: sid, entityID: eid, token: token, conn: connection}
+	p := &peer{sessionID: sid, entityID: eid, token: token, conn: connection, ingress: s.ingress}
 	s.mu.Lock()
 	s.peers[token] = p
 	s.mu.Unlock()
 
-	if err := s.runtime.AwaitJoin(ctx, worldruntime.JoinRequest{
+	ownership, err := s.runtime.AwaitJoinOwned(ctx, worldruntime.JoinRequest{
 		Session:        sess,
 		Entity:         spec.Entity,
 		Speed:          spec.Speed,
@@ -350,13 +357,22 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		MaxStepHeight:  spec.MaxStepHeight,
 		Restore:        restore,
 		AdmissionLease: admissionLease,
-	}); err != nil {
+	})
+	if err != nil {
 		s.closePeer(p, "join_world", err)
 		return
 	}
 	// The world-owner join consumed the matching reservation atomically with active ownership.
 	admissionLease = nil
 	p.joined.Store(true)
+	p.ownership = ownership
+	if identity.Assurance == characteridentity.AssuranceTrusted {
+		if !ownership.Valid() || ownership.SessionID != sid || ownership.EntityID != eid || ownership.CharacterID != identity.ID {
+			s.closePeer(p, "join_ownership", ErrInvalidCharacterOwnership)
+			return
+		}
+		p.ingress = gateway.NewIngress(peerCommandSink{runtime: s.runtime, ownership: ownership})
+	}
 
 	udpPort := uint16(0)
 	if addr := s.UDPAddr(); addr != nil && addr.Port >= 0 && addr.Port <= 65535 {
@@ -401,7 +417,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 			s.closePeer(p, "tcp_channel", ErrTCPChannelMismatch)
 			return
 		}
-		if err := s.ingress.Handle(sid, envelope); err != nil {
+		if err := p.ingress.Handle(sid, envelope); err != nil {
 			s.closePeer(p, "tcp_ingress", err)
 			return
 		}
@@ -446,7 +462,7 @@ func (s *Server) udpLoop(ctx context.Context) {
 			s.emit(p.sessionID, "udp_bind", err)
 			continue
 		}
-		if err := s.ingress.Handle(p.sessionID, envelope); err != nil {
+		if err := p.ingress.Handle(p.sessionID, envelope); err != nil {
 			s.emit(p.sessionID, "udp_ingress", err)
 			continue
 		}
@@ -471,7 +487,13 @@ func (s *Server) closePeer(p *peer, operation string, cause error) {
 	})
 	if p.joined.Load() {
 		p.leaveOnce.Do(func() {
-			if err := s.runtime.EnqueueLeave(p.sessionID); err != nil {
+			var err error
+			if p.ownership.Valid() {
+				err = s.runtime.EnqueueFencedLeave(p.ownership)
+			} else {
+				err = s.runtime.EnqueueLeave(p.sessionID)
+			}
+			if err != nil {
 				s.emit(p.sessionID, "enqueue_leave", err)
 			}
 		})
