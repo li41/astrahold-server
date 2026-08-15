@@ -15,6 +15,10 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport) {
 	if r.siege == nil {
 		return
 	}
+	// Step invokes this after simulation, so throne occupancy is sampled from the same
+	// authoritative post-movement state before any later capture-progress stage consumes it.
+	r.observeSiegeThronePresence()
+
 	state, ok := r.siege.MatchState()
 	if !ok {
 		return

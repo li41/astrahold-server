@@ -60,3 +60,12 @@ func (r *Runtime) SiegeMatchState() (siege.MatchState, bool) {
 	}
 	return r.siege.MatchState()
 }
+
+// SiegeThronePresenceState exposes Server-observed throne occupancy/contest eligibility.
+// It is intentionally not a network contract in S4-D.2A.
+func (r *Runtime) SiegeThronePresenceState() (siege.ThronePresenceState, bool) {
+	if r == nil || r.siege == nil {
+		return siege.ThronePresenceState{}, false
+	}
+	return r.siege.ThronePresenceState()
+}
