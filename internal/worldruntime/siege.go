@@ -17,21 +17,46 @@ var (
 
 func WithSiegeGates(gates []gameplayworld.Gate) Option {
 	return func(r *Runtime) {
-		if len(gates) == 0 { return }
+		if len(gates) == 0 {
+			return
+		}
 		r.siege = siege.NewService(gates)
 		profile := gates[0].Attack
 		legacy, err := combat.NewService([]combat.ActionDefinition{{
-			ID: legacyGateActionID,
-			Targets: []combat.TargetKind{combat.TargetGate},
-			Range: profile.Range,
-			BaseDamage: profile.Damage,
-			DamageType: combat.DamagePhysical,
+			ID:              legacyGateActionID,
+			Targets:         []combat.TargetKind{combat.TargetGate},
+			Range:           profile.Range,
+			BaseDamage:      profile.Damage,
+			DamageType:      combat.DamagePhysical,
 			CooldownSeconds: profile.CooldownSeconds,
 		}})
-		if err == nil { r.combat = legacy }
+		if err == nil {
+			r.combat = legacy
+		}
+	}
+}
+
+// WithSiegeMatch configures the authoritative siege match state after WithSiegeGates.
+// It is a startup-only option; invalid static configuration fails fast.
+func WithSiegeMatch(definition siege.MatchDefinition) Option {
+	return func(r *Runtime) {
+		if r.siege == nil {
+			panic("worldruntime: siege gates must be configured before siege match")
+		}
+		if err := r.siege.ConfigureMatch(definition); err != nil {
+			panic(err)
+		}
 	}
 }
 
 func WithCombatService(service *combat.Service) Option {
 	return func(r *Runtime) { r.combat = service }
+}
+
+// SiegeMatchState exposes a read-only snapshot for replication/observability seams.
+func (r *Runtime) SiegeMatchState() (siege.MatchState, bool) {
+	if r == nil || r.siege == nil {
+		return siege.MatchState{}, false
+	}
+	return r.siege.MatchState()
 }
