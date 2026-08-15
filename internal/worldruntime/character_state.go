@@ -89,10 +89,35 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 	return true
 }
 
+func characterStateAutosaveDueTick(base, interval uint64) uint64 {
+	if interval > ^uint64(0)-base {
+		return ^uint64(0)
+	}
+	return base + interval
+}
+
+func characterStateAutosaveRetryTick(tick uint64) uint64 {
+	if tick == ^uint64(0) {
+		return tick
+	}
+	return tick + 1
+}
+
+func earlierAutosaveTick(current, candidate uint64) uint64 {
+	if candidate == 0 {
+		return current
+	}
+	if current == 0 || candidate < current {
+		return candidate
+	}
+	return current
+}
+
 // markCharacterStateAutosaveBaseline starts the interval at join/register time so a newly
 // admitted trusted character is not immediately swept just because process tick is high.
 func (r *Runtime) markCharacterStateAutosaveBaseline(entityID world.EntityID, tick uint64) {
-	if r.config.CharacterStateAutosaveEveryTicks == 0 {
+	interval := r.config.CharacterStateAutosaveEveryTicks
+	if interval == 0 {
 		return
 	}
 	binding, ok := r.characterIdentities.binding(entityID)
@@ -100,6 +125,7 @@ func (r *Runtime) markCharacterStateAutosaveBaseline(entityID world.EntityID, ti
 		return
 	}
 	r.characterStateAutosaveLastTick[entityID] = tick
+	r.characterStateAutosaveNextTick = earlierAutosaveTick(r.characterStateAutosaveNextTick, characterStateAutosaveDueTick(tick, interval))
 }
 
 func (r *Runtime) forgetCharacterStateAutosave(entityID world.EntityID) {
@@ -108,7 +134,8 @@ func (r *Runtime) forgetCharacterStateAutosave(entityID world.EntityID) {
 
 // autosaveCharacterStates performs a bounded round-robin sweep of active trusted sessions.
 // It captures only immutable authoritative snapshots into the existing process-local outbox;
-// journal append/fsync, Store CAS, and checkpoint I/O remain in the worldd worker.
+// journal append/fsync, Store CAS, and checkpoint I/O remain in the worldd worker. Between
+// possible due ticks it returns without listing/sorting sessions.
 func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 	interval := r.config.CharacterStateAutosaveEveryTicks
 	if interval == 0 || r.characterStateOutbox == nil {
@@ -118,6 +145,9 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 	if budget <= 0 {
 		return
 	}
+	if r.characterStateAutosaveNextTick != 0 && tick < r.characterStateAutosaveNextTick {
+		return
+	}
 	if report != nil {
 		report.Metrics.CharacterStateAutosaveBudget = budget
 	}
@@ -125,6 +155,7 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 	sessions := r.sessions.List()
 	if len(sessions) == 0 {
 		r.characterStateAutosaveCursor = 0
+		r.characterStateAutosaveNextTick = 0
 		return
 	}
 	start := r.characterStateAutosaveCursor % len(sessions)
@@ -133,18 +164,23 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 	}
 	attempts := 0
 	lastAttemptedIndex := -1
+	nextSweep := uint64(0)
+	trustedSeen := false
 	for checked := 0; checked < len(sessions); checked++ {
 		index := (start + checked) % len(sessions)
 		s := sessions[index]
 		if s.CharacterIdentity.Assurance != characteridentity.AssuranceTrusted {
 			continue
 		}
+		trustedSeen = true
 		lastTick, ok := r.characterStateAutosaveLastTick[s.EntityID]
 		if !ok || tick < lastTick {
+			lastTick = tick
 			r.characterStateAutosaveLastTick[s.EntityID] = tick
-			continue
 		}
-		if tick-lastTick < interval {
+		dueTick := characterStateAutosaveDueTick(lastTick, interval)
+		if tick < dueTick {
+			nextSweep = earlierAutosaveTick(nextSweep, dueTick)
 			continue
 		}
 		if attempts >= budget {
@@ -152,6 +188,7 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 				report.Metrics.CharacterStateAutosaveBudgetExhausted = true
 			}
 			r.characterStateAutosaveCursor = index
+			r.characterStateAutosaveNextTick = characterStateAutosaveRetryTick(tick)
 			return
 		}
 		attempts++
@@ -161,12 +198,21 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 		}
 		if r.enqueueCharacterStateSave(s.ID, s.EntityID, report) {
 			r.characterStateAutosaveLastTick[s.EntityID] = tick
+			nextSweep = earlierAutosaveTick(nextSweep, characterStateAutosaveDueTick(tick, interval))
 			if report != nil {
 				report.Metrics.CharacterStateAutosaveEnqueued++
 			}
+		} else {
+			// Failure leaves the baseline unchanged. Retry no earlier than the next world tick.
+			nextSweep = earlierAutosaveTick(nextSweep, characterStateAutosaveRetryTick(tick))
 		}
 	}
 
+	if !trustedSeen {
+		r.characterStateAutosaveNextTick = 0
+	} else {
+		r.characterStateAutosaveNextTick = nextSweep
+	}
 	if lastAttemptedIndex >= 0 {
 		r.characterStateAutosaveCursor = (lastAttemptedIndex + 1) % len(sessions)
 		return
