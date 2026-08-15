@@ -44,6 +44,21 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				joinErr = report.CommandErrors[len(report.CommandErrors)-1].Err
 			}
 			completeWorldOwnerCommand(c.completion, joinErr)
+		case ownershipLookupCommand:
+			fence, err := r.characterIdentities.currentOwnership(c.identity)
+			if err == nil && c.result != nil {
+				*c.result = fence
+			}
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), Err: err})
+			}
+			completeWorldOwnerCommand(c.completion, err)
+		case ownershipTransferCommand:
+			err := r.applyOwnershipTransfer(c.request)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), SessionID: c.request.Expected.SessionID, Err: err})
+			}
+			completeWorldOwnerCommand(c.completion, err)
 		case leaveCommand:
 			r.applyLeave(cmd.name(), c, &report)
 		case moveInputCommand:
