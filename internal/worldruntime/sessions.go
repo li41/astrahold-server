@@ -71,6 +71,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 
 	entity := request.Entity
 	var restoredState *character.State
+	var defeatedRestore *preparedDefeatedRestore
 	if request.Restore != nil {
 		if err := r.validateCharacterRestore(request.Session, *request.Restore); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
@@ -84,6 +85,14 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			Defeated: request.Restore.Defeated,
 		}
 		restoredState = &state
+		if request.Restore.Defeated {
+			prepared, err := r.prepareDefeatedRestore(request.Entity.ID, report.Tick, request.Restore.Respawn)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+				return
+			}
+			defeatedRestore = &prepared
+		}
 	}
 
 	if err := r.world.Spawn(entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
@@ -101,8 +110,19 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
+	if defeatedRestore != nil {
+		if err := r.installDefeatedRestore(*defeatedRestore); err != nil {
+			r.characters.Remove(request.Entity.ID)
+			r.world.Remove(request.Entity.ID)
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+			return
+		}
+	}
 	r.ensureEntityVitalsRevision(request.Entity.ID)
 	if err := r.sessions.Add(request.Session); err != nil {
+		if r.respawnPolicy != nil {
+			r.respawnPolicy.Remove(request.Entity.ID)
+		}
 		r.removeEntityVitals(request.Entity.ID)
 		r.characters.Remove(request.Entity.ID)
 		r.world.Remove(request.Entity.ID)
@@ -152,8 +172,8 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 		return
 	}
 	if state.Defeated {
-		// Defeated 是正常 gameplay state，不是 command fault。仍消耗 input sequence，
-		// 但 authoritative movement input 固定歸零，避免倒地期間累積方向並在未來 revive 後重播。
+		// Defeated is normal gameplay state, not a command fault. Consume the sequence
+		// while keeping authoritative movement input zero.
 		if err := r.world.SetMoveInput(s.EntityID, movement.Input{}); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
 			return
