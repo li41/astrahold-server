@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrCharacterOwnershipNotActive               = errors.New("worldruntime: trusted character ownership not active")
-	ErrCharacterOwnershipTransferRequiresTrusted = errors.New("worldruntime: ownership transfer requires trusted identity")
+	ErrCharacterOwnershipNotActive                = errors.New("worldruntime: trusted character ownership not active")
+	ErrCharacterOwnershipTransferRequiresTrusted  = errors.New("worldruntime: ownership transfer requires trusted identity")
 	ErrCharacterOwnershipTransferIdentityMismatch = errors.New("worldruntime: ownership transfer character identity mismatch")
 	ErrCharacterOwnershipTransferEntityMismatch   = errors.New("worldruntime: ownership transfer entity mismatch")
 	ErrCharacterOwnershipTransferSameSession      = errors.New("worldruntime: ownership transfer requires a new session")
@@ -120,6 +120,9 @@ func (r *Runtime) applyOwnershipTransfer(request OwnershipTransferRequest) error
 		return ErrCharacterOwnershipTransferSameSession
 	}
 	if err := r.characterIdentities.validateOwnership(expected.SessionID, expected); err != nil {
+		return err
+	}
+	if err := r.characterIdentities.validateSession(replacement); err != nil {
 		return err
 	}
 	currentSession, ok := r.sessions.Get(expected.SessionID)
