@@ -364,15 +364,23 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	}
 	// The world-owner join consumed the matching reservation atomically with active ownership.
 	admissionLease = nil
-	p.joined.Store(true)
-	p.ownership = ownership
 	if identity.Assurance == characteridentity.AssuranceTrusted {
 		if !ownership.Valid() || ownership.SessionID != sid || ownership.EntityID != eid || ownership.CharacterID != identity.ID {
+			// The world join committed, so teardown is still required. Publish joined only
+			// after ownership has been left at its zero value so closePeer deterministically
+			// uses the legacy cleanup fallback for this impossible integration fault.
+			p.joined.Store(true)
 			s.closePeer(p, "join_ownership", ErrInvalidCharacterOwnership)
 			return
 		}
+		p.ownership = ownership
 		p.ingress = gateway.NewIngress(peerCommandSink{runtime: s.runtime, ownership: ownership})
+	} else {
+		p.ownership = ownership
 	}
+	// Publish joined only after all state closePeer may read is immutable. The atomic flag is
+	// the publication barrier for ownership and preserves the existing late-close leave seam.
+	p.joined.Store(true)
 
 	udpPort := uint16(0)
 	if addr := s.UDPAddr(); addr != nil && addr.Port >= 0 && addr.Port <= 65535 {
