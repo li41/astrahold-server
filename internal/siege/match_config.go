@@ -9,23 +9,30 @@ import (
 	"os"
 
 	"github.com/li41/astrahold-server/internal/gameplayworld"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
-const MatchConfigSchemaVersion uint16 = 1
+const MatchConfigSchemaVersion uint16 = 2
 
 var (
 	ErrUnsupportedMatchConfigSchema = errors.New("siege: unsupported match config schema")
 	ErrInvalidMatchConfig           = errors.New("siege: invalid match config")
 )
 
+type ThroneZoneConfig struct {
+	Layer  world.LayerID          `json:"layer"`
+	Bounds gameplayworld.BoundsXZ `json:"bounds"`
+}
+
 type MatchConfig struct {
-	SchemaVersion     uint16 `json:"schema_version"`
-	Revision          string `json:"revision"`
-	MatchID           string `json:"match_id"`
-	AttackerID        string `json:"attacker_id"`
-	DefenderID        string `json:"defender_id"`
-	BreachGateID      string `json:"breach_gate_id"`
-	ThroneObjectiveID string `json:"throne_objective_id"`
+	SchemaVersion     uint16           `json:"schema_version"`
+	Revision          string           `json:"revision"`
+	MatchID           string           `json:"match_id"`
+	AttackerID        string           `json:"attacker_id"`
+	DefenderID        string           `json:"defender_id"`
+	BreachGateID      string           `json:"breach_gate_id"`
+	ThroneObjectiveID string           `json:"throne_objective_id"`
+	ThroneZone        ThroneZoneConfig `json:"throne_zone"`
 }
 
 type LoadedMatchConfig struct {
@@ -75,12 +82,20 @@ func ValidateMatchConfig(config MatchConfig) error {
 }
 
 func (config MatchConfig) Definition() MatchDefinition {
+	throne := ThroneObjectiveDefinition{
+		ID: config.ThroneObjectiveID,
+		Zone: ObjectiveZone{
+			Layer:  config.ThroneZone.Layer,
+			Bounds: config.ThroneZone.Bounds,
+		},
+	}
 	return MatchDefinition{
 		ID:                config.MatchID,
 		AttackerID:        config.AttackerID,
 		DefenderID:        config.DefenderID,
 		BreachGateID:      config.BreachGateID,
 		ThroneObjectiveID: config.ThroneObjectiveID,
+		Throne:            &throne,
 	}
 }
 

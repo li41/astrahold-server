@@ -38,10 +38,14 @@ type MatchDefinition struct {
 	DefenderID        string
 	BreachGateID      string
 	ThroneObjectiveID string
+	Throne            *ThroneObjectiveDefinition
 }
 
 func (d MatchDefinition) Valid() bool {
-	return d.ID != "" && d.AttackerID != "" && d.DefenderID != "" && d.AttackerID != d.DefenderID && d.BreachGateID != "" && d.ThroneObjectiveID != ""
+	if d.ID == "" || d.AttackerID == "" || d.DefenderID == "" || d.AttackerID == d.DefenderID || d.BreachGateID == "" || d.ThroneObjectiveID == "" {
+		return false
+	}
+	return d.Throne == nil || (d.Throne.Valid() && d.Throne.ID == d.ThroneObjectiveID)
 }
 
 type MatchState struct {
@@ -59,6 +63,7 @@ type matchRuntime struct {
 	definition       MatchDefinition
 	state            MatchState
 	participantTeams map[world.EntityID]Team
+	throne           *throneRuntime
 }
 
 func (s *Service) ConfigureMatch(definition MatchDefinition) error {
@@ -70,6 +75,14 @@ func (s *Service) ConfigureMatch(definition MatchDefinition) error {
 	}
 	if _, ok := s.gates[definition.BreachGateID]; !ok {
 		return fmt.Errorf("%w: breach gate %q", ErrInvalidMatchDefinition, definition.BreachGateID)
+	}
+	var throne *throneRuntime
+	if definition.Throne != nil {
+		configured, err := newThroneRuntime(*definition.Throne)
+		if err != nil {
+			return err
+		}
+		throne = configured
 	}
 	s.match = &matchRuntime{
 		definition: definition,
@@ -83,6 +96,7 @@ func (s *Service) ConfigureMatch(definition MatchDefinition) error {
 			ThroneObjectiveID: definition.ThroneObjectiveID,
 		},
 		participantTeams: make(map[world.EntityID]Team),
+		throne:           throne,
 	}
 	return nil
 }

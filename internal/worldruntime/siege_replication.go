@@ -21,6 +21,14 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport) {
 	}
 
 	sessions := r.sessions.List()
+	// Step invokes Siege replication after simulation. Reuse this stable session list for
+	// throne occupancy so D.2A does not add a second session sort/allocation per tick.
+	if state.Phase == siege.MatchPhaseThrone {
+		r.observeSiegeThronePresence(sessions)
+	} else {
+		r.siege.ObserveThronePresence(nil)
+	}
+
 	active := make(map[session.ID]struct{}, len(sessions))
 	for _, s := range sessions {
 		active[s.ID] = struct{}{}
