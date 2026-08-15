@@ -23,6 +23,10 @@ func (r *Runtime) updateSiegeObjectives(sessions []*session.Session, delta time.
 		r.siege.ObserveThronePresence(nil)
 	}
 	r.siege.AdvanceThroneCapture(delta)
+	// D.3A resolves in the same post-simulation world-owner step that first reaches the
+	// authoritative capture threshold. No Client message or later replication callback
+	// decides victory or castle ownership.
+	r.siege.ResolveThroneCapture()
 }
 
 // observeSiegeThronePresence samples only authoritative post-simulation state from the

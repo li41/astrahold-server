@@ -15,7 +15,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestTrustedSiegeRosterDrivesWorldRuntimeCaptureAndContestReset(t *testing.T) {
+func TestTrustedSiegeRosterDrivesWorldRuntimeCaptureContestAndResolution(t *testing.T) {
 	definition := gameplayworld.Definition{
 		SchemaVersion: gameplayworld.SchemaVersion,
 		WorldID:       "trusted-siege-test",
@@ -80,6 +80,11 @@ func TestTrustedSiegeRosterDrivesWorldRuntimeCaptureAndContestReset(t *testing.T
 		}),
 	)
 
+	ownership, ok := rt.SiegeCastleOwnershipState()
+	if !ok || ownership.Revision != 1 || ownership.OwnerID != "defenders" {
+		t.Fatalf("initial ownership=%+v ok=%v", ownership, ok)
+	}
+
 	register := func(sessionID session.ID, entityID world.EntityID, identity characteridentity.Binding) {
 		t.Helper()
 		conn := session.NewQueueConnection(64, 64)
@@ -143,14 +148,35 @@ func TestTrustedSiegeRosterDrivesWorldRuntimeCaptureAndContestReset(t *testing.T
 	}
 
 	if report := rt.Step(5, 60*time.Millisecond); len(report.CommandErrors) != 0 {
-		t.Fatalf("ready report=%#v", report)
+		t.Fatalf("resolve report=%#v", report)
 	}
 	capture, _ = rt.SiegeThroneCaptureState()
-	if capture.Progress != capture.Required || !capture.ReadyForResolution {
-		t.Fatalf("ready capture=%+v", capture)
+	if capture.Active || capture.Progress != capture.Required || !capture.ReadyForResolution {
+		t.Fatalf("resolved capture=%+v", capture)
+	}
+	presence, _ = rt.SiegeThronePresenceState()
+	if presence.Active || presence.AttackerCount != 0 || presence.DefenderCount != 0 || presence.Contested || presence.CaptureEligible {
+		t.Fatalf("resolved presence=%+v", presence)
 	}
 	match, _ := rt.SiegeMatchState()
-	if match.Phase != siege.MatchPhaseThrone || match.Revision != 2 {
-		t.Fatalf("D.2B must not resolve match: %+v", match)
+	if match.Phase != siege.MatchPhaseCompleted || match.Revision != 3 || match.WinnerTeam != siege.TeamAttacker || match.WinnerID != "attackers" {
+		t.Fatalf("resolved match=%+v", match)
+	}
+	ownership, _ = rt.SiegeCastleOwnershipState()
+	if ownership.Revision != 2 || ownership.OwnerID != "attackers" || ownership.PreviousOwnerID != "defenders" || ownership.LastTransferMatchID != "m1" {
+		t.Fatalf("resolved ownership=%+v", ownership)
+	}
+
+	matchRevision := match.Revision
+	ownershipRevision := ownership.Revision
+	captureRevision := capture.Revision
+	if report := rt.Step(6, 40*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("post-completion report=%#v", report)
+	}
+	match, _ = rt.SiegeMatchState()
+	ownership, _ = rt.SiegeCastleOwnershipState()
+	capture, _ = rt.SiegeThroneCaptureState()
+	if match.Revision != matchRevision || ownership.Revision != ownershipRevision || capture.Revision != captureRevision {
+		t.Fatalf("completed state churned match=%d ownership=%d capture=%d", match.Revision, ownership.Revision, capture.Revision)
 	}
 }
