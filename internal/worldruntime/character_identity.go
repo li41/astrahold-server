@@ -38,9 +38,10 @@ func (l CharacterAdmissionLease) Valid() bool {
 }
 
 type characterAdmissionOperation struct {
-	identity characteridentity.Binding
-	lease    *CharacterAdmissionLease
-	release  bool
+	identity  characteridentity.Binding
+	lease     *CharacterAdmissionLease
+	ownership *SessionOwnershipFence
+	release   bool
 }
 
 type characterIdentityRegistry struct {
@@ -76,9 +77,10 @@ func (r *characterIdentityRegistry) validateSession(s *session.Session) error {
 	return nil
 }
 
-// validateAdmission executes both reserve and release operations because both must stay in
-// the same world-owner FIFO position used by S3-F.14. The command itself remains tiny and
-// does no persistence or network I/O.
+// validateAdmission executes reserve, release, and S3-F.20 connection-plan operations because
+// each must stay in the same world-owner FIFO position used by S3-F.14. A normal admission
+// still rejects an active CharacterID. Connection-plan mode supplies ownership and treats an
+// exact active trusted owner as a successful takeover candidate instead of an admission error.
 func (r *characterIdentityRegistry) validateAdmission(operation characterAdmissionOperation) error {
 	if operation.release {
 		r.releaseAdmission(operation.lease)
@@ -89,7 +91,18 @@ func (r *characterIdentityRegistry) validateAdmission(operation characterAdmissi
 		return ErrCharacterAdmissionRequiresTrustedIdentity
 	}
 	if entityID, ok := r.entityByCharacter[identity.ID]; ok {
-		return fmt.Errorf("%w: character=%s current_entity=%d", ErrCharacterIdentityActive, identity.ID, entityID)
+		if operation.ownership == nil {
+			return fmt.Errorf("%w: character=%s current_entity=%d", ErrCharacterIdentityActive, identity.ID, entityID)
+		}
+		ownership, err := r.currentOwnership(identity)
+		if err != nil {
+			return err
+		}
+		if ownership.EntityID != entityID {
+			return fmt.Errorf("%w: character=%s current_entity=%d ownership_entity=%d", ErrCharacterIdentityConflict, identity.ID, entityID, ownership.EntityID)
+		}
+		*operation.ownership = ownership
+		return nil
 	}
 
 	now := time.Now()
