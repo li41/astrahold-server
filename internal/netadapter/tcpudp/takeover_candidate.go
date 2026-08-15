@@ -7,7 +7,6 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/session"
-	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
@@ -17,7 +16,7 @@ const (
 )
 
 var (
-	ErrInvalidCharacterTakeoverCandidate = errors.New("tcpudp: invalid trusted character takeover candidate lease")
+	ErrInvalidCharacterTakeoverCandidate  = errors.New("tcpudp: invalid trusted character takeover candidate lease")
 	ErrCharacterTakeoverCandidateReserved = errors.New("tcpudp: trusted character already has an active takeover candidate")
 	ErrCharacterTakeoverCandidateExpired  = errors.New("tcpudp: trusted character takeover candidate lease expired")
 	ErrCharacterTakeoverCandidateStale    = errors.New("tcpudp: trusted character takeover candidate lease is stale")
@@ -25,7 +24,7 @@ var (
 )
 
 type characterTakeoverCandidateLease struct {
-	CharacterID       characteridentity.ID
+	CharacterID        characteridentity.ID
 	CandidateSessionID session.ID
 	ExpectedOwnership  worldruntime.SessionOwnershipFence
 	Generation         uint64
@@ -78,6 +77,11 @@ func (g *takeoverCandidateGate) acquire(request CharacterTakeoverRequest) (chara
 	now := g.now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	// Active takeover is already a cold path, so opportunistically remove expired cooldown-only
+	// entries here rather than retaining one historical map entry for every character that ever
+	// completed a takeover. Active candidate leases are never swept by another CharacterID.
+	g.cleanupExpiredCooldownsLocked(now)
 
 	state := g.states[request.Identity.ID]
 	if state.lease.Valid() {
@@ -175,6 +179,15 @@ func (g *takeoverCandidateGate) commit(lease characterTakeoverCandidateLease, ow
 	return nil
 }
 
+func (g *takeoverCandidateGate) cleanupExpiredCooldownsLocked(now time.Time) {
+	for characterID, state := range g.states {
+		if state.lease.Valid() || state.cooldownUntil.IsZero() || now.Before(state.cooldownUntil) {
+			continue
+		}
+		delete(g.states, characterID)
+	}
+}
+
 func (g *takeoverCandidateGate) storeOrDeleteLocked(characterID characteridentity.ID, state characterTakeoverCandidateState) {
 	if !state.lease.Valid() && state.cooldownUntil.IsZero() {
 		delete(g.states, characterID)
@@ -194,7 +207,7 @@ func sameTakeoverCandidateLease(a, b characterTakeoverCandidateLease) bool {
 func validTakeoverCandidateCommit(lease characterTakeoverCandidateLease, ownership worldruntime.SessionOwnershipFence) bool {
 	return ownership.Valid() &&
 		ownership.SessionID == lease.CandidateSessionID &&
-		ownership.EntityID == world.EntityID(lease.ExpectedOwnership.EntityID) &&
+		ownership.EntityID == lease.ExpectedOwnership.EntityID &&
 		ownership.CharacterID == lease.CharacterID &&
 		ownership.Epoch > lease.ExpectedOwnership.Epoch
 }
