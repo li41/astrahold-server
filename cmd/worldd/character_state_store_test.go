@@ -20,7 +20,7 @@ var worlddCharacterWorld = protocol.WorldIdentity{
 	WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: worlddCharacterStateSHA,
 }
 
-func TestIngestCharacterStateOutboxBatchJournalsBeforeConfirm(t *testing.T) {
+func TestJournalCharacterStateOutboxHeadFsyncsBeforeConfirmAndStoreApply(t *testing.T) {
 	dir := t.TempDir()
 	store, err := characterstate.Open(filepath.Join(dir, "characters"))
 	if err != nil {
@@ -49,24 +49,31 @@ func TestIngestCharacterStateOutboxBatchJournalsBeforeConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	processed, err := ingestCharacterStateOutboxBatch(outbox, journal)
-	if err != nil || processed != 1 || outbox.Depth() != 0 || journal.LastRecordID() != 1 {
-		t.Fatalf("processed=%d depth=%d last=%d err=%v", processed, outbox.Depth(), journal.LastRecordID(), err)
+	record, ok, err := journalCharacterStateOutboxHead(outbox, journal, store)
+	if err != nil || !ok || outbox.Depth() != 0 || journal.LastRecordID() != 1 || record.ExpectedRevision != 0 {
+		t.Fatalf("record=%#v ok=%v depth=%d last=%d err=%v", record, ok, outbox.Depth(), journal.LastRecordID(), err)
 	}
-	if _, ok, err := store.Load(identity); err != nil || ok {
-		t.Fatalf("store changed before journal consumer ok=%v err=%v", ok, err)
+	if _, exists, err := store.Load(identity); err != nil || exists {
+		t.Fatalf("store changed before journal consumer exists=%v err=%v", exists, err)
 	}
-	consumed, err := consumeCharacterStateJournalBatch(journal, checkpointStore, &checkpoint, store)
-	if err != nil || consumed != 1 || checkpoint.RecordID != 1 {
-		t.Fatalf("consumed=%d checkpoint=%#v err=%v", consumed, checkpoint, err)
+	if err := applyCharacterStateJournalRecord(store, record); err != nil {
+		t.Fatal(err)
 	}
-	loaded, ok, err := store.Load(identity)
-	if err != nil || !ok || loaded.Revision != 1 || loaded.Snapshot != snapshot {
-		t.Fatalf("loaded=%#v ok=%v err=%v intent=%#v", loaded, ok, err, intent)
+	next, err := checkpointStore.Save(journal, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint = next
+	if checkpoint.RecordID != 1 {
+		t.Fatalf("checkpoint=%#v", checkpoint)
+	}
+	loaded, exists, err := store.Load(identity)
+	if err != nil || !exists || loaded.Revision != 1 || loaded.Snapshot != snapshot {
+		t.Fatalf("loaded=%#v exists=%v err=%v intent=%#v", loaded, exists, err, intent)
 	}
 }
 
-func TestCharacterStateJournalSequentialIntentsAdvanceRevision(t *testing.T) {
+func TestCharacterStateJournalIdenticalSequentialIntentsStillAdvanceRevision(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := characterstate.Open(filepath.Join(dir, "characters"))
 	journal, _ := characterstate.OpenSaveJournal(filepath.Join(dir, "saves.journal"))
@@ -75,24 +82,27 @@ func TestCharacterStateJournalSequentialIntentsAdvanceRevision(t *testing.T) {
 	checkpoint, _ := checkpointStore.Load(journal)
 	outbox, _ := characterstate.NewOutbox(4)
 	identity := worlddTrustedIdentity(t, "character:alpha")
-	first := worlddCharacterSnapshot(900)
-	second := worlddCharacterSnapshot(700)
-	second.Position = world.Position{X: 20, Y: 1, Z: -8, Layer: 3}
-	if _, err := outbox.Enqueue(identity, first); err != nil {
+	snapshot := worlddCharacterSnapshot(900)
+	if _, err := outbox.Enqueue(identity, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := outbox.Enqueue(identity, second); err != nil {
+	if _, err := outbox.Enqueue(identity, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if processed, err := ingestCharacterStateOutboxBatch(outbox, journal); err != nil || processed != 2 {
-		t.Fatalf("ingest=%d err=%v", processed, err)
+	processed, err := persistCharacterStateOutboxBatch(outbox, journal, checkpointStore, &checkpoint, store)
+	if err != nil || processed != 2 || outbox.Depth() != 0 || checkpoint.RecordID != 2 {
+		t.Fatalf("processed=%d depth=%d checkpoint=%#v err=%v", processed, outbox.Depth(), checkpoint, err)
 	}
-	if processed, err := consumeCharacterStateJournalBatch(journal, checkpointStore, &checkpoint, store); err != nil || processed != 2 {
-		t.Fatalf("consume=%d err=%v", processed, err)
+	loaded, exists, err := store.Load(identity)
+	if err != nil || !exists || loaded.Revision != 2 || loaded.Snapshot != snapshot {
+		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
-	loaded, ok, err := store.Load(identity)
-	if err != nil || !ok || loaded.Revision != 2 || loaded.Snapshot != second {
-		t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err)
+	records, err := journal.RecordsAfter(journal.InitialCheckpoint(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].ExpectedRevision != 0 || records[1].ExpectedRevision != 1 {
+		t.Fatalf("records=%#v", records)
 	}
 }
 
@@ -107,7 +117,7 @@ func TestRecoverCharacterStateSaveJournalReplaysDurableUncheckpointedIntent(t *t
 	}
 	identity := worlddTrustedIdentity(t, "character:restart")
 	snapshot := worlddCharacterSnapshot(620)
-	if _, err := journal.Append(characterstate.SaveIntent{IntentID: 99, Identity: identity, Snapshot: snapshot}); err != nil {
+	if _, err := journal.Append(characterstate.SaveIntent{IntentID: 99, Identity: identity, Snapshot: snapshot}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := journal.Close(); err != nil {
@@ -127,13 +137,13 @@ func TestRecoverCharacterStateSaveJournalReplaysDurableUncheckpointedIntent(t *t
 	if err != nil || recovered != 1 || checkpoint.RecordID != 1 {
 		t.Fatalf("checkpoint=%#v recovered=%d err=%v", checkpoint, recovered, err)
 	}
-	loaded, ok, err := store.Load(identity)
-	if err != nil || !ok || loaded.Revision != 1 || loaded.Snapshot != snapshot {
-		t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err)
+	loaded, exists, err := store.Load(identity)
+	if err != nil || !exists || loaded.Revision != 1 || loaded.Snapshot != snapshot {
+		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 }
 
-func TestRecoverCharacterStateSaveJournalIsIdempotentAfterStoreSaveBeforeCheckpoint(t *testing.T) {
+func TestRecoverCharacterStateSaveJournalRecognizesStoreSaveBeforeCheckpoint(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := characterstate.Open(filepath.Join(dir, "characters"))
 	journal, _ := characterstate.OpenSaveJournal(filepath.Join(dir, "saves.journal"))
@@ -141,24 +151,55 @@ func TestRecoverCharacterStateSaveJournalIsIdempotentAfterStoreSaveBeforeCheckpo
 	checkpointStore, _ := characterstate.NewSaveCheckpointStore(filepath.Join(dir, "saves.checkpoint.json"))
 	identity := worlddTrustedIdentity(t, "character:idempotent")
 	snapshot := worlddCharacterSnapshot(710)
-	record, err := journal.Append(characterstate.SaveIntent{IntentID: 7, Identity: identity, Snapshot: snapshot})
+	record, err := journal.Append(characterstate.SaveIntent{IntentID: 7, Identity: identity, Snapshot: snapshot}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := applyCharacterStateJournalRecord(store, record); err != nil {
 		t.Fatal(err)
 	}
-	before, ok, err := store.Load(identity)
-	if err != nil || !ok || before.Revision != 1 {
-		t.Fatalf("before=%#v ok=%v err=%v", before, ok, err)
+	before, exists, err := store.Load(identity)
+	if err != nil || !exists || before.Revision != 1 {
+		t.Fatalf("before=%#v exists=%v err=%v", before, exists, err)
 	}
 	checkpoint, recovered, err := recoverCharacterStateSaveJournal(journal, checkpointStore, store)
 	if err != nil || recovered != 1 || checkpoint.RecordID != 1 {
 		t.Fatalf("checkpoint=%#v recovered=%d err=%v", checkpoint, recovered, err)
 	}
-	after, ok, err := store.Load(identity)
-	if err != nil || !ok || after.Revision != 1 || after.Snapshot != snapshot {
-		t.Fatalf("after=%#v ok=%v err=%v", after, ok, err)
+	after, exists, err := store.Load(identity)
+	if err != nil || !exists || after.Revision != 1 || after.Snapshot != snapshot {
+		t.Fatalf("after=%#v exists=%v err=%v", after, exists, err)
+	}
+}
+
+func TestRecoverCharacterStateSaveJournalFailsClosedOnRevisionDivergence(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := characterstate.Open(filepath.Join(dir, "characters"))
+	journal, _ := characterstate.OpenSaveJournal(filepath.Join(dir, "saves.journal"))
+	defer journal.Close()
+	checkpointStore, _ := characterstate.NewSaveCheckpointStore(filepath.Join(dir, "saves.checkpoint.json"))
+	identity := worlddTrustedIdentity(t, "character:diverged")
+	journalSnapshot := worlddCharacterSnapshot(800)
+	if _, err := journal.Append(characterstate.SaveIntent{IntentID: 1, Identity: identity, Snapshot: journalSnapshot}, 0); err != nil {
+		t.Fatal(err)
+	}
+	other := worlddCharacterSnapshot(500)
+	if _, err := store.Save(identity, 0, other); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := checkpointStore.Load(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := consumeCharacterStateJournalBatch(journal, checkpointStore, &checkpoint, store); !errors.Is(err, characterstate.ErrRevisionConflict) {
+		t.Fatalf("err=%v", err)
+	}
+	if checkpoint.RecordID != 0 {
+		t.Fatalf("checkpoint advanced=%#v", checkpoint)
+	}
+	loaded, exists, err := store.Load(identity)
+	if err != nil || !exists || loaded.Revision != 1 || loaded.Snapshot != other {
+		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 }
 
@@ -268,9 +309,9 @@ func TestRunCharacterStateStoreShutdownDrainsOutboxAndJournal(t *testing.T) {
 	if outbox.Depth() != 0 || persistence.checkpoint.RecordID != persistence.journal.LastRecordID() {
 		t.Fatalf("depth=%d checkpoint=%#v last=%d", outbox.Depth(), persistence.checkpoint, persistence.journal.LastRecordID())
 	}
-	loaded, ok, err := store.Load(identity)
-	if err != nil || !ok || loaded.Revision != 1 {
-		t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err)
+	loaded, exists, err := store.Load(identity)
+	if err != nil || !exists || loaded.Revision != 1 {
+		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 }
 
