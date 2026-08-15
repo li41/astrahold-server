@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "revision": "s4d2a-001",
+  "schema_version": 3,
+  "revision": "s4d2b-001",
   "match_id": "castle-sandbox-siege",
   "attacker_id": "attackers",
   "defender_id": "defenders",
@@ -9,5 +9,7 @@
   "throne_zone": {
     "layer": 0,
     "bounds": { "min_x": -4, "max_x": 4, "min_z": 27, "max_z": 33 }
-  }
+  },
+  "throne_capture_seconds": 10,
+  "participants": []
 }

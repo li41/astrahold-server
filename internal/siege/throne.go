@@ -3,6 +3,7 @@ package siege
 import (
 	"errors"
 	"math"
+	"time"
 
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/world"
@@ -25,16 +26,21 @@ func (z ObjectiveZone) Contains(position world.Position) bool {
 }
 
 type ThroneObjectiveDefinition struct {
-	ID   string
-	Zone ObjectiveZone
+	ID              string
+	Zone            ObjectiveZone
+	CaptureDuration time.Duration
 }
 
-func (d ThroneObjectiveDefinition) Valid() bool { return d.ID != "" && d.Zone.Valid() }
+// CaptureDuration==0 keeps older focused presence-only constructions valid. Production
+// schema v3 requires a positive bounded duration before worldd starts.
+func (d ThroneObjectiveDefinition) Valid() bool {
+	return d.ID != "" && d.Zone.Valid() && d.CaptureDuration >= 0
+}
 
 type ParticipantPresence struct {
-	EntityID  world.EntityID
-	Position  world.Position
-	Defeated  bool
+	EntityID world.EntityID
+	Position world.Position
+	Defeated bool
 }
 
 type ThronePresenceState struct {
@@ -47,22 +53,44 @@ type ThronePresenceState struct {
 	CaptureEligible bool
 }
 
+type ThroneCaptureState struct {
+	Revision           uint64
+	ObjectiveID        string
+	Active             bool
+	Progress           time.Duration
+	Required           time.Duration
+	ReadyForResolution bool
+}
+
+type throneCaptureRuntime struct {
+	state ThroneCaptureState
+}
+
 type throneRuntime struct {
 	definition ThroneObjectiveDefinition
 	state      ThronePresenceState
+	capture    *throneCaptureRuntime
 }
 
 func newThroneRuntime(definition ThroneObjectiveDefinition) (*throneRuntime, error) {
 	if !definition.Valid() {
 		return nil, ErrInvalidThroneObjective
 	}
-	return &throneRuntime{
+	runtime := &throneRuntime{
 		definition: definition,
 		state: ThronePresenceState{
 			Revision:    1,
 			ObjectiveID: definition.ID,
 		},
-	}, nil
+	}
+	if definition.CaptureDuration > 0 {
+		runtime.capture = &throneCaptureRuntime{state: ThroneCaptureState{
+			Revision:    1,
+			ObjectiveID: definition.ID,
+			Required:    definition.CaptureDuration,
+		}}
+	}
+	return runtime, nil
 }
 
 func (s *Service) ThronePresenceState() (ThronePresenceState, bool) {
@@ -72,8 +100,15 @@ func (s *Service) ThronePresenceState() (ThronePresenceState, bool) {
 	return s.match.throne.state, true
 }
 
+func (s *Service) ThroneCaptureState() (ThroneCaptureState, bool) {
+	if s == nil || s.match == nil || s.match.throne == nil || s.match.throne.capture == nil {
+		return ThroneCaptureState{}, false
+	}
+	return s.match.throne.capture.state, true
+}
+
 // ObserveThronePresence consumes Server-owned entity positions, defeat state, and participant teams.
-// It only derives occupancy/contest eligibility; capture progress and victory are intentionally absent.
+// It only derives occupancy/contest eligibility; capture progress and victory remain separate state.
 func (s *Service) ObserveThronePresence(observations []ParticipantPresence) bool {
 	if s == nil || s.match == nil || s.match.throne == nil {
 		return false
@@ -124,6 +159,42 @@ func (s *Service) ObserveThronePresence(observations []ParticipantPresence) bool
 	return true
 }
 
+// AdvanceThroneCapture applies Server-clock delta only while D.2A presence says capture is
+// eligible. Any interruption before completion resets progress, requiring one continuous hold.
+// Reaching Required latches ReadyForResolution but does not decide winner or ownership.
+func (s *Service) AdvanceThroneCapture(delta time.Duration) bool {
+	if s == nil || s.match == nil || s.match.throne == nil || s.match.throne.capture == nil {
+		return false
+	}
+	current := s.match.throne.capture.state
+	next := current
+	next.Active = s.match.state.Phase == MatchPhaseThrone
+
+	if current.ReadyForResolution {
+		next.Progress = next.Required
+	} else if !next.Active || !s.match.throne.state.CaptureEligible {
+		next.Progress = 0
+	} else if delta > 0 {
+		remaining := next.Required - next.Progress
+		if remaining <= 0 || delta >= remaining {
+			next.Progress = next.Required
+			next.ReadyForResolution = true
+		} else {
+			next.Progress += delta
+		}
+	}
+
+	if sameThroneCapture(current, next) {
+		return false
+	}
+	next.Revision = current.Revision + 1
+	if next.Revision == 0 {
+		next.Revision = 1
+	}
+	s.match.throne.capture.state = next
+	return true
+}
+
 func sameThronePresence(a, b ThronePresenceState) bool {
 	return a.ObjectiveID == b.ObjectiveID &&
 		a.Active == b.Active &&
@@ -131,6 +202,14 @@ func sameThronePresence(a, b ThronePresenceState) bool {
 		a.DefenderCount == b.DefenderCount &&
 		a.Contested == b.Contested &&
 		a.CaptureEligible == b.CaptureEligible
+}
+
+func sameThroneCapture(a, b ThroneCaptureState) bool {
+	return a.ObjectiveID == b.ObjectiveID &&
+		a.Active == b.Active &&
+		a.Progress == b.Progress &&
+		a.Required == b.Required &&
+		a.ReadyForResolution == b.ReadyForResolution
 }
 
 func finite32(value float32) bool {

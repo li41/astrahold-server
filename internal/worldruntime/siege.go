@@ -62,10 +62,19 @@ func (r *Runtime) SiegeMatchState() (siege.MatchState, bool) {
 }
 
 // SiegeThronePresenceState exposes Server-observed throne occupancy/contest eligibility.
-// It is intentionally not a network contract in S4-D.2A.
+// It is intentionally not a network contract.
 func (r *Runtime) SiegeThronePresenceState() (siege.ThronePresenceState, bool) {
 	if r == nil || r.siege == nil {
 		return siege.ThronePresenceState{}, false
 	}
 	return r.siege.ThronePresenceState()
+}
+
+// SiegeThroneCaptureState exposes Server-clock capture progress for observability/tests.
+// D.2B keeps it internal; winner/ownership resolution belongs to the next bounded stage.
+func (r *Runtime) SiegeThroneCaptureState() (siege.ThroneCaptureState, bool) {
+	if r == nil || r.siege == nil {
+		return siege.ThroneCaptureState{}, false
+	}
+	return r.siege.ThroneCaptureState()
 }

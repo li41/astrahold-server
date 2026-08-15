@@ -1,13 +1,33 @@
 package worldruntime
 
 import (
+	"time"
+
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 )
 
+// updateSiegeObjectives runs after simulation from authoritative world/character state.
+// It reuses the stable session list later consumed by SiegeMatchState replication.
+func (r *Runtime) updateSiegeObjectives(sessions []*session.Session, delta time.Duration) {
+	if r == nil || r.siege == nil {
+		return
+	}
+	state, ok := r.siege.MatchState()
+	if !ok {
+		return
+	}
+	if state.Phase == siege.MatchPhaseThrone {
+		r.observeSiegeThronePresence(sessions)
+	} else {
+		r.siege.ObserveThronePresence(nil)
+	}
+	r.siege.AdvanceThroneCapture(delta)
+}
+
 // observeSiegeThronePresence samples only authoritative post-simulation state from the
-// same stable session list already used by Siege replication. Team ownership stays in
-// siege.Service; positions and defeated state come from Server world/character state.
+// same stable session list used by Siege replication. Team ownership stays in siege.Service;
+// positions and defeated state come from Server world/character state.
 func (r *Runtime) observeSiegeThronePresence(sessions []*session.Session) bool {
 	if r == nil || r.siege == nil {
 		return false
