@@ -20,10 +20,24 @@ type controlledRuntime struct {
 	*fakeRuntime
 	admissionErr error
 	joinErr      error
+	releases     chan worldruntime.CharacterAdmissionLease
 }
 
-func (r *controlledRuntime) AwaitCharacterAdmission(context.Context, characteridentity.Binding) error {
-	return r.admissionErr
+func (r *controlledRuntime) AwaitCharacterAdmission(_ context.Context, identity characteridentity.Binding) (worldruntime.CharacterAdmissionLease, error) {
+	if r.admissionErr != nil {
+		return worldruntime.CharacterAdmissionLease{}, r.admissionErr
+	}
+	return worldruntime.CharacterAdmissionLease{CharacterID: identity.ID, Generation: 77, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+
+func (r *controlledRuntime) ReleaseCharacterAdmission(_ context.Context, lease worldruntime.CharacterAdmissionLease) error {
+	if r.releases != nil {
+		select {
+		case r.releases <- lease:
+		default:
+		}
+	}
+	return nil
 }
 
 func (r *controlledRuntime) AwaitJoin(_ context.Context, request worldruntime.JoinRequest) error {
@@ -95,6 +109,77 @@ func TestWorldJoinFailurePreventsSessionWelcome(t *testing.T) {
 	}
 	if _, err := transport.ReadEnvelope(conn, codec); err == nil {
 		t.Fatal("failed world join received SessionWelcome")
+	}
+	select {
+	case id := <-runtime.leaves:
+		t.Fatalf("join rejection enqueued leave for uncommitted session=%d", id)
+	default:
+	}
+}
+
+func TestTrustedRestoreFailureReleasesAdmissionLease(t *testing.T) {
+	runtime := &controlledRuntime{fakeRuntime: newFakeRuntime(), releases: make(chan worldruntime.CharacterAdmissionLease, 1)}
+	cfg := DefaultConfig()
+	cfg.TCPAddress = "127.0.0.1:0"
+	cfg.UDPAddress = "127.0.0.1:0"
+	cfg.WorldIdentity = protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: testGameplaySHA}
+	identity, _ := characteridentity.NewTrusted("character:restore-release")
+	cfg.CharacterIdentityFactory = func(session.ID, world.EntityID) (characteridentity.Binding, error) { return identity, nil }
+	cfg.CharacterRestoreFactory = func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error) {
+		return worldruntime.CharacterRestore{}, false, errors.New("restore failed")
+	}
+
+	codec := gamev1.Codec{}
+	server, cancel, serveDone := startTCPUDPTestServer(t, cfg, runtime, codec)
+	defer stopTCPUDPTestServer(t, server, cancel, serveDone)
+	conn, err := net.Dial("tcp", server.TCPAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := transport.ReadEnvelope(conn, codec); err == nil {
+		t.Fatal("restore failure received SessionWelcome")
+	}
+	select {
+	case lease := <-runtime.releases:
+		if lease.CharacterID != identity.ID || lease.Generation != 77 {
+			t.Fatalf("released lease=%#v", lease)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("restore failure did not release admission lease")
+	}
+}
+
+func TestTrustedJoinFailureReleasesAdmissionLease(t *testing.T) {
+	joinFailure := errors.New("trusted join failed")
+	runtime := &controlledRuntime{fakeRuntime: newFakeRuntime(), joinErr: joinFailure, releases: make(chan worldruntime.CharacterAdmissionLease, 1)}
+	cfg := DefaultConfig()
+	cfg.TCPAddress = "127.0.0.1:0"
+	cfg.UDPAddress = "127.0.0.1:0"
+	cfg.WorldIdentity = protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: testGameplaySHA}
+	identity, _ := characteridentity.NewTrusted("character:join-release")
+	cfg.CharacterIdentityFactory = func(session.ID, world.EntityID) (characteridentity.Binding, error) { return identity, nil }
+
+	codec := gamev1.Codec{}
+	server, cancel, serveDone := startTCPUDPTestServer(t, cfg, runtime, codec)
+	defer stopTCPUDPTestServer(t, server, cancel, serveDone)
+	conn, err := net.Dial("tcp", server.TCPAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := transport.ReadEnvelope(conn, codec); err == nil {
+		t.Fatal("join failure received SessionWelcome")
+	}
+	select {
+	case lease := <-runtime.releases:
+		if lease.CharacterID != identity.ID || lease.Generation != 77 {
+			t.Fatalf("released lease=%#v", lease)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("join failure did not release admission lease")
 	}
 	select {
 	case id := <-runtime.leaves:
