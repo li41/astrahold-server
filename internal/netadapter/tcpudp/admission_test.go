@@ -18,16 +18,25 @@ import (
 
 type controlledRuntime struct {
 	*fakeRuntime
-	admissionErr error
-	joinErr      error
-	releases     chan worldruntime.CharacterAdmissionLease
+	planErr  error
+	joinErr  error
+	releases chan worldruntime.CharacterAdmissionLease
 }
 
 func (r *controlledRuntime) AwaitCharacterAdmission(_ context.Context, identity characteridentity.Binding) (worldruntime.CharacterAdmissionLease, error) {
-	if r.admissionErr != nil {
-		return worldruntime.CharacterAdmissionLease{}, r.admissionErr
+	if r.planErr != nil {
+		return worldruntime.CharacterAdmissionLease{}, r.planErr
 	}
 	return worldruntime.CharacterAdmissionLease{CharacterID: identity.ID, Generation: 77, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+
+func (r *controlledRuntime) AwaitCharacterConnectionPlan(_ context.Context, identity characteridentity.Binding) (worldruntime.CharacterConnectionPlan, error) {
+	if r.planErr != nil {
+		return worldruntime.CharacterConnectionPlan{}, r.planErr
+	}
+	return worldruntime.CharacterConnectionPlan{
+		AdmissionLease: worldruntime.CharacterAdmissionLease{CharacterID: identity.ID, Generation: 77, ExpiresAt: time.Now().Add(time.Minute)},
+	}, nil
 }
 
 func (r *controlledRuntime) ReleaseCharacterAdmission(_ context.Context, lease worldruntime.CharacterAdmissionLease) error {
@@ -48,7 +57,7 @@ func (r *controlledRuntime) AwaitJoin(_ context.Context, request worldruntime.Jo
 }
 
 func TestTrustedAdmissionFailurePreventsRestoreAndWelcome(t *testing.T) {
-	runtime := &controlledRuntime{fakeRuntime: newFakeRuntime(), admissionErr: worldruntime.ErrCharacterIdentityActive}
+	runtime := &controlledRuntime{fakeRuntime: newFakeRuntime(), planErr: worldruntime.ErrCharacterAdmissionReserved}
 	cfg := DefaultConfig()
 	cfg.TCPAddress = "127.0.0.1:0"
 	cfg.UDPAddress = "127.0.0.1:0"
@@ -79,7 +88,7 @@ func TestTrustedAdmissionFailurePreventsRestoreAndWelcome(t *testing.T) {
 		t.Fatal("rejected admission received SessionWelcome")
 	}
 	if restoreCalled {
-		t.Fatal("restore lookup ran before rejected world-owner admission")
+		t.Fatal("restore lookup ran before rejected world-owner connection plan")
 	}
 	select {
 	case join := <-runtime.joins:

@@ -27,6 +27,9 @@ func (c characterAdmissionCommand) name() string {
 	if c.identity.release {
 		return "release_character_admission"
 	}
+	if c.identity.ownership != nil {
+		return "plan_character_connection"
+	}
 	return "admit_character"
 }
 
