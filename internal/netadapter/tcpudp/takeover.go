@@ -37,8 +37,11 @@ func (s *Server) prepareTrustedConnection(ctx context.Context, identity characte
 
 // retireTakenOverPeer runs only after the F.19 transfer has committed. The old Session has
 // already been removed from worldruntime, so its normal transport-close Leave must be
-// suppressed. A concurrent close that already enqueued its fenced Leave remains safe: if the
-// transfer committed, that command is necessarily stale at world-owner execution.
+// suppressed. SessionID and EntityID are immutable from peer creation, unlike ownership,
+// which is published only after world-owner join completion. Looking up by those immutable
+// IDs lets takeover retire even an old peer whose join committed but whose transport goroutine
+// has not yet published ownership/joined. A concurrent close that already enqueued its fenced
+// Leave remains safe because F.18 makes that command stale after transfer commit.
 func (s *Server) retireTakenOverPeer(expected worldruntime.SessionOwnershipFence) {
 	if !expected.Valid() {
 		return
@@ -46,13 +49,7 @@ func (s *Server) retireTakenOverPeer(expected worldruntime.SessionOwnershipFence
 	s.mu.RLock()
 	var old *peer
 	for _, candidate := range s.peers {
-		// joined is the publication barrier for ownership. Load it before reading the
-		// immutable fence; the F.18/F.20 handle path writes ownership and only then stores
-		// joined=true. Reversing this order creates a race with a peer still publishing.
-		if !candidate.joined.Load() {
-			continue
-		}
-		if candidate.ownership == expected {
+		if candidate.sessionID == expected.SessionID && candidate.entityID == expected.EntityID {
 			old = candidate
 			break
 		}
@@ -61,6 +58,9 @@ func (s *Server) retireTakenOverPeer(expected worldruntime.SessionOwnershipFence
 	if old == nil {
 		return
 	}
+	// Consume the one-shot Leave even when joined is not yet published. If the old handle
+	// later observes its already-committed join and calls closePeer again, it cannot enqueue
+	// a Leave that would target the transferred Entity.
 	old.leaveOnce.Do(func() {})
 	s.closePeer(old, "ownership_takeover", nil)
 }
