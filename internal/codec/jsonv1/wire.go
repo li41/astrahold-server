@@ -18,7 +18,21 @@ type worldBlockerState struct { ID string `json:"id"`; Enabled bool `json:"enabl
 type worldGateState struct { ID string `json:"id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; Destroyed bool `json:"destroyed"` }
 type worldDynamicState struct { Revision uint64 `json:"revision"`; Blockers []worldBlockerState `json:"blockers"`; Gates []worldGateState `json:"gates"` }
 type entityVitalsState struct { EntityID uint64 `json:"entity_id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; Defeated bool `json:"defeated"` }
-type siegeMatchState struct { Revision uint64 `json:"revision"`; MatchID string `json:"match_id"`; AttackerID string `json:"attacker_id"`; DefenderID string `json:"defender_id"`; YourTeam string `json:"your_team"`; Phase string `json:"phase"`; BreachGateID string `json:"breach_gate_id"`; ThroneObjectiveID string `json:"throne_objective_id"`; GateBreached bool `json:"gate_breached"` }
+type siegeMatchState struct {
+	Revision          uint64 `json:"revision"`
+	Round             uint64 `json:"round"`
+	MatchID           string `json:"match_id"`
+	AttackerID        string `json:"attacker_id"`
+	DefenderID        string `json:"defender_id"`
+	YourTeam          string `json:"your_team"`
+	Phase             string `json:"phase"`
+	BreachGateID      string `json:"breach_gate_id"`
+	ThroneObjectiveID string `json:"throne_objective_id"`
+	GateBreached      bool   `json:"gate_breached"`
+	WinnerTeam        string `json:"winner_team"`
+	WinnerID          string `json:"winner_id"`
+	CastleOwnerID     string `json:"castle_owner_id"`
+}
 
 func toPosition(p world.Position) position { return position{X:p.X,Y:p.Y,Z:p.Z,Layer:uint16(p.Layer)} }
 func fromPosition(p position) world.Position { return world.Position{X:p.X,Y:p.Y,Z:p.Z,Layer:world.LayerID(p.Layer)} }

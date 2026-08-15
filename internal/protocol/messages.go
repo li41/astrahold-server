@@ -8,8 +8,8 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v7 新增 Server -> Client Reliable SiegeMatchState；realtime binary layout 不變。
-const Version uint16 = 7
+// v8 擴充 Server -> Client Reliable SiegeMatchState，加入 round / winner / castle owner；realtime binary layout 不變。
+const Version uint16 = 8
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -88,16 +88,21 @@ const (
 )
 
 // SiegeMatchState 是每個 Session 可重送的 Server-authoritative Siege view。
-// YourTeam 只描述該 recipient 的 Server-owned team assignment；Client 不可自行推導或改寫 phase。
+// YourTeam 只描述該 recipient 的 Server-owned team assignment；Client 不可自行推導或改寫 phase/winner/owner truth。
+// Round 是 gameplay round identity；Revision 仍是 Reliable resend stamp，兩者不可互相替代。
 type SiegeMatchState struct {
-	Revision uint64
-	MatchID string
-	AttackerID string
-	DefenderID string
-	YourTeam SiegeTeam
-	Phase SiegePhase
-	BreachGateID string
+	Revision          uint64
+	Round             uint64
+	MatchID           string
+	AttackerID        string
+	DefenderID        string
+	YourTeam          SiegeTeam
+	Phase             SiegePhase
+	BreachGateID      string
 	ThroneObjectiveID string
-	GateBreached bool
+	GateBreached      bool
+	WinnerTeam        SiegeTeam
+	WinnerID          string
+	CastleOwnerID     string
 }
 func (SiegeMatchState) Type() MessageType { return MessageSiegeMatchState }

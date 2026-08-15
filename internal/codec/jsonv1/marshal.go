@@ -33,7 +33,7 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case protocol.EntityVitalsState:
 		return json.Marshal(entityVitalsState{EntityID:uint64(m.EntityID),HP:m.HP,MaxHP:m.MaxHP,Defeated:m.Defeated})
 	case protocol.SiegeMatchState:
-		return json.Marshal(siegeMatchState{Revision:m.Revision,MatchID:m.MatchID,AttackerID:m.AttackerID,DefenderID:m.DefenderID,YourTeam:string(m.YourTeam),Phase:string(m.Phase),BreachGateID:m.BreachGateID,ThroneObjectiveID:m.ThroneObjectiveID,GateBreached:m.GateBreached})
+		return json.Marshal(siegeMatchState{Revision:m.Revision,Round:m.Round,MatchID:m.MatchID,AttackerID:m.AttackerID,DefenderID:m.DefenderID,YourTeam:string(m.YourTeam),Phase:string(m.Phase),BreachGateID:m.BreachGateID,ThroneObjectiveID:m.ThroneObjectiveID,GateBreached:m.GateBreached,WinnerTeam:string(m.WinnerTeam),WinnerID:m.WinnerID,CastleOwnerID:m.CastleOwnerID})
 	default:
 		return nil, ErrUnsupportedMessage
 	}
