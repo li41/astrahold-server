@@ -26,18 +26,18 @@ type transferCall struct {
 
 type takeoverRuntime struct {
 	*fakeRuntime
-	mu          sync.Mutex
-	active      worldruntime.SessionOwnershipFence
-	transferErr error
-	transfers   chan transferCall
+	mu           sync.Mutex
+	active       worldruntime.SessionOwnershipFence
+	transferErr  error
+	transfers    chan transferCall
 	fencedLeaves chan worldruntime.SessionOwnershipFence
 }
 
 func newTakeoverRuntime() *takeoverRuntime {
 	return &takeoverRuntime{
-		fakeRuntime:   newFakeRuntime(),
-		transfers:     make(chan transferCall, 4),
-		fencedLeaves:  make(chan worldruntime.SessionOwnershipFence, 4),
+		fakeRuntime:  newFakeRuntime(),
+		transfers:    make(chan transferCall, 4),
+		fencedLeaves: make(chan worldruntime.SessionOwnershipFence, 4),
 	}
 }
 
@@ -73,10 +73,10 @@ func (r *takeoverRuntime) AwaitOwnershipTransfer(_ context.Context, expected wor
 		return worldruntime.SessionOwnershipFence{}, worldruntime.ErrCharacterOwnershipFenceStale
 	}
 	result := worldruntime.SessionOwnershipFence{
-		SessionID: replacement.ID,
-		EntityID: replacement.EntityID,
+		SessionID:    replacement.ID,
+		EntityID:     replacement.EntityID,
 		CharacterID: replacement.CharacterIdentity.ID,
-		Epoch: expected.Epoch + 1,
+		Epoch:        expected.Epoch + 1,
 	}
 	r.active = result
 	r.transfers <- transferCall{expected: expected, replacement: replacement, result: result}
@@ -278,7 +278,8 @@ func TestTrustedActiveTakeoverTransferFailureKeepsOldPeerActive(t *testing.T) {
 
 func readSessionWelcome(t *testing.T, conn net.Conn, codec transport.PayloadCodec) protocol.SessionWelcome {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(time.Second))	envelope, err := transport.ReadEnvelope(conn, codec)
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	envelope, err := transport.ReadEnvelope(conn, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
