@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-目前主線已完成到 **S4-F.2 — Credential Expiry / Rotation / Revocation Lifecycle**。
+目前主線已完成到 **S4-F.3 — Runtime Credential Reload / Emergency Revocation / Active Session Invalidation**。
 
 核心 production contract：
 
@@ -43,7 +43,8 @@ Godot Client
 - Durable trusted character identity / state restore / autosave
 - Trusted active-session ownership fencing / takeover
 - Formal Server-side session credential provider seam；static SHA-256 map retained as the first provider
-- Admission-time credential `not_before` / expiry / revocation policy with bounded rotation overlap
+- Credential `not_before` / expiry / revocation policy with bounded rotation overlap
+- Schema-v2 runtime credential `SIGHUP` reload、emergency revocation、live-session invalidation
 - Authoritative Siege match state、Gate breach、Throne capture、winner、castle ownership、next-round role rotation
 - Durable castle ownership recovery
 - Production `worldd` TLS 1.3 trusted ingress
@@ -208,7 +209,7 @@ live RoutingID generation
 
 Production `worldd` 可選擇啟用 trusted session credential provider；目前 production provider 由 `-trusted-character-auth-file` 載入 static SHA-256 credential map。
 
-Provider 只把 opaque credential 解析成 Server-owned trusted `CharacterID` 與 optional active-takeover claim；Client credential 不包含 CharacterID、team、HP、position、lifecycle time 或 takeover authority。
+Provider 只把 opaque credential 解析成 Server-owned trusted `CharacterID` 與 optional active-takeover claim；Client credential 不包含 CharacterID、team、HP、position、lifecycle time、revocation scope 或 takeover authority。
 
 ```text
 TLS 1.3 Client
@@ -217,8 +218,8 @@ TLS 1.3 Client
 → literal-loopback worldd TCP backend
 → Session Credential Provider
      └── static SHA-256 map today
-           ├── schema v1 timeless compatibility
-           └── schema v2 admission-time lifecycle
+           ├── schema v1 timeless / restart-only compatibility
+           └── schema v2 lifecycle + runtime reload / invalidation
 → trusted CharacterID
 ```
 
@@ -228,11 +229,15 @@ TLS 1.3 Client
 - Trusted bearer bootstrap 的 backend TCP 必須維持 loopback。
 - `sessioncredential.Provider` 不擁有 TCP / SessionID / EntityID / world state；只解析 opaque credential 成 trusted grant。
 - provider grant 必須是 `AssuranceTrusted`，否則 fail-closed before normal GameV1 admission。
-- schema v1 仍維持原本 timeless static-map 相容性，而且不能偷偷使用 lifecycle 欄位。
+- schema v1 仍維持原本 timeless static-map 相容性，而且不能偷偷使用 lifecycle 欄位；v1 runtime reload / live invalidation 刻意不支援。
 - schema v2 要求唯一 Server-side `credential_id`，可設定 RFC3339 `not_before` / `expires_at` / `revoked_at`。
-- `not_before` 邊界當下可用；`expires_at` / `revoked_at` 邊界當下立即拒絕。
-- rotation 可讓同一 CharacterID 的舊、新 credential validity window 暫時重疊；舊 credential 到期後只保留新 credential 可登入。
-- lifecycle 只在新 credential resolution / admission 時判斷；已 admitted live session 不會在本階段持續 revalidate 或自動踢除。
+- `not_before` 邊界當下可用；`expires_at` / `revoked_at` 邊界當下立即失效。
+- schema v2 會產生 Server-only proof scope，綁定 credential ID / token digest / CharacterID / takeover authority；scope 不送給 Client。
+- lifecycle 時間不參與 proof scope fingerprint；future expiry/revocation 由 Server-clock boundary timer 在指定時間移除 scope。
+- operator 可 atomically replace credential JSON 後對 `worldd` 發 `SIGHUP`；合法 reload 更新 provider 與 live scope policy，非法 reload 保留 last-known-good。
+- reload 先安裝 transport scope fence，再 publish 新 provider；舊 in-flight authentication 無法在 revocation 後晚到並取得 realtime/world authority。
+- scope 被移除的 live peer 會先 `ready=false` 並移除 realtime token / RoutingID lookup，再透過既有 `closePeer` 關 TCP 與 fenced leave。
+- rotation 可讓同一 CharacterID 的舊、新 credential validity window 暫時重疊；舊 scope 在 expiry/revocation boundary 移除後，相關 live session 也會退休。
 - `allow_active_takeover` 預設 `false`，duplicate active session fail-closed。
 - 只有 Server credential provider grant 可授權 active takeover；Client 沒有 takeover bit。
 - takeover authority 綁定 exact CharacterID，並轉成既有 connection-scoped authorizer。
@@ -242,6 +247,7 @@ TLS 1.3 Client
 
 完整文件：
 
+- [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md)
 - [`docs/S4F2_CREDENTIAL_LIFECYCLE.md`](docs/S4F2_CREDENTIAL_LIFECYCLE.md)
 - [`docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md`](docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md)
 - [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md)
@@ -325,7 +331,8 @@ Dirty Vitals max               4000 / tick
 以下文件描述**目前**架構與 deployment / realtime security boundary：
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
-- [`docs/S4F2_CREDENTIAL_LIFECYCLE.md`](docs/S4F2_CREDENTIAL_LIFECYCLE.md) — admission-time credential expiry / rotation / revocation lifecycle
+- [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md) — runtime reload / emergency revocation / live-session invalidation
+- [`docs/S4F2_CREDENTIAL_LIFECYCLE.md`](docs/S4F2_CREDENTIAL_LIFECYCLE.md) — credential expiry / rotation / revocation lifecycle
 - [`docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md`](docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md) — opaque session credential → trusted Server claims provider boundary
 - [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md) — TLS trusted ingress / takeover policy
 - [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md) — Protocol v9 authenticated ASTU
@@ -386,20 +393,21 @@ Production trusted deployment 可再設定：
 -trusted-tls-key
 ```
 
-TLS flag 必須成組使用；trusted TLS ingress 只保護 reliable TCP authentication / bootstrap，Realtime UDP 仍是 Protocol v9 authenticated plaintext datagram。
+TLS flag 必須成組使用；trusted TLS ingress 只保護 reliable TCP authentication / bootstrap，Realtime UDP 仍是 Protocol v9 authenticated plaintext datagram。schema-v2 credential file 可在 atomically replace 後以 `SIGHUP` reload；TLS certificate/key 仍是 process-start 載入。
 
 ## 目前刻意保留的限制
 
 - Realtime UDP 尚未加密；目前只有 authenticity / integrity。
-- production session credential provider 目前仍由 static SHA-256 file 提供；schema v2 已支援 admission-time expiry / rotation / scheduled revocation，但尚無 runtime config reload、已登入 session 強制 invalidation 或正式 credential issuance/login service。
-- TLS terminator 與 `worldd` 目前在同一 process，backend 固定 loopback。
+- production session credential provider 目前仍由 static SHA-256 file 提供；schema v2 已支援 runtime reload / scheduled lifecycle / emergency revocation / live-session invalidation，但尚無正式 login/session credential issuance service 或 account backend。
+- schema v1 trusted credential config 僅保留 restart-only 相容性，不提供 runtime revocation scope。
+- TLS terminator 與 `worldd` 目前在同一 process，backend 固定 loopback；certificate/key 尚未 hot reload。
 - NAT-like migration 目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
-- 尚未做 multi-server distributed ownership / failover。
+- 尚未做 multi-server distributed ownership / failover 或 distributed credential revocation control plane。
 - 尚未加入 periodic in-session realtime rekey、DTLS 或 QUIC；S4-E.7 目前沒有證明 MVP 需要它們。
 - 500 rendered Godot actors、VAT / MultiMesh 與 final commercial art 不是目前 Server MVP gate。
 
 ## 下一個 bounded focus
 
-S4-F.2 已把 credential lifecycle 變成明確、可測且 Server-clock authoritative 的 admission contract。下一個 bounded stage 應處理 **runtime credential config reload / emergency revocation 與已 admitted session invalidation 的操作語意**，之後再接正式 login/session credential issuance；不需要重新設計 Protocol v9 或 realtime transport。
+S4-F.3 已把 schema-v2 credential 從 startup/admission policy 推進到可操作的 runtime reload、scheduled expiry/revocation 與 active-session retirement。下一個 bounded stage 應進入 **S4-F.4 — Formal Login / Session Credential Issuance**：建立正式 issuance/service seam，讓 production credential 不再依賴人工維護 static token file，同時保留 F.1 provider、F.2 lifecycle、F.3 runtime revocation contract；不需要重新設計 Protocol v9 或 realtime transport。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
