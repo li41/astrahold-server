@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-目前主線已完成到 **S4-E.6 — Realtime Key Lifecycle / Rotation & Revocation E2E**。
+目前主線已完成到 **S4-E.7 — WAN / NAT & Secure Deployment Readiness E2E**。
 
 核心 production contract：
 
@@ -47,6 +47,8 @@ Godot Client
 - Production `worldd` TLS 1.3 trusted ingress
 - Protocol v9 authenticated realtime UDP
 - Connection-generation realtime key rotation / revocation
+- Authenticated same-IP NAT-like UDP source-port migration
+- WAN-like latency / jitter / loss / burst-loss / reorder / duplication recovery E2E
 - 真實 Go Server ↔ Godot multi-client production E2E
 
 ## 核心不變量
@@ -176,13 +178,29 @@ Session realtime secret
 - ASTU header 只帶 public per-session route。
 - HMAC domain separation 區分 Client→Server 與 Server→Client，阻止方向反射。
 - Server 先以 route 找 peer，再用 secret 驗證 HMAC，通過後才信任 frame / sequence / endpoint。
-- stale/replayed movement 仍受 realtime sequence gate 約束。
+- stale/replayed movement 受 transport realtime sequence gate 與 world-runtime sequence gate 雙重約束。
 - UDP **提供 authenticity / integrity，不提供 confidentiality**。
+
+### NAT-like endpoint migration
+
+S4-E.7 將既有 same-IP rebind policy 做成 production E2E gate。Server 只有在以下條件都成立後才允許更新 realtime destination port：
+
+```text
+live RoutingID generation
+→ valid C2S HMAC
+→ valid realtime ClientMoveInput
+→ strictly newer sequence
+→ same source IP
+→ publish new UDP source port
+```
+
+因此 unauthenticated、tampered、stale / replay、retired old-generation 或 cross-IP packet 都不能修改 S2C route。合法 NAT source-port change 不改 EntityID、ownership 或 gameplay state。
 
 完整文件：
 
 - [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md)
 - [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md)
+- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md)
 
 ## Trusted Identity / TLS / Takeover
 
@@ -216,7 +234,7 @@ TLS 1.3 Client
 
 每次新 TCP connection 都建立新的 128-bit realtime secret，因此 reconnect / trusted takeover 自然形成新的 **connection generation**。
 
-S4-E.6 另外把 lookup lifecycle 做成 fail-closed：
+S4-E.6 把 lookup lifecycle 做成 fail-closed：
 
 - token collision → reject
 - derived route collision → reject
@@ -225,7 +243,28 @@ S4-E.6 另外把 lookup lifecycle 做成 fail-closed：
 - revocation 只刪除仍指向該 exact peer generation 的 token / route
 - stale close 不能誤刪 replacement generation
 
-Production E2E 已證明：authorized TLS takeover 後 public route 旋轉，舊 generation 的 authenticated datagram 即使再次從另一 UDP source port replay，也不能重新取得 authoritative entity control；replacement Client 保留同一 EntityID / live position，並可繼續正常 movement / snapshot / correction。
+Production E2E 已證明：authorized TLS takeover 後 public route 旋轉，舊 generation 的 authenticated datagram 即使從另一 UDP source port replay，也不能重新取得 authoritative entity control；replacement Client 保留同一 EntityID / live position，並可繼續正常 movement / snapshot / correction。
+
+S4-E.7 沒有加入 periodic in-session rekey。現階段 connection-generation rotation + retirement revocation 已涵蓋 reconnect / takeover 的 key lifecycle；若未來長時 session 的 secret-lifetime policy 要求比 connection lifetime 更短，再導入有 acknowledgement / overlap semantics 的 periodic rekey。
+
+## WAN / Long-session Readiness
+
+S4-E.7 paired production E2E 使用透明 UDP relay，在 real Godot Client 與 production `worldd` 之間驗證：
+
+- same-IP NAT-like source-port rebind
+- authenticated newer-sequence migration
+- attacker wrong-HMAC / tamper rejection
+- stale replay rejection
+- old endpoint 不再接收後續 realtime output
+- latency / jitter
+- packet loss / burst loss
+- reorder / duplication
+- correction sequence lag bounded
+- snapshot / correction freshness recovery
+- bounded post-stop convergence
+- snapshot loss 不產生 local fake despawn
+
+目前沒有 E2E evidence 支持為 MVP 立即引入 explicit rebind challenge、DTLS 或 QUIC。若未來需求包含 UDP confidentiality、跨 IP connection migration、不同 congestion-control contract 或 profiling 顯示現有 split transport 不足，再以具體需求評估。
 
 ## Replication / Scaling
 
@@ -261,6 +300,7 @@ Dirty Vitals max               4000 / tick
 | S4-E.4 | TLS 1.3 ingress；duplicate fail-closed；authorized takeover / cooldown | ✅ |
 | S4-E.5 | UDP HMAC、tamper / replay rejection、loss / reorder / duplicate impairment recovery | ✅ |
 | S4-E.6 | Connection-generation realtime route rotation + old-generation revocation | ✅ |
+| S4-E.7 | NAT-like endpoint migration、rebind spoof protection、WAN impairment、long-session health | ✅ |
 
 ## 主要文件
 
@@ -289,6 +329,7 @@ Siege / production E2E：
 - [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md)
 - [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md)
 - [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md)
+- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md)
 
 ## 開發
 
@@ -327,18 +368,13 @@ TLS flag 必須成組使用；trusted TLS ingress 只保護 reliable TCP authent
 - Realtime UDP 尚未加密；目前只有 authenticity / integrity。
 - trusted credential map 仍是 static file，尚無完整 token expiry / rotation / revocation service。
 - TLS terminator 與 `worldd` 目前在同一 process，backend 固定 loopback。
+- NAT-like migration 目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
 - 尚未做 multi-server distributed ownership / failover。
-- 尚未因假設而導入 QUIC / DTLS；會先以 WAN / NAT / impairment 實測決定。
+- 尚未加入 periodic in-session realtime rekey、DTLS 或 QUIC；S4-E.7 目前沒有證明 MVP 需要它們。
 - 500 rendered Godot actors、VAT / MultiMesh 與 final commercial art 不是目前 Server MVP gate。
 
-## 下一階段
+## 下一個 bounded focus
 
-下一個 bounded stage 建議為 **S4-E.7 — WAN/NAT & Secure Deployment Readiness E2E**：
-
-- 合法 NAT-like UDP endpoint change / rebind policy
-- latency / jitter / loss / burst-loss 長時間收斂
-- TLS certificate / deployment config rotation
-- 長 session 的 correction / snapshot health
-- 再依測試結果決定是否需要 periodic in-session realtime rekey 或 QUIC / DTLS
+S4-E.7 已完成 production deployment / WAN readiness gate。後續優先事項應回到真正產品化缺口：正式 login / session credential provider、trusted credential expiry / rotation / revocation，以及 deployment operationalization；不要因技術偏好先導入新的 realtime transport。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
