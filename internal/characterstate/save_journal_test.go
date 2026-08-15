@@ -1,0 +1,189 @@
+package characterstate
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/li41/astrahold-server/internal/respawnpolicy"
+	"github.com/li41/astrahold-server/internal/world"
+)
+
+func TestSaveJournalAppendReopenRoundTripsAliveAndDefeated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "character-state-saves.journal")
+	journal, err := OpenSaveJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalID := journal.ID()
+	alive := SaveIntent{IntentID: 11, Identity: trusted(t, "character:journal-alive"), Snapshot: testSnapshot()}
+	defeatedSnapshot := testSnapshot()
+	defeatedSnapshot.HP = 0
+	defeatedSnapshot.Defeated = true
+	defeatedSnapshot.Respawn = DefeatedRespawn{
+		Context: respawnpolicy.DeathContextSiege,
+		SpawnPointID: "siege-staging", SpawnClass: respawnpolicy.SpawnClassSiege,
+		Position: world.Position{X: 21, Y: 0, Z: -8, Layer: 2}, RemainingTicks: 37,
+		CheckpointID: "checkpoint-west",
+	}
+	defeated := SaveIntent{IntentID: 12, Identity: trusted(t, "character:journal-defeated"), Snapshot: defeatedSnapshot}
+	first, err := journal.Append(alive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := journal.Append(defeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.RecordID != 1 || second.RecordID != 2 || second.EndOffset <= first.EndOffset {
+		t.Fatalf("first=%#v second=%#v", first, second)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenSaveJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.ID() != journalID || reopened.LastRecordID() != 2 {
+		t.Fatalf("id=%s last=%d", reopened.ID(), reopened.LastRecordID())
+	}
+	records, err := reopened.RecordsAfter(reopened.InitialCheckpoint(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].Intent != alive || records[1].Intent != defeated {
+		t.Fatalf("records=%#v", records)
+	}
+}
+
+func TestSaveJournalCheckpointReopenResumesAfterDurableRecord(t *testing.T) {
+	dir := t.TempDir()
+	journalPath := filepath.Join(dir, "saves.journal")
+	checkpointPath := filepath.Join(dir, "saves.checkpoint.json")
+	journal, err := OpenSaveJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:first"), Snapshot: testSnapshot()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSnapshot := testSnapshot()
+	secondSnapshot.HP = 700
+	second, err := journal.Append(SaveIntent{IntentID: 2, Identity: trusted(t, "character:second"), Snapshot: secondSnapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointStore, err := NewSaveCheckpointStore(checkpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := checkpointStore.Save(journal, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.RecordID != 1 {
+		t.Fatalf("checkpoint=%#v", checkpoint)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenSaveJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reopenedStore, err := NewSaveCheckpointStore(checkpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := reopenedStore.Load(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := reopened.RecordsAfter(loaded, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].RecordID != second.RecordID || records[0].Intent != second.Intent {
+		t.Fatalf("records=%#v", records)
+	}
+}
+
+func TestSaveJournalRepairsOnlyIncompleteTrailingFrame(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "saves.journal")
+	journal, err := OpenSaveJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:torn"), Snapshot: testSnapshot()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte{0, 0}); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenSaveJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if !reopened.RepairedTail() || reopened.LastRecordID() != 1 {
+		t.Fatalf("repaired=%v last=%d", reopened.RepairedTail(), reopened.LastRecordID())
+	}
+}
+
+func TestSaveJournalCRCcorruptionFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "saves.journal")
+	journal, err := OpenSaveJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:crc"), Snapshot: testSnapshot()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset := saveJournalHeaderSize() + 4 + 8
+	var b [1]byte
+	if _, err := file.ReadAt(b[:], offset); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	b[0] ^= 0xff
+	if _, err := file.WriteAt(b[:], offset); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenSaveJournal(path); !errors.Is(err, ErrCorruptSaveJournal) {
+		t.Fatalf("err=%v", err)
+	}
+}
