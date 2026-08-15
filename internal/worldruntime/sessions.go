@@ -8,12 +8,13 @@ import (
 )
 
 type JoinRequest struct {
-	Session       *session.Session
-	Entity        world.EntityState
-	Speed         float32
-	Radius        float32
-	MaxStepHeight float32
-	Restore       *CharacterRestore
+	Session        *session.Session
+	Entity         world.EntityState
+	Speed          float32
+	Radius         float32
+	MaxStepHeight  float32
+	Restore        *CharacterRestore
+	AdmissionLease *CharacterAdmissionLease
 }
 
 func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *StepReport) {
@@ -64,6 +65,10 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	}
 	if request.Session.EntityID != request.Entity.ID {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: ErrJoinEntityMismatch})
+		return
+	}
+	if err := r.characterIdentities.validateJoinAdmission(request.Session.CharacterIdentity, request.AdmissionLease); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
 	if err := r.characterIdentities.validateSession(request.Session); err != nil {
@@ -132,6 +137,9 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	r.characterIdentities.bindSession(request.Session)
+	if request.AdmissionLease != nil {
+		r.characterIdentities.consumeAdmission(*request.AdmissionLease)
+	}
 	r.markCharacterStateAutosaveBaseline(request.Entity.ID, report.Tick)
 	r.replication.Register(request.Session.ID)
 }

@@ -9,11 +9,39 @@ import (
 
 var ErrCharacterAdmissionRequiresTrustedIdentity = errors.New("worldruntime: character admission requires trusted identity")
 
-// AwaitCharacterAdmission inserts a read-only barrier into the world-owner command FIFO.
-// If an older leave command was already enqueued, that leave is processed first and its
-// character-state save intent exists before this method succeeds. The barrier never
-// performs persistence I/O and never evicts an active character.
-func (r *Runtime) AwaitCharacterAdmission(ctx context.Context, identity characteridentity.Binding) error {
+// AwaitCharacterAdmission inserts a mutating admission-reservation barrier into the
+// world-owner command FIFO. If an older leave command was already enqueued, that leave is
+// processed first and its character-state save intent exists before the lease is issued.
+//
+// Once queued, the caller must observe completion even if ctx later cancels because the
+// command may have created a process-local reservation that must be explicitly released or
+// consumed by a matching join. No persistence or network I/O runs in the world owner.
+func (r *Runtime) AwaitCharacterAdmission(ctx context.Context, identity characteridentity.Binding) (CharacterAdmissionLease, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return CharacterAdmissionLease{}, ctx.Err()
+	default:
+	}
+	lease := CharacterAdmissionLease{}
+	completion := make(chan error, 1)
+	if err := r.queue.tryPush(characterAdmissionCommand{
+		identity: characterAdmissionOperation{identity: identity, lease: &lease},
+		completion: completion,
+	}); err != nil {
+		return CharacterAdmissionLease{}, err
+	}
+	if err := <-completion; err != nil {
+		return CharacterAdmissionLease{}, err
+	}
+	return lease, nil
+}
+
+// ReleaseCharacterAdmission releases only the exact lease generation supplied by the caller.
+// A stale release is an idempotent no-op and cannot clear a newer admission reservation.
+func (r *Runtime) ReleaseCharacterAdmission(ctx context.Context, lease CharacterAdmissionLease) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -23,16 +51,13 @@ func (r *Runtime) AwaitCharacterAdmission(ctx context.Context, identity characte
 	default:
 	}
 	completion := make(chan error, 1)
-	if err := r.queue.tryPush(characterAdmissionCommand{identity: identity, completion: completion}); err != nil {
+	if err := r.queue.tryPush(characterAdmissionCommand{
+		identity: characterAdmissionOperation{lease: &lease, release: true},
+		completion: completion,
+	}); err != nil {
 		return err
 	}
-	select {
-	case err := <-completion:
-		return err
-	case <-ctx.Done():
-		// Admission is read-only, so abandoning the wait cannot leave partial world state.
-		return ctx.Err()
-	}
+	return <-completion
 }
 
 // AwaitJoin waits for the world owner to commit or reject the existing join transaction.
@@ -60,7 +85,7 @@ func completeWorldOwnerCommand(completion chan error, err error) {
 		return
 	}
 	// Completion channels are one-shot and buffered so the world owner never blocks on
-	// a network goroutine that stopped waiting (admission may be cancelled).
+	// a network goroutine that stopped waiting before a mutating command was queued.
 	select {
 	case completion <- err:
 	default:
