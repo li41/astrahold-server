@@ -38,7 +38,15 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 		}
 	}
 	r.ensureEntityVitalsRevision(c.session.EntityID)
+	siegeAssigned, err := r.assignSiegeParticipant(c.session)
+	if err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err})
+		return
+	}
 	if err := r.sessions.Add(c.session); err != nil {
+		if siegeAssigned {
+			r.removeSiegeParticipant(c.session)
+		}
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err})
 		return
 	}
@@ -53,6 +61,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
 		return
 	}
+	r.removeSiegeParticipant(s)
 	r.characterIdentities.removeOwnershipBySession(s.ID)
 	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
@@ -132,7 +141,21 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		}
 	}
 	r.ensureEntityVitalsRevision(request.Entity.ID)
+	siegeAssigned, err := r.assignSiegeParticipant(request.Session)
+	if err != nil {
+		if r.respawnPolicy != nil {
+			r.respawnPolicy.Remove(request.Entity.ID)
+		}
+		r.removeEntityVitals(request.Entity.ID)
+		r.characters.Remove(request.Entity.ID)
+		r.world.Remove(request.Entity.ID)
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+		return
+	}
 	if err := r.sessions.Add(request.Session); err != nil {
+		if siegeAssigned {
+			r.removeSiegeParticipant(request.Session)
+		}
 		if r.respawnPolicy != nil {
 			r.respawnPolicy.Remove(request.Entity.ID)
 		}
@@ -166,6 +189,7 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
 		return
 	}
+	r.removeSiegeParticipant(s)
 	// Capture authoritative trusted-character state before any leave cleanup mutates or
 	// removes character/world truth. Persistence itself runs outside the world owner.
 	r.enqueueCharacterStateSave(c.id, s.EntityID, report)

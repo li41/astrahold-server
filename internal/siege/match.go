@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -39,13 +40,23 @@ type MatchDefinition struct {
 	BreachGateID      string
 	ThroneObjectiveID string
 	Throne            *ThroneObjectiveDefinition
+	ParticipantTeams  map[characteridentity.ID]Team
 }
 
 func (d MatchDefinition) Valid() bool {
 	if d.ID == "" || d.AttackerID == "" || d.DefenderID == "" || d.AttackerID == d.DefenderID || d.BreachGateID == "" || d.ThroneObjectiveID == "" {
 		return false
 	}
-	return d.Throne == nil || (d.Throne.Valid() && d.Throne.ID == d.ThroneObjectiveID)
+	if d.Throne != nil && (!d.Throne.Valid() || d.Throne.ID != d.ThroneObjectiveID) {
+		return false
+	}
+	for characterID, team := range d.ParticipantTeams {
+		binding, err := characteridentity.NewTrusted(string(characterID))
+		if err != nil || binding.ID != characterID || !team.Valid() {
+			return false
+		}
+	}
+	return true
 }
 
 type MatchState struct {
@@ -60,10 +71,11 @@ type MatchState struct {
 }
 
 type matchRuntime struct {
-	definition       MatchDefinition
-	state            MatchState
-	participantTeams map[world.EntityID]Team
-	throne           *throneRuntime
+	definition              MatchDefinition
+	state                   MatchState
+	participantTeams        map[world.EntityID]Team
+	trustedParticipantTeams map[characteridentity.ID]Team
+	throne                  *throneRuntime
 }
 
 func (s *Service) ConfigureMatch(definition MatchDefinition) error {
@@ -84,6 +96,10 @@ func (s *Service) ConfigureMatch(definition MatchDefinition) error {
 		}
 		throne = configured
 	}
+	trustedTeams := make(map[characteridentity.ID]Team, len(definition.ParticipantTeams))
+	for characterID, team := range definition.ParticipantTeams {
+		trustedTeams[characterID] = team
+	}
 	s.match = &matchRuntime{
 		definition: definition,
 		state: MatchState{
@@ -95,8 +111,9 @@ func (s *Service) ConfigureMatch(definition MatchDefinition) error {
 			BreachGateID:      definition.BreachGateID,
 			ThroneObjectiveID: definition.ThroneObjectiveID,
 		},
-		participantTeams: make(map[world.EntityID]Team),
-		throne:           throne,
+		participantTeams:        make(map[world.EntityID]Team),
+		trustedParticipantTeams: trustedTeams,
+		throne:                  throne,
 	}
 	return nil
 }
@@ -108,6 +125,28 @@ func (s *Service) MatchState() (MatchState, bool) {
 	return s.match.state, true
 }
 
+// AssignResolvedParticipant maps only an already-trusted CharacterID through this match's
+// Server-owned roster. Ephemeral and unlisted trusted identities remain unknown.
+func (s *Service) AssignResolvedParticipant(entityID world.EntityID, identity characteridentity.Binding) (bool, error) {
+	if s == nil || s.match == nil {
+		return false, ErrMatchUnavailable
+	}
+	if entityID == 0 || !identity.Valid() {
+		return false, ErrInvalidParticipant
+	}
+	if identity.Assurance != characteridentity.AssuranceTrusted {
+		return false, nil
+	}
+	team, ok := s.match.trustedParticipantTeams[identity.ID]
+	if !ok {
+		return false, nil
+	}
+	if err := s.AssignParticipant(entityID, team); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Service) AssignParticipant(entityID world.EntityID, team Team) error {
 	if s == nil || s.match == nil {
 		return ErrMatchUnavailable
@@ -117,6 +156,13 @@ func (s *Service) AssignParticipant(entityID world.EntityID, team Team) error {
 	}
 	s.match.participantTeams[entityID] = team
 	return nil
+}
+
+func (s *Service) RemoveParticipant(entityID world.EntityID) {
+	if s == nil || s.match == nil || entityID == 0 {
+		return
+	}
+	delete(s.match.participantTeams, entityID)
 }
 
 func (s *Service) ParticipantTeam(entityID world.EntityID) (Team, bool) {

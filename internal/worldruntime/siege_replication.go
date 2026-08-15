@@ -11,22 +11,13 @@ type siegeDeliveryStamp struct {
 	Team     protocol.SiegeTeam
 }
 
-func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport) {
+func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions []*session.Session) {
 	if r.siege == nil {
 		return
 	}
 	state, ok := r.siege.MatchState()
 	if !ok {
 		return
-	}
-
-	sessions := r.sessions.List()
-	// Step invokes Siege replication after simulation. Reuse this stable session list for
-	// throne occupancy so D.2A does not add a second session sort/allocation per tick.
-	if state.Phase == siege.MatchPhaseThrone {
-		r.observeSiegeThronePresence(sessions)
-	} else {
-		r.siege.ObserveThronePresence(nil)
 	}
 
 	active := make(map[session.ID]struct{}, len(sessions))

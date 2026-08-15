@@ -92,6 +92,14 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
+	// Siege objective truth consumes post-simulation position/defeat/team state. Reuse this
+	// stable list later for SiegeMatchState replication so D.2B adds no extra session sort.
+	var siegeSessions []*session.Session
+	if r.siege != nil {
+		siegeSessions = r.sessions.List()
+		r.updateSiegeObjectives(siegeSessions, delta)
+	}
+
 	// Autosave captures the post-simulation authoritative state into the bounded process-local
 	// outbox only. Journal fsync / Store CAS remain outside the world owner.
 	r.autosaveCharacterStates(tick, &report)
@@ -105,7 +113,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	}
 	// Siege match state has its own Reliable delivery stamp. It is intentionally separate
 	// from WorldDynamicState so phase/team truth cannot be inferred from visual blocker state.
-	r.replicateSiegeState(tick, &report)
+	r.replicateSiegeState(tick, &report, siegeSessions)
 
 	snapshotRan := false
 	initialBootstrapHadLifecycle := false
