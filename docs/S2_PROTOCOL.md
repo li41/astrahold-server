@@ -1,5 +1,7 @@
 # S2：Protocol、Ingress 與開發 Codec 維護規約
 
+> **Historical milestone document.** 本文保留 S2-A 當時的 Protocol / Codec contract，不是目前 production wire contract。現況請以 root `README.md`、`docs/ARCHITECTURE.md` 與 S4-E.5～E.7 文件為準；目前 production 使用 **Protocol v9**。
+
 本文件記錄 Astrahold Server 進入 Godot Thin Client 階段後的協定邊界。
 
 目標不是現在就把最終商用網路格式拍板，而是先確保 **任何 Codec / Transport 的替換都不會污染 World、Simulation、Replication 與 Gameplay Domain**。
