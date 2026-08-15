@@ -14,13 +14,13 @@ import (
 const characterAdmissionLeaseDuration = 60 * time.Second
 
 var (
-	ErrCharacterIdentityMissing             = errors.New("worldruntime: character identity missing")
-	ErrCharacterIdentityActive              = errors.New("worldruntime: character identity already active")
-	ErrCharacterIdentityConflict            = errors.New("worldruntime: entity character identity conflict")
-	ErrCharacterAdmissionReserved           = errors.New("worldruntime: character admission already reserved")
-	ErrCharacterAdmissionLeaseRequired      = errors.New("worldruntime: character admission lease required")
-	ErrCharacterAdmissionLeaseInvalid       = errors.New("worldruntime: character admission lease invalid")
-	ErrCharacterAdmissionLeaseExpired       = errors.New("worldruntime: character admission lease expired")
+	ErrCharacterIdentityMissing              = errors.New("worldruntime: character identity missing")
+	ErrCharacterIdentityActive               = errors.New("worldruntime: character identity already active")
+	ErrCharacterIdentityConflict             = errors.New("worldruntime: entity character identity conflict")
+	ErrCharacterAdmissionReserved            = errors.New("worldruntime: character admission already reserved")
+	ErrCharacterAdmissionLeaseRequired       = errors.New("worldruntime: character admission lease required")
+	ErrCharacterAdmissionLeaseInvalid        = errors.New("worldruntime: character admission lease invalid")
+	ErrCharacterAdmissionLeaseExpired        = errors.New("worldruntime: character admission lease expired")
 	ErrCharacterAdmissionGenerationExhausted = errors.New("worldruntime: character admission generation exhausted")
 )
 
@@ -47,7 +47,10 @@ type characterIdentityRegistry struct {
 	byEntity                map[world.EntityID]characteridentity.Binding
 	entityByCharacter       map[characteridentity.ID]world.EntityID
 	admissionByCharacter    map[characteridentity.ID]CharacterAdmissionLease
+	ownershipByCharacter    map[characteridentity.ID]SessionOwnershipFence
+	ownershipBySession      map[session.ID]SessionOwnershipFence
 	nextAdmissionGeneration uint64
+	nextOwnershipEpoch      uint64
 }
 
 func newCharacterIdentityRegistry() *characterIdentityRegistry {
@@ -55,6 +58,8 @@ func newCharacterIdentityRegistry() *characterIdentityRegistry {
 		byEntity:             make(map[world.EntityID]characteridentity.Binding),
 		entityByCharacter:    make(map[characteridentity.ID]world.EntityID),
 		admissionByCharacter: make(map[characteridentity.ID]CharacterAdmissionLease),
+		ownershipByCharacter: make(map[characteridentity.ID]SessionOwnershipFence),
+		ownershipBySession:   make(map[session.ID]SessionOwnershipFence),
 	}
 }
 
