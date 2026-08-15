@@ -16,12 +16,16 @@ func (s *Service) ValidateScheduledRestore(scheduled Scheduled) error {
 	if scheduled.EntityID == 0 {
 		return fmt.Errorf("%w: entity", ErrInvalidRestore)
 	}
-	if _, ok := s.rules[scheduled.Context]; !ok {
+	rule, ok := s.rules[scheduled.Context]
+	if !ok {
 		return fmt.Errorf("%w: context=%q", ErrInvalidRestore, scheduled.Context)
 	}
 	point, ok := s.points[scheduled.SpawnPointID]
 	if !ok {
 		return fmt.Errorf("%w: spawn_point=%q", ErrInvalidRestore, scheduled.SpawnPointID)
+	}
+	if _, allowed := rule.allowed[point.Class]; !allowed {
+		return fmt.Errorf("%w: context=%q disallows spawn_class=%q", ErrInvalidRestore, scheduled.Context, point.Class)
 	}
 	if point.Class != scheduled.SpawnClass || point.Position() != scheduled.Position {
 		return fmt.Errorf("%w: spawn binding drift point=%q", ErrInvalidRestore, scheduled.SpawnPointID)
