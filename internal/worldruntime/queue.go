@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -34,6 +35,19 @@ type joinCommand struct {
 	completion chan error
 }
 func (joinCommand) name() string { return "join_world" }
+
+type ownershipLookupCommand struct {
+	identity   characteridentity.Binding
+	result     *SessionOwnershipFence
+	completion chan error
+}
+func (ownershipLookupCommand) name() string { return "lookup_character_ownership" }
+
+type ownershipTransferCommand struct {
+	request    OwnershipTransferRequest
+	completion chan error
+}
+func (ownershipTransferCommand) name() string { return "transfer_character_ownership" }
 
 type leaveCommand struct {
 	id        session.ID
