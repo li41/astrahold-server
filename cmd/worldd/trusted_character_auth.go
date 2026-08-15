@@ -27,6 +27,7 @@ const (
 	trustedCharacterAuthHeaderBytes                = len(trustedCharacterAuthMagic) + 2
 	trustedCharacterAuthMaxCredentialBytes         = 256
 	trustedCharacterAuthMaxCredentialIDBytes       = 128
+	trustedCharacterAuthRevocationScopePrefix      = "static-v2:"
 )
 
 var trustedCharacterAuthFile = flag.String(
@@ -61,15 +62,19 @@ type trustedCharacterAuthCredential struct {
 }
 
 type staticTrustedCharacterCredentialEntry struct {
-	credentialID string
-	grant        sessioncredential.Grant
-	lifecycle    sessioncredential.Lifecycle
+	credentialID    string
+	tokenDigest     [sha256.Size]byte
+	revocationScope string
+	grant           sessioncredential.Grant
+	lifecycle       sessioncredential.Lifecycle
 }
 
 type staticTrustedCharacterCredentialProvider struct {
-	revision    string
-	credentials map[[sha256.Size]byte]staticTrustedCharacterCredentialEntry
-	now         func() time.Time
+	schemaVersion   uint16
+	revision        string
+	credentials     map[[sha256.Size]byte]staticTrustedCharacterCredentialEntry
+	credentialsByID map[string]staticTrustedCharacterCredentialEntry
+	now             func() time.Time
 }
 
 type trustedCharacterAuthenticator struct {
@@ -83,24 +88,7 @@ func loadTrustedCharacterAuthenticator(path, tcpAddress string) (tcpudp.TrustedC
 	if err := validateTrustedCharacterAuthListenAddress(tcpAddress); err != nil {
 		return nil, "", err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, "", fmt.Errorf("read trusted character auth config %q: %w", path, err)
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	var definition trustedCharacterAuthDefinition
-	if err := decoder.Decode(&definition); err != nil {
-		return nil, "", fmt.Errorf("%w: decode: %v", errTrustedCharacterAuthConfig, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return nil, "", fmt.Errorf("%w: trailing JSON value", errTrustedCharacterAuthConfig)
-		}
-		return nil, "", fmt.Errorf("%w: trailing data: %v", errTrustedCharacterAuthConfig, err)
-	}
-	provider, err := newStaticTrustedCharacterCredentialProvider(definition)
+	provider, err := loadStaticTrustedCharacterCredentialProvider(path)
 	if err != nil {
 		return nil, "", err
 	}
@@ -109,6 +97,27 @@ func loadTrustedCharacterAuthenticator(path, tcpAddress string) (tcpudp.TrustedC
 		return nil, "", err
 	}
 	return authenticator.Authenticate, provider.revision, nil
+}
+
+func loadStaticTrustedCharacterCredentialProvider(path string) (*staticTrustedCharacterCredentialProvider, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read trusted character auth config %q: %w", path, err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	var definition trustedCharacterAuthDefinition
+	if err := decoder.Decode(&definition); err != nil {
+		return nil, fmt.Errorf("%w: decode: %v", errTrustedCharacterAuthConfig, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("%w: trailing JSON value", errTrustedCharacterAuthConfig)
+		}
+		return nil, fmt.Errorf("%w: trailing data: %v", errTrustedCharacterAuthConfig, err)
+	}
+	return newStaticTrustedCharacterCredentialProvider(definition)
 }
 
 func newTrustedCharacterAuthenticator(definition trustedCharacterAuthDefinition) (*trustedCharacterAuthenticator, error) {
@@ -135,7 +144,7 @@ func newStaticTrustedCharacterCredentialProvider(definition trustedCharacterAuth
 	}
 
 	credentials := make(map[[sha256.Size]byte]staticTrustedCharacterCredentialEntry, len(definition.Credentials))
-	credentialIDs := make(map[string]struct{}, len(definition.Credentials))
+	credentialsByID := make(map[string]staticTrustedCharacterCredentialEntry, len(definition.Credentials))
 	for index, item := range definition.Credentials {
 		if len(item.TokenSHA256) != sha256.Size*2 || strings.ToLower(item.TokenSHA256) != item.TokenSHA256 {
 			return nil, fmt.Errorf("%w: credential[%d] token_sha256 must be 64 lowercase hex characters", errTrustedCharacterAuthConfig, index)
@@ -156,6 +165,7 @@ func newStaticTrustedCharacterCredentialProvider(definition trustedCharacterAuth
 		}
 
 		credentialID := ""
+		revocationScope := ""
 		lifecycle := sessioncredential.Lifecycle{}
 		if definition.SchemaVersion == trustedCharacterAuthLegacySchemaVersion {
 			if item.CredentialID != "" || item.NotBefore != "" || item.ExpiresAt != "" || item.RevokedAt != "" {
@@ -166,30 +176,63 @@ func newStaticTrustedCharacterCredentialProvider(definition trustedCharacterAuth
 			if credentialID == "" || credentialID != item.CredentialID || len(credentialID) > trustedCharacterAuthMaxCredentialIDBytes {
 				return nil, fmt.Errorf("%w: credential[%d] credential_id must be 1..%d trimmed bytes", errTrustedCharacterAuthConfig, index, trustedCharacterAuthMaxCredentialIDBytes)
 			}
-			if _, exists := credentialIDs[credentialID]; exists {
+			if _, exists := credentialsByID[credentialID]; exists {
 				return nil, fmt.Errorf("%w: duplicate credential_id %q", errTrustedCharacterAuthConfig, credentialID)
 			}
-			credentialIDs[credentialID] = struct{}{}
 			lifecycle, err = parseTrustedCharacterCredentialLifecycle(item)
 			if err != nil {
 				return nil, fmt.Errorf("%w: credential[%d] %q lifecycle: %v", errTrustedCharacterAuthConfig, index, credentialID, err)
 			}
+			revocationScope = trustedCharacterCredentialRevocationScope(item, binding)
 		}
 
-		credentials[digest] = staticTrustedCharacterCredentialEntry{
-			credentialID: credentialID,
+		entry := staticTrustedCharacterCredentialEntry{
+			credentialID:    credentialID,
+			tokenDigest:     digest,
+			revocationScope: revocationScope,
 			grant: sessioncredential.Grant{
 				Identity:            binding,
 				AllowActiveTakeover: item.AllowActiveTakeover,
+				RevocationScope:     revocationScope,
 			},
 			lifecycle: lifecycle,
 		}
+		credentials[digest] = entry
+		if credentialID != "" {
+			credentialsByID[credentialID] = entry
+		}
 	}
 	return &staticTrustedCharacterCredentialProvider{
-		revision:    definition.Revision,
-		credentials: credentials,
-		now:         time.Now,
+		schemaVersion:   definition.SchemaVersion,
+		revision:        definition.Revision,
+		credentials:     credentials,
+		credentialsByID: credentialsByID,
+		now:             time.Now,
 	}, nil
+}
+
+// trustedCharacterCredentialRevocationScope identifies the proof/identity/takeover
+// generation. Lifecycle timestamps deliberately do not participate in the fingerprint:
+// their Server-clock validity controls membership in the allowed scope set, so scheduling a
+// future cutoff does not invalidate a currently valid session before that cutoff.
+func trustedCharacterCredentialRevocationScope(item trustedCharacterAuthCredential, binding characteridentity.Binding) string {
+	hasher := sha256.New()
+	writeField := func(value string) {
+		var size [4]byte
+		binary.BigEndian.PutUint32(size[:], uint32(len(value)))
+		_, _ = hasher.Write(size[:])
+		_, _ = hasher.Write([]byte(value))
+	}
+	writeField("astrahold-static-credential-v2")
+	writeField(item.CredentialID)
+	writeField(item.TokenSHA256)
+	writeField(string(binding.ID))
+	if item.AllowActiveTakeover {
+		writeField("takeover:1")
+	} else {
+		writeField("takeover:0")
+	}
+	return trustedCharacterAuthRevocationScopePrefix + hex.EncodeToString(hasher.Sum(nil))
 }
 
 func parseTrustedCharacterCredentialLifecycle(item trustedCharacterAuthCredential) (sessioncredential.Lifecycle, error) {
@@ -298,7 +341,10 @@ func (a *trustedCharacterAuthenticator) Authenticate(ctx context.Context, reques
 		return tcpudp.TrustedCharacterConnectionAuthentication{}, errTrustedCharacterCredentialProviderGrant
 	}
 
-	result := tcpudp.TrustedCharacterConnectionAuthentication{Identity: grant.Identity}
+	result := tcpudp.TrustedCharacterConnectionAuthentication{
+		Identity:        grant.Identity,
+		RevocationScope: grant.RevocationScope,
+	}
 	if grant.AllowActiveTakeover {
 		characterID := grant.Identity.ID
 		result.TakeoverAuthorizer = func(_ context.Context, takeover tcpudp.CharacterTakeoverRequest) error {

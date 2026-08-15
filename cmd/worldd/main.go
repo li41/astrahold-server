@@ -57,7 +57,7 @@ func main() {
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
 		log.Fatal(err)
 	}
-	trustedCharacterAuthenticator, trustedCharacterAuthRevision, err := loadTrustedCharacterAuthenticator(*trustedCharacterAuthFile, *tcpAddress)
+	trustedCharacterAuthenticator, trustedCharacterAuthRuntime, trustedCharacterAuthRevision, err := loadRuntimeTrustedCharacterAuthenticator(*trustedCharacterAuthFile, *tcpAddress)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -225,6 +225,10 @@ func main() {
 		networkConfig.TrustedCharacterConnectionAuthenticator = trustedCharacterAuthenticator
 	}
 	server := tcpudp.NewServer(networkConfig, runtime, gamev1.Codec{})
+	if trustedCharacterAuthRuntime != nil {
+		initialScopes := activeTrustedCharacterAuthenticationScopes(trustedCharacterAuthRuntime.provider.snapshot(), time.Now().UTC())
+		server.ReplaceTrustedCharacterAuthenticationScopes(initialScopes)
+	}
 	if err := server.Open(); err != nil {
 		log.Fatal(err)
 	}
@@ -241,6 +245,12 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if trustedCharacterAuthRuntime != nil {
+		reloadSignals := make(chan os.Signal, 1)
+		signal.Notify(reloadSignals, syscall.SIGHUP)
+		defer signal.Stop(reloadSignals)
+		go runTrustedCharacterAuthRuntime(ctx, reloadSignals, trustedCharacterAuthRuntime, server.ReplaceTrustedCharacterAuthenticationScopes, log.Printf)
+	}
 	if tlsIngress != nil {
 		go func() {
 			if err := tlsIngress.Serve(ctx); err != nil {
@@ -280,7 +290,7 @@ func main() {
 	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true save_journal=%s save_checkpoint=%s journal_append_fsync=true checkpoint_atomic_rename=true startup_recovery=true restore_exact_world=true defeated_restore=true autosave_ticks=%d autosaves_per_tick=%d autosave_capture_process_local=true", characterStateStore.Path(), characterStateOutbox.Capacity(), characterStateSaveJournal.Path(), characterStateSaveCheckpointStore.Path(), autosaveTicks, *characterStateAutosavesPerTick)
 	log.Printf("siege ownership durability: world=%s dir=%s revision=%d owner=%s previous_owner=%s last_transfer_match=%s created=%t single_writer=true optimistic_revision=true temp_fsync=true atomic_rename=true directory_fsync=true startup_recovery=true completion_barrier=true", loadedWorld.Definition.WorldID, siegeOwnershipPersistence.Path(), siegeOwnership.Revision, siegeOwnership.OwnerID, siegeOwnership.PreviousOwnerID, siegeOwnership.LastTransferMatchID, siegeOwnershipCreated)
 	if trustedCharacterAuthenticator != nil {
-		log.Printf("trusted character authentication: enabled=true revision=%s identity_source=server_credential_map pre_gamev1=true tcp_loopback_required=true takeover_authorizer=credential_scoped_optional", trustedCharacterAuthRevision)
+		log.Printf("trusted character authentication: enabled=true revision=%s identity_source=server_credential_map pre_gamev1=true tcp_loopback_required=true takeover_authorizer=credential_scoped_optional runtime_reload=%s", trustedCharacterAuthRevision, describeTrustedCharacterAuthRuntime(trustedCharacterAuthRuntime))
 	} else {
 		log.Printf("trusted character authentication: enabled=false identity_source=ephemeral_default")
 	}
