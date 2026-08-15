@@ -15,6 +15,7 @@ var (
 	ErrInvalidCastleOwnership      = errors.New("siege: invalid castle ownership")
 	ErrInvalidCastleTransfer       = errors.New("siege: invalid castle ownership transfer")
 	ErrThroneResolutionUnavailable = errors.New("siege: throne resolution unavailable")
+	ErrRoundResetUnavailable       = errors.New("siege: round reset unavailable")
 )
 
 type Team uint8
@@ -64,6 +65,7 @@ func (d MatchDefinition) Valid() bool {
 
 type MatchState struct {
 	Revision          uint64
+	Round             uint64
 	MatchID           string
 	AttackerID        string
 	DefenderID        string
@@ -141,6 +143,7 @@ func (s *Service) ConfigureMatch(definition MatchDefinition) error {
 		definition: definition,
 		state: MatchState{
 			Revision:          1,
+			Round:             1,
 			MatchID:           definition.ID,
 			AttackerID:        definition.AttackerID,
 			DefenderID:        definition.DefenderID,
@@ -173,8 +176,9 @@ func (s *Service) CastleOwnershipState() (CastleOwnershipState, bool) {
 	return s.match.ownership, true
 }
 
-// ConfigureCastleOwnershipPersistence restores the durable owner before gameplay starts and
-// installs the commit barrier used by throne resolution. It is intentionally startup-only.
+// ConfigureCastleOwnershipPersistence restores durable ownership before gameplay starts,
+// aligns the fresh Gate round so the durable owner is the defender, and installs the commit
+// barrier used by throne resolution. The ownership revision is the durable round epoch.
 func (s *Service) ConfigureCastleOwnershipPersistence(state CastleOwnershipState, committer CastleOwnershipCommitter) error {
 	if s == nil || s.match == nil {
 		return ErrMatchUnavailable
@@ -182,16 +186,22 @@ func (s *Service) ConfigureCastleOwnershipPersistence(state CastleOwnershipState
 	if s.match.state.Phase != MatchPhaseGate || s.match.state.GateBreached || s.match.state.WinnerTeam != TeamUnknown || s.match.state.WinnerID != "" {
 		return ErrInvalidCastleOwnership
 	}
-	if !validCastleOwnership(state) || (state.OwnerID != s.match.definition.AttackerID && state.OwnerID != s.match.definition.DefenderID) || committer == nil {
+	if !validCastleOwnership(state) || !s.validSideID(state.OwnerID) || committer == nil {
+		return ErrInvalidCastleOwnership
+	}
+	attackerID, defenderID, ok := s.rolesForOwner(state.OwnerID)
+	if !ok {
 		return ErrInvalidCastleOwnership
 	}
 	s.match.ownership = state
 	s.match.ownershipCommitter = committer
+	s.match.state.Round = state.Revision
+	s.applyRoles(attackerID, defenderID)
 	return nil
 }
 
 // AssignResolvedParticipant maps only an already-trusted CharacterID through this match's
-// Server-owned roster. Ephemeral and unlisted trusted identities remain unknown.
+// Server-owned roster. D.3C keeps the two-side roster aligned whenever round roles rotate.
 func (s *Service) AssignResolvedParticipant(entityID world.EntityID, identity characteridentity.Binding) (bool, error) {
 	if s == nil || s.match == nil {
 		return false, ErrMatchUnavailable
@@ -246,15 +256,12 @@ func (s *Service) ObserveGateState(state GateState) bool {
 	}
 	s.match.state.GateBreached = true
 	s.match.state.Phase = MatchPhaseThrone
-	s.match.state.Revision++
-	if s.match.state.Revision == 0 {
-		s.match.state.Revision = 1
-	}
+	s.bumpMatchRevision()
 	return true
 }
 
 // PrepareThroneCaptureResolution exposes a deterministic CAS intent but does not mutate match
-// or ownership state. Persistence may fail/retry while the D.2B readiness latch remains set.
+// or ownership state. The current round attacker, not the startup config role, becomes owner.
 func (s *Service) PrepareThroneCaptureResolution() (CastleOwnershipTransfer, bool) {
 	if s == nil || s.match == nil || s.match.throne == nil || s.match.throne.capture == nil {
 		return CastleOwnershipTransfer{}, false
@@ -268,7 +275,7 @@ func (s *Service) PrepareThroneCaptureResolution() (CastleOwnershipTransfer, boo
 	return CastleOwnershipTransfer{
 		ExpectedRevision: s.match.ownership.Revision,
 		PreviousOwnerID:  s.match.ownership.OwnerID,
-		OwnerID:          s.match.definition.AttackerID,
+		OwnerID:          s.match.state.AttackerID,
 		MatchID:          s.match.definition.ID,
 	}, true
 }
@@ -296,13 +303,9 @@ func (s *Service) CommitThroneCaptureResolution(ownership CastleOwnershipState) 
 	nextMatch := s.match.state
 	nextMatch.Phase = MatchPhaseCompleted
 	nextMatch.WinnerTeam = TeamAttacker
-	nextMatch.WinnerID = s.match.definition.AttackerID
-	nextMatch.Revision++
-	if nextMatch.Revision == 0 {
-		nextMatch.Revision = 1
-	}
-
+	nextMatch.WinnerID = s.match.state.AttackerID
 	s.match.state = nextMatch
+	s.bumpMatchRevision()
 	s.match.ownership = ownership
 	s.ObserveThronePresence(nil)
 	s.AdvanceThroneCapture(0)
@@ -343,11 +346,148 @@ func (s *Service) ResolveThroneCaptureWithError() (bool, error) {
 	return true, nil
 }
 
-// ResolveThroneCapture preserves the D.3A bool-only call site. Production worldd configures a
-// committer whose failures are logged at the persistence boundary; failure remains a no-op here.
+// ResolveThroneCapture preserves the bool-only call site used by focused tests. Production
+// worldd configures a durable committer; persistence failure remains a no-op here.
 func (s *Service) ResolveThroneCapture() bool {
 	resolved, _ := s.ResolveThroneCaptureWithError()
 	return resolved
+}
+
+// StartNextRound resets the completed Siege back to Gate phase. It restores the configured
+// breach gate before publishing the new round, derives defender from durable castle ownership,
+// derives attacker from the other configured side, clears winner/objective state, and advances
+// the round epoch to the ownership revision. Scheduling this operation is deliberately external.
+func (s *Service) StartNextRound(scene World) (bool, error) {
+	if s == nil || s.match == nil {
+		return false, ErrMatchUnavailable
+	}
+	if s.match.state.Phase != MatchPhaseCompleted {
+		return false, nil
+	}
+	if scene == nil || !validCastleOwnership(s.match.ownership) || !s.validSideID(s.match.ownership.OwnerID) {
+		return false, ErrRoundResetUnavailable
+	}
+	if s.match.state.Round == ^uint64(0) || s.match.ownership.Revision != s.match.state.Round+1 {
+		return false, ErrRoundResetUnavailable
+	}
+	attackerID, defenderID, ok := s.rolesForOwner(s.match.ownership.OwnerID)
+	if !ok || s.match.ownership.OwnerID != s.match.state.WinnerID {
+		return false, ErrRoundResetUnavailable
+	}
+	gate := s.gates[s.match.definition.BreachGateID]
+	if gate == nil || gate.definition.BlockerID == "" {
+		return false, ErrRoundResetUnavailable
+	}
+	enabled, err := scene.BlockerEnabled(gate.definition.BlockerID)
+	if err != nil {
+		return false, err
+	}
+	if !enabled {
+		if err := scene.SetBlockerEnabled(gate.definition.BlockerID, true); err != nil {
+			return false, err
+		}
+	}
+
+	gate.hp = gate.definition.MaxHP
+	for key := range s.nextAttackTick {
+		if key.gateID == gate.definition.ID {
+			delete(s.nextAttackTick, key)
+		}
+	}
+	s.resetThroneForNextRound()
+
+	next := s.match.state
+	next.Round = s.match.ownership.Revision
+	next.Phase = MatchPhaseGate
+	next.GateBreached = false
+	next.WinnerTeam = TeamUnknown
+	next.WinnerID = ""
+	s.match.state = next
+	s.applyRoles(attackerID, defenderID)
+	s.bumpMatchRevision()
+	return true, nil
+}
+
+func (s *Service) resetThroneForNextRound() {
+	if s.match == nil || s.match.throne == nil {
+		return
+	}
+	presence := s.match.throne.state
+	nextPresence := ThronePresenceState{Revision: presence.Revision, ObjectiveID: s.match.throne.definition.ID}
+	if !sameThronePresence(presence, nextPresence) {
+		nextPresence.Revision = nextRevision(presence.Revision)
+		s.match.throne.state = nextPresence
+	}
+	if s.match.throne.capture == nil {
+		return
+	}
+	capture := s.match.throne.capture.state
+	nextCapture := ThroneCaptureState{
+		Revision:    capture.Revision,
+		ObjectiveID: s.match.throne.definition.ID,
+		Required:    s.match.throne.definition.CaptureDuration,
+	}
+	if !sameThroneCapture(capture, nextCapture) {
+		nextCapture.Revision = nextRevision(capture.Revision)
+		s.match.throne.capture.state = nextCapture
+	}
+}
+
+func (s *Service) validSideID(sideID string) bool {
+	return s != nil && s.match != nil && (sideID == s.match.definition.AttackerID || sideID == s.match.definition.DefenderID)
+}
+
+func (s *Service) rolesForOwner(ownerID string) (attackerID, defenderID string, ok bool) {
+	if s == nil || s.match == nil {
+		return "", "", false
+	}
+	switch ownerID {
+	case s.match.definition.DefenderID:
+		return s.match.definition.AttackerID, s.match.definition.DefenderID, true
+	case s.match.definition.AttackerID:
+		return s.match.definition.DefenderID, s.match.definition.AttackerID, true
+	default:
+		return "", "", false
+	}
+}
+
+func (s *Service) applyRoles(attackerID, defenderID string) {
+	if s.match.state.AttackerID != attackerID {
+		for id, team := range s.match.trustedParticipantTeams {
+			s.match.trustedParticipantTeams[id] = oppositeTeam(team)
+		}
+		for entityID, team := range s.match.participantTeams {
+			s.match.participantTeams[entityID] = oppositeTeam(team)
+		}
+	}
+	s.match.state.AttackerID = attackerID
+	s.match.state.DefenderID = defenderID
+}
+
+func oppositeTeam(team Team) Team {
+	switch team {
+	case TeamAttacker:
+		return TeamDefender
+	case TeamDefender:
+		return TeamAttacker
+	default:
+		return team
+	}
+}
+
+func (s *Service) bumpMatchRevision() {
+	if s == nil || s.match == nil {
+		return
+	}
+	s.match.state.Revision = nextRevision(s.match.state.Revision)
+}
+
+func nextRevision(current uint64) uint64 {
+	next := current + 1
+	if next == 0 {
+		return 1
+	}
+	return next
 }
 
 func validCastleOwnership(state CastleOwnershipState) bool {
