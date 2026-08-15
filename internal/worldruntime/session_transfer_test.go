@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -186,6 +187,52 @@ func TestTransferredOldFenceCannotLeaveNewOwner(t *testing.T) {
 	}
 	if current := rt.characterIdentities.ownershipByCharacter[oldFence.CharacterID]; current != newOwnership.fence {
 		t.Fatalf("stale old leave changed ownership=%#v want=%#v", current, newOwnership.fence)
+	}
+}
+
+func TestReplacementFenceAcceptsInputAfterTransfer(t *testing.T) {
+	rt, oldFence, oldSession := joinOwnedIdentitySession(t)
+	replacement := newTransferSession(t, 2, oldFence.EntityID, oldSession.CharacterIdentity)
+	result := awaitTransferResult(rt, oldFence, replacement)
+	waitForCommandDepthAtLeast(t, rt, 1)
+	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("transfer errors=%#v", report.CommandErrors)
+	}
+	newOwnership := <-result
+	if newOwnership.err != nil {
+		t.Fatal(newOwnership.err)
+	}
+	if err := rt.EnqueueFencedMove(newOwnership.fence, 1, protocol.ClientMoveInput{DirectionX: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("replacement move errors=%#v", report.CommandErrors)
+	}
+	if replacement.LastProcessedInputSequence() != 1 {
+		t.Fatalf("replacement input sequence=%d want=1", replacement.LastProcessedInputSequence())
+	}
+}
+
+func TestOwnershipTransferDoesNotEmitCharacterStateSaveIntent(t *testing.T) {
+	rt, oldFence, oldSession := joinOwnedIdentitySession(t)
+	outbox, err := characterstate.NewOutbox(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.characterStateOutbox = outbox
+	rt.characterStateWorld = characterStateTestWorld
+	replacement := newTransferSession(t, 2, oldFence.EntityID, oldSession.CharacterIdentity)
+	result := awaitTransferResult(rt, oldFence, replacement)
+	waitForCommandDepthAtLeast(t, rt, 1)
+	report := rt.Step(2, 50*time.Millisecond)
+	if len(report.CommandErrors) != 0 {
+		t.Fatalf("transfer errors=%#v", report.CommandErrors)
+	}
+	if got := <-result; got.err != nil {
+		t.Fatal(got.err)
+	}
+	if report.Metrics.CharacterStateSaveIntentsEnqueued != 0 || report.Metrics.CharacterStateSaveIntentFailures != 0 || outbox.Depth() != 0 {
+		t.Fatalf("transfer unexpectedly persisted state: metrics=%#v depth=%d", report.Metrics, outbox.Depth())
 	}
 }
 
