@@ -8,8 +8,8 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v8 擴充 Server -> Client Reliable SiegeMatchState，加入 round / winner / castle owner；realtime binary layout 不變。
-const Version uint16 = 8
+// v9: ASTU realtime 不再攜帶 bearer token；改為 public routing ID + 128-bit HMAC trailer，並做 C2S/S2C domain separation。
+const Version uint16 = 9
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -19,7 +19,7 @@ const (
 	MessageUnknown         MessageType = 0
 	MessageClientMoveInput MessageType = 1
 	MessageClientUseAction MessageType = 2
-	MessageSessionWelcome MessageType = 10
+	MessageSessionWelcome  MessageType = 10
 	MessageEntitySpawn        MessageType = 100
 	MessageEntityDespawn      MessageType = 101
 	MessageWorldSnapshot      MessageType = 102

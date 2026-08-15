@@ -11,7 +11,10 @@ import (
 	"github.com/li41/astrahold-server/internal/transport"
 )
 
-var ErrRealtimeAddressMismatch = errors.New("tcpudp: realtime endpoint IP mismatch")
+var (
+	ErrRealtimeAddressMismatch = errors.New("tcpudp: realtime endpoint IP mismatch")
+	ErrStaleRealtimeInput      = errors.New("tcpudp: stale realtime input sequence")
+)
 
 type clientConnection struct {
 	tcp     net.Conn
@@ -26,9 +29,10 @@ type clientConnection struct {
 	done             chan struct{}
 	closeOnce        sync.Once
 
-	remoteMu   sync.RWMutex
-	remote     *net.UDPAddr
-	bindNotify chan struct{}
+	remoteMu                  sync.RWMutex
+	remote                    *net.UDPAddr
+	lastRealtimeInputSequence uint32
+	bindNotify                chan struct{}
 }
 
 var _ session.ImmediateRealtimeConnection = (*clientConnection)(nil)
@@ -87,6 +91,34 @@ func (c *clientConnection) Close() error {
 	return nil
 }
 
+// bindFreshRealtime atomically applies the C2S anti-replay gate and same-IP NAT port rebind.
+// A stale/replayed authenticated datagram therefore cannot redirect S2C realtime traffic before
+// the world owner later rejects the same stale input sequence.
+func (c *clientConnection) bindFreshRealtime(addr *net.UDPAddr, sequence uint32) error {
+	if addr == nil {
+		return ErrRealtimeAddressMismatch
+	}
+	c.remoteMu.Lock()
+	defer c.remoteMu.Unlock()
+	if c.remote != nil && !c.remote.IP.Equal(addr.IP) {
+		return ErrRealtimeAddressMismatch
+	}
+	if sequence == 0 || sequence <= c.lastRealtimeInputSequence {
+		return ErrStaleRealtimeInput
+	}
+	copyAddr := *addr
+	copyAddr.IP = append(net.IP(nil), addr.IP...)
+	c.remote = &copyAddr
+	c.lastRealtimeInputSequence = sequence
+	select {
+	case c.bindNotify <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// bindRealtime remains a narrow transport helper for tests that do not model inbound sequence.
+// Production udpLoop uses bindFreshRealtime so endpoint mutation is replay-gated.
 func (c *clientConnection) bindRealtime(addr *net.UDPAddr) error {
 	if addr == nil {
 		return ErrRealtimeAddressMismatch
@@ -109,7 +141,7 @@ func (c *clientConnection) bindRealtime(addr *net.UDPAddr) error {
 func (c *clientConnection) realtimeAddr() *net.UDPAddr {
 	c.remoteMu.RLock()
 	defer c.remoteMu.RUnlock()
-	// bindRealtime 永遠建立新的 immutable address object，不會原地修改既有 c.remote。
+	// bindRealtime / bindFreshRealtime 永遠建立新的 immutable address object，不會原地修改既有 c.remote。
 	// 因此 writer 可在 lock 外安全持有這個 pointer，且不需要每 datagram 複製 IP slice。
 	return c.remote
 }

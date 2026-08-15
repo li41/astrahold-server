@@ -56,15 +56,15 @@ func TestMaxSnapshotChunkFitsDatagramGuard(t *testing.T) {
 		ServerTick: 1,
 		Message: protocol.WorldSnapshot{Tick: 1, ChunkIndex: 0, ChunkCount: 1, Entities: entities},
 	}
-	packet, err := tcpudp.EncodeDatagram(tcpudp.Token{}, envelope, Codec{})
+	packet, err := tcpudp.EncodeServerDatagram(tcpudp.Token{}, envelope, Codec{})
 	if err != nil {
-		t.Fatalf("EncodeDatagram: %v", err)
+		t.Fatalf("EncodeServerDatagram: %v", err)
 	}
 	if len(packet) > tcpudp.MaxDatagramSize {
 		t.Fatalf("snapshot datagram too large: %d > %d", len(packet), tcpudp.MaxDatagramSize)
 	}
-	if len(packet) != 1184 {
-		t.Fatalf("unexpected max snapshot datagram size: %d", len(packet))
+	if len(packet) != tcpudp.MaxDatagramSize {
+		t.Fatalf("unexpected v9 max snapshot datagram size: %d want=%d", len(packet), tcpudp.MaxDatagramSize)
 	}
 }
 

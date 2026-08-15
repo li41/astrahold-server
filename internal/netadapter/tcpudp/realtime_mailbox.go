@@ -143,7 +143,7 @@ func (m *realtimeMailbox) resetSnapshotSet() {
 
 func encodeRealtimeSlot(slot *realtimePacketSlot, token Token, envelope protocol.Envelope, codec transport.PayloadCodec) error {
 	started := time.Now()
-	packet, err := AppendEncodeDatagram(slot.data[:0], token, envelope, codec)
+	packet, err := AppendEncodeServerDatagram(slot.data[:0], token, envelope, codec)
 	if err != nil {
 		return err
 	}

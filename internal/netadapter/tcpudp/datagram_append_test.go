@@ -2,16 +2,14 @@ package tcpudp
 
 import (
 	"bytes"
-	"encoding/binary"
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/protocol"
-	"github.com/li41/astrahold-server/internal/transport"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestAppendEncodeDatagramMatchesLegacyWireLayout(t *testing.T) {
+func TestAppendEncodeServerDatagramMatchesAllocatedEncoding(t *testing.T) {
 	token := Token{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	envelope := protocol.Envelope{
 		Delivery:   protocol.DeliveryRealtimeSequenced,
@@ -29,36 +27,28 @@ func TestAppendEncodeDatagramMatchesLegacyWireLayout(t *testing.T) {
 	}
 	codec := gamev1.Codec{}
 
-	frame, err := transport.EncodeEnvelope(envelope, codec)
+	want, err := EncodeServerDatagram(token, envelope, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := make([]byte, DatagramHeaderSize+len(frame))
-	binary.BigEndian.PutUint32(legacy[0:4], DatagramMagic)
-	binary.BigEndian.PutUint16(legacy[4:6], protocol.Version)
-	binary.BigEndian.PutUint16(legacy[6:8], DatagramHeaderSize)
-	copy(legacy[8:24], token[:])
-	copy(legacy[24:], frame)
-
 	buffer := make([]byte, 0, MaxDatagramSize)
-	got, err := AppendEncodeDatagram(buffer, token, envelope, codec)
+	got, err := AppendEncodeServerDatagram(buffer, token, envelope, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, legacy) {
-		t.Fatalf("single-pass datagram differs from legacy wire\ngot=%x\nwant=%x", got, legacy)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("single-pass datagram differs\ngot=%x\nwant=%x", got, want)
 	}
-
-	decodedToken, decoded, err := DecodeDatagram(got, codec)
+	decoded, err := DecodeServerDatagram(token, got, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decodedToken != token || decoded.Sequence != envelope.Sequence || decoded.ServerTick != envelope.ServerTick {
-		t.Fatalf("decoded metadata token=%v envelope=%+v", decodedToken, decoded)
+	if decoded.Sequence != envelope.Sequence || decoded.ServerTick != envelope.ServerTick {
+		t.Fatalf("decoded metadata=%+v", decoded)
 	}
 }
 
-func TestAppendEncodeDatagramReusesProvidedBuffer(t *testing.T) {
+func TestAppendEncodeServerDatagramReusesProvidedBuffer(t *testing.T) {
 	token := Token{1}
 	envelope := protocol.Envelope{
 		Delivery:   protocol.DeliveryRealtimeSequenced,
@@ -75,7 +65,7 @@ func TestAppendEncodeDatagramReusesProvidedBuffer(t *testing.T) {
 	buffer := make([]byte, 0, MaxDatagramSize)
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		packet, err := AppendEncodeDatagram(buffer[:0], token, envelope, codec)
+		packet, err := AppendEncodeServerDatagram(buffer[:0], token, envelope, codec)
 		if err != nil {
 			panic(err)
 		}
@@ -84,6 +74,6 @@ func TestAppendEncodeDatagramReusesProvidedBuffer(t *testing.T) {
 		}
 	})
 	if allocs != 0 {
-		t.Fatalf("allocations per reusable encode=%f want=0", allocs)
+		t.Fatalf("allocations per reusable authenticated encode=%f want=0", allocs)
 	}
 }

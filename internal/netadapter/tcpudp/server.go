@@ -108,6 +108,7 @@ type peer struct {
 	sessionID session.ID
 	entityID  world.EntityID
 	token     Token
+	route     Token
 	conn      *clientConnection
 	ingress   *gateway.Ingress
 	ownership worldruntime.SessionOwnershipFence
@@ -129,6 +130,7 @@ type Server struct {
 
 	mu          sync.RWMutex
 	peers       map[Token]*peer
+	routes      map[Token]*peer
 	nextSession atomic.Uint64
 	nextEntity  atomic.Uint64
 	errors      chan NetworkError
@@ -177,6 +179,7 @@ func NewServer(config Config, runtime RuntimeSink, codec transport.PayloadCodec)
 		codec:              codec,
 		takeoverCandidates: newTakeoverCandidateGate(config.CharacterTakeoverCandidateTTL, config.CharacterTakeoverCooldown),
 		peers:              make(map[Token]*peer),
+		routes:             make(map[Token]*peer),
 		errors:             make(chan NetworkError, 256),
 	}
 }
@@ -417,9 +420,11 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		_ = raw.Close()
 		return
 	}
-	p := &peer{sessionID: sid, entityID: entityID, token: token, conn: connection, ingress: s.ingress}
+	route := token.RoutingID()
+	p := &peer{sessionID: sid, entityID: entityID, token: token, route: route, conn: connection, ingress: s.ingress}
 	s.mu.Lock()
 	s.peers[token] = p
+	s.routes[route] = p
 	s.mu.Unlock()
 
 	var ownership worldruntime.SessionOwnershipFence
@@ -560,23 +565,32 @@ func (s *Server) udpLoop(ctx context.Context) {
 				return
 			}
 		}
-		token, envelope, err := DecodeDatagram(buffer[:n], s.codec)
+		route, err := ParseDatagramRoute(buffer[:n])
 		if err != nil {
-			s.emit(0, "udp_decode", err)
+			s.emit(0, "udp_header", err)
 			continue
 		}
 		s.mu.RLock()
-		p := s.peers[token]
+		p := s.routes[route]
 		s.mu.RUnlock()
 		if p == nil || !p.ready.Load() {
+			continue
+		}
+		envelope, err := DecodeClientDatagram(p.token, buffer[:n], s.codec)
+		if err != nil {
+			s.emit(p.sessionID, "udp_authenticate", err)
 			continue
 		}
 		if envelope.Delivery != protocol.DeliveryRealtimeSequenced {
 			s.emit(p.sessionID, "udp_channel", ErrUDPChannelMismatch)
 			continue
 		}
-		if err := p.conn.bindRealtime(addr); err != nil {
-			s.emit(p.sessionID, "udp_bind", err)
+		if err := p.conn.bindFreshRealtime(addr, envelope.Sequence); err != nil {
+			operation := "udp_bind"
+			if errors.Is(err, ErrStaleRealtimeInput) {
+				operation = "udp_sequence"
+			}
+			s.emit(p.sessionID, operation, err)
 			continue
 		}
 		if err := p.ingress.Handle(p.sessionID, envelope); err != nil {
@@ -595,6 +609,9 @@ func (s *Server) closePeer(p *peer, operation string, cause error) {
 		s.mu.Lock()
 		if current := s.peers[p.token]; current == p {
 			delete(s.peers, p.token)
+		}
+		if current := s.routes[p.route]; current == p {
+			delete(s.routes, p.route)
 		}
 		s.mu.Unlock()
 		_ = p.conn.Close()
