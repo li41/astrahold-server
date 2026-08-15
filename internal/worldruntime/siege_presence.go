@@ -13,6 +13,7 @@ func (r *Runtime) updateSiegeObjectives(sessions []*session.Session, delta time.
 	if r == nil || r.siege == nil {
 		return
 	}
+	r.siegeStepDelta = delta
 	state, ok := r.siege.MatchState()
 	if !ok {
 		return

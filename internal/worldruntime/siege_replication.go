@@ -17,10 +17,12 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions 
 	}
 	state, ok := r.siege.MatchState()
 	if !ok {
+		r.resetSiegeCompletionScheduling()
 		return
 	}
 
 	active := make(map[session.ID]struct{}, len(sessions))
+	pendingDeliveries := 0
 	for _, s := range sessions {
 		active[s.ID] = struct{}{}
 		team := protocol.SiegeTeamUnknown
@@ -50,6 +52,7 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions 
 			Message:    message,
 		}
 		if err := s.Connection().TrySend(envelope); err != nil {
+			pendingDeliveries++
 			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: message.Type(), Err: err})
 			continue
 		}
@@ -61,6 +64,11 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions 
 			delete(r.sessionSiegeState, id)
 		}
 	}
+
+	// D.3D consumes the delivery result from this same per-session pass. There is no second
+	// hot-loop session scan and no claim of Client acknowledgement: a current stamp only means
+	// the Reliable TrySend accepted this authoritative revision into that session's outbound path.
+	r.observeSiegeCompletionScheduling(state, len(sessions), pendingDeliveries, report)
 }
 
 func protocolSiegeTeam(team siege.Team) protocol.SiegeTeam {
