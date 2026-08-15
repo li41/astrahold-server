@@ -35,6 +35,10 @@ func (r *Runtime) EnqueueSetBlocker(id string, enabled bool) error {
 }
 
 func (r *Runtime) applySetBlocker(name string, command setBlockerCommand, report *StepReport) {
+	if command.startNextSiegeRound {
+		r.applyStartNextSiegeRound(name, report)
+		return
+	}
 	if r.dynamic == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: ErrDynamicWorldUnavailable})
 		return

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -40,6 +41,10 @@ func TestDurableThroneResolutionRetriesWithoutPublishingMatch(t *testing.T) {
 	if err := svc.ConfigureCastleOwnershipPersistence(restored, committer); err != nil {
 		t.Fatal(err)
 	}
+	initial, _ := svc.MatchState()
+	if initial.Round != 7 || initial.AttackerID != "attackers" || initial.DefenderID != "defenders" {
+		t.Fatalf("restored round=%+v", initial)
+	}
 	if err := svc.AssignParticipant(101, TeamAttacker); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +66,7 @@ func TestDurableThroneResolutionRetriesWithoutPublishingMatch(t *testing.T) {
 	match, _ := svc.MatchState()
 	ownership, _ := svc.CastleOwnershipState()
 	capture, _ := svc.ThroneCaptureState()
-	if match.Phase != MatchPhaseThrone || match.Revision != 2 || match.WinnerTeam != TeamUnknown || match.WinnerID != "" {
+	if match.Phase != MatchPhaseThrone || match.Revision != 2 || match.WinnerTeam != TeamUnknown || match.WinnerID != "" || match.Round != 7 {
 		t.Fatalf("failed commit published match=%+v", match)
 	}
 	if ownership != restored {
@@ -77,7 +82,7 @@ func TestDurableThroneResolutionRetriesWithoutPublishingMatch(t *testing.T) {
 	}
 	match, _ = svc.MatchState()
 	ownership, _ = svc.CastleOwnershipState()
-	if match.Phase != MatchPhaseCompleted || match.Revision != 3 || match.WinnerTeam != TeamAttacker || match.WinnerID != "attackers" {
+	if match.Phase != MatchPhaseCompleted || match.Revision != 3 || match.WinnerTeam != TeamAttacker || match.WinnerID != "attackers" || match.Round != 7 {
 		t.Fatalf("resolved match=%+v", match)
 	}
 	if ownership.Revision != 8 || ownership.OwnerID != "attackers" || ownership.PreviousOwnerID != "defenders" || ownership.LastTransferMatchID != "m1" {
@@ -88,37 +93,40 @@ func TestDurableThroneResolutionRetriesWithoutPublishingMatch(t *testing.T) {
 	}
 }
 
-func TestRestoredAttackerOwnershipCompletesWithoutRedundantTransfer(t *testing.T) {
-	throne := ThroneObjectiveDefinition{
-		ID:              "throne",
-		Zone:            ObjectiveZone{Layer: 0, Bounds: gameplayworld.BoundsXZ{MinX: -2, MaxX: 2, MinZ: 4, MaxZ: 8}},
-		CaptureDuration: time.Millisecond,
-	}
+func TestRestoredOwnerDefinesFreshRoundDefenderAndTrustedRoles(t *testing.T) {
+	attackerIdentity, _ := characteridentity.NewTrusted("character.attackers-side")
+	defenderIdentity, _ := characteridentity.NewTrusted("character.defenders-side")
 	svc := NewService([]gameplayworld.Gate{{ID: "main-gate", BlockerID: "main-gate", MaxHP: 1000}})
-	if err := svc.ConfigureMatch(MatchDefinition{ID: "m2", AttackerID: "attackers", DefenderID: "defenders", BreachGateID: "main-gate", ThroneObjectiveID: "throne", Throne: &throne}); err != nil {
-		t.Fatal(err)
-	}
-	restored := CastleOwnershipState{Revision: 9, OwnerID: "attackers", PreviousOwnerID: "defenders", LastTransferMatchID: "m1"}
-	calls := 0
-	if err := svc.ConfigureCastleOwnershipPersistence(restored, func(CastleOwnershipTransfer) (CastleOwnershipState, error) {
-		calls++
-		return CastleOwnershipState{}, errors.New("must not commit no-op ownership")
+	if err := svc.ConfigureMatch(MatchDefinition{
+		ID: "m2", AttackerID: "attackers", DefenderID: "defenders", BreachGateID: "main-gate", ThroneObjectiveID: "throne",
+		ParticipantTeams: map[characteridentity.ID]Team{
+			attackerIdentity.ID: TeamAttacker,
+			defenderIdentity.ID: TeamDefender,
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.AssignParticipant(1, TeamAttacker); err != nil {
+	restored := CastleOwnershipState{Revision: 9, OwnerID: "attackers", PreviousOwnerID: "defenders", LastTransferMatchID: "m1"}
+	if err := svc.ConfigureCastleOwnershipPersistence(restored, func(CastleOwnershipTransfer) (CastleOwnershipState, error) {
+		return CastleOwnershipState{}, errors.New("not used during startup role alignment")
+	}); err != nil {
 		t.Fatal(err)
 	}
-	svc.ObserveGateState(GateState{ID: "main-gate", Destroyed: true})
-	svc.ObserveThronePresence([]ParticipantPresence{{EntityID: 1, Position: world.Position{Z: 6, Layer: 0}}})
-	svc.AdvanceThroneCapture(time.Millisecond)
-	resolved, err := svc.ResolveThroneCaptureWithError()
-	if err != nil || !resolved {
-		t.Fatalf("resolved=%v err=%v", resolved, err)
+	match, _ := svc.MatchState()
+	if match.Round != 9 || match.Phase != MatchPhaseGate || match.DefenderID != "attackers" || match.AttackerID != "defenders" {
+		t.Fatalf("restored match=%+v", match)
 	}
-	ownership, _ := svc.CastleOwnershipState()
-	if ownership != restored || calls != 0 {
-		t.Fatalf("ownership=%+v calls=%d", ownership, calls)
+	if assigned, err := svc.AssignResolvedParticipant(1, attackerIdentity); err != nil || !assigned {
+		t.Fatalf("assign attackers-side assigned=%v err=%v", assigned, err)
+	}
+	if team, _ := svc.ParticipantTeam(1); team != TeamDefender {
+		t.Fatalf("restored owner side team=%v", team)
+	}
+	if assigned, err := svc.AssignResolvedParticipant(2, defenderIdentity); err != nil || !assigned {
+		t.Fatalf("assign defenders-side assigned=%v err=%v", assigned, err)
+	}
+	if team, _ := svc.ParticipantTeam(2); team != TeamAttacker {
+		t.Fatalf("other side team=%v", team)
 	}
 }
 

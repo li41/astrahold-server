@@ -14,15 +14,18 @@ var ErrCommandQueueFull = errors.New("worldruntime: command queue full")
 type command interface{ name() string }
 
 type registerSessionCommand struct{ session *session.Session }
+
 func (registerSessionCommand) name() string { return "register_session" }
 
 type unregisterSessionCommand struct{ id session.ID }
+
 func (unregisterSessionCommand) name() string { return "unregister_session" }
 
 type characterAdmissionCommand struct {
 	identity   characterAdmissionOperation
 	completion chan error
 }
+
 func (c characterAdmissionCommand) name() string {
 	if c.identity.release {
 		return "release_character_admission"
@@ -37,6 +40,7 @@ type joinCommand struct {
 	request    JoinRequest
 	completion chan error
 }
+
 func (joinCommand) name() string { return "join_world" }
 
 type ownershipLookupCommand struct {
@@ -44,18 +48,21 @@ type ownershipLookupCommand struct {
 	result     *SessionOwnershipFence
 	completion chan error
 }
+
 func (ownershipLookupCommand) name() string { return "lookup_character_ownership" }
 
 type ownershipTransferCommand struct {
 	request    OwnershipTransferRequest
 	completion chan error
 }
+
 func (ownershipTransferCommand) name() string { return "transfer_character_ownership" }
 
 type leaveCommand struct {
 	id        session.ID
 	ownership SessionOwnershipFence
 }
+
 func (leaveCommand) name() string { return "leave_world" }
 
 type moveInputCommand struct {
@@ -64,15 +71,18 @@ type moveInputCommand struct {
 	input     protocol.ClientMoveInput
 	ownership SessionOwnershipFence
 }
+
 func (moveInputCommand) name() string { return "move_input" }
 
 type teleportCommand struct {
 	entityID world.EntityID
 	position world.Position
 }
+
 func (teleportCommand) name() string { return "teleport_entity" }
 
 type teleportBatchCommand struct{ requests []TeleportRequest }
+
 func (teleportBatchCommand) name() string { return "teleport_batch" }
 
 type useActionCommand struct {
@@ -81,13 +91,25 @@ type useActionCommand struct {
 	action    protocol.ClientUseAction
 	ownership SessionOwnershipFence
 }
+
 func (useActionCommand) name() string { return "use_action" }
 
+// setBlockerCommand remains the existing Step dispatch carrier for DynamicWorld mutations.
+// D.3C uses the explicit discriminator below for the Server-only round-reset control command
+// so the mutation still crosses the bounded world-owner queue instead of touching World state
+// from a scheduler/management goroutine.
 type setBlockerCommand struct {
-	id      string
-	enabled bool
+	id                  string
+	enabled             bool
+	startNextSiegeRound bool
 }
-func (setBlockerCommand) name() string { return "set_blocker" }
+
+func (c setBlockerCommand) name() string {
+	if c.startNextSiegeRound {
+		return "start_next_siege_round"
+	}
+	return "set_blocker"
+}
 
 type commandQueue struct{ ch chan command }
 
