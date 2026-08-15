@@ -15,6 +15,7 @@ type JoinRequest struct {
 	MaxStepHeight  float32
 	Restore        *CharacterRestore
 	AdmissionLease *CharacterAdmissionLease
+	OwnershipFence *SessionOwnershipFence
 }
 
 func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *StepReport) {
@@ -52,6 +53,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
 		return
 	}
+	r.characterIdentities.removeOwnershipBySession(s.ID)
 	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
@@ -72,6 +74,11 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	if err := r.characterIdentities.validateSession(request.Session); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+		return
+	}
+	ownership, err := r.characterIdentities.prepareOwnership(request.Session)
+	if err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
@@ -106,7 +113,6 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
-	var err error
 	if restoredState != nil {
 		err = r.characters.RegisterState(*restoredState)
 	} else {
@@ -140,22 +146,33 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	if request.AdmissionLease != nil {
 		r.characterIdentities.consumeAdmission(*request.AdmissionLease)
 	}
+	r.characterIdentities.activateOwnership(ownership)
+	if request.OwnershipFence != nil {
+		*request.OwnershipFence = ownership
+	}
 	r.markCharacterStateAutosaveBaseline(request.Entity.ID, report.Tick)
 	r.replication.Register(request.Session.ID)
 }
 
-func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
-	s, err := r.sessions.Remove(id)
+func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
+	if c.ownership.Valid() {
+		if err := r.characterIdentities.validateOwnership(c.id, c.ownership); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
+			return
+		}
+	}
+	s, err := r.sessions.Remove(c.id)
 	if err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: id, Err: err})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.id, Err: err})
 		return
 	}
 	// Capture authoritative trusted-character state before any leave cleanup mutates or
 	// removes character/world truth. Persistence itself runs outside the world owner.
-	r.enqueueCharacterStateSave(id, s.EntityID, report)
+	r.enqueueCharacterStateSave(c.id, s.EntityID, report)
+	r.characterIdentities.removeOwnershipBySession(s.ID)
 	r.forgetCharacterStateAutosave(s.EntityID)
-	r.replication.Remove(id)
-	r.removeSessionVitals(id)
+	r.replication.Remove(c.id)
+	r.removeSessionVitals(c.id)
 	r.removeEntityVitals(s.EntityID)
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
@@ -169,6 +186,12 @@ func (r *Runtime) applyLeave(name string, id session.ID, report *StepReport) {
 }
 
 func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport) {
+	if c.ownership.Valid() {
+		if err := r.characterIdentities.validateOwnership(c.sessionID, c.ownership); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
+			return
+		}
+	}
 	s, ok := r.sessions.Get(c.sessionID)
 	if !ok {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: session.ErrSessionNotFound})

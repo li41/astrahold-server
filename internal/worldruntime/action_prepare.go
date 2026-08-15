@@ -8,6 +8,12 @@ import (
 )
 
 func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uint64, delta time.Duration, report *StepReport) {
+	if command.ownership.Valid() {
+		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+			return
+		}
+	}
 	if r.combat == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrCombatUnavailable})
 		return

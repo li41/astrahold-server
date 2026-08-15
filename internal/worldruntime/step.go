@@ -45,7 +45,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			}
 			completeWorldOwnerCommand(c.completion, joinErr)
 		case leaveCommand:
-			r.applyLeave(cmd.name(), c.id, &report)
+			r.applyLeave(cmd.name(), c, &report)
 		case moveInputCommand:
 			r.applyMove(cmd.name(), c, &report)
 		case teleportCommand:
