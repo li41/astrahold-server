@@ -30,6 +30,13 @@ func (c characterAdmissionCommand) name() string {
 	return "admit_character"
 }
 
+type characterConnectionPlanCommand struct {
+	identity   characteridentity.Binding
+	result     *CharacterConnectionPlan
+	completion chan error
+}
+func (characterConnectionPlanCommand) name() string { return "plan_character_connection" }
+
 type joinCommand struct {
 	request    JoinRequest
 	completion chan error
