@@ -15,7 +15,6 @@ import (
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/transport"
 	"github.com/li41/astrahold-server/internal/world"
-	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
 func TestTrustedCharacterConnectionAuthenticatorConsumesPrefaceAndBypassesLegacyIdentityFactory(t *testing.T) {
@@ -359,5 +358,3 @@ func TestSuccessfulAuthenticationResetsTransportDeadlineBeforeGameBootstrap(t *t
 		t.Fatalf("post-auth GameV1 bootstrap inherited expired authentication deadline: %v", err)
 	}
 }
-
-var _ = worldruntime.SessionOwnershipFence{}
