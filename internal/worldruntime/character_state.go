@@ -90,9 +90,13 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 }
 
 // markCharacterStateAutosaveBaseline starts the interval at join/register time so a newly
-// admitted character is not immediately swept just because the process tick is already high.
+// admitted trusted character is not immediately swept just because process tick is high.
 func (r *Runtime) markCharacterStateAutosaveBaseline(entityID world.EntityID, tick uint64) {
 	if r.config.CharacterStateAutosaveEveryTicks == 0 {
+		return
+	}
+	binding, ok := r.characterIdentities.binding(entityID)
+	if !ok || binding.Assurance != characteridentity.AssuranceTrusted {
 		return
 	}
 	r.characterStateAutosaveLastTick[entityID] = tick
@@ -145,7 +149,7 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 		}
 		if attempts >= budget {
 			if report != nil {
-				report.Metrics.CharacterStateAutosaveDeferred++
+				report.Metrics.CharacterStateAutosaveBudgetExhausted = true
 			}
 			r.characterStateAutosaveCursor = index
 			return
