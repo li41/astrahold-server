@@ -115,10 +115,12 @@ func TestConcurrentTrustedCandidatesStillCommitAtMostOneJoin(t *testing.T) {
 		t.Fatalf("admission B=%v", err)
 	}
 
+	requestA := identityJoinRequest(t, 1, 1, identity)
+	requestB := identityJoinRequest(t, 2, 2, identity)
 	resultA := make(chan error, 1)
 	resultB := make(chan error, 1)
-	go func() { resultA <- rt.AwaitJoin(context.Background(), identityJoinRequest(t, 1, 1, identity)) }()
-	go func() { resultB <- rt.AwaitJoin(context.Background(), identityJoinRequest(t, 2, 2, identity)) }()
+	go func() { resultA <- rt.AwaitJoin(context.Background(), requestA) }()
+	go func() { resultB <- rt.AwaitJoin(context.Background(), requestB) }()
 	waitForCommandDepthAtLeast(t, rt, 2)
 	report := rt.Step(2, 50*time.Millisecond)
 	errA := <-resultA
