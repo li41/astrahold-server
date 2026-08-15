@@ -103,6 +103,9 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if measure {
 		report.Metrics.DynamicReplicationDuration = time.Since(stageStart)
 	}
+	// Siege match state has its own Reliable delivery stamp. It is intentionally separate
+	// from WorldDynamicState so phase/team truth cannot be inferred from visual blocker state.
+	r.replicateSiegeState(tick, &report)
 
 	snapshotRan := false
 	initialBootstrapHadLifecycle := false

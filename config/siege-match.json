@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "revision": "s4d1b-001",
+  "match_id": "castle-sandbox-siege",
+  "attacker_id": "attackers",
+  "defender_id": "defenders",
+  "breach_gate_id": "main-gate",
+  "throne_objective_id": "throne"
+}

@@ -8,8 +8,8 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v6 新增 entity target 與 Reliable EntityVitalsState。
-const Version uint16 = 6
+// v7 新增 Server -> Client Reliable SiegeMatchState；realtime binary layout 不變。
+const Version uint16 = 7
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -26,6 +26,7 @@ const (
 	MessagePositionCorrection MessageType = 103
 	MessageWorldDynamicState  MessageType = 104
 	MessageEntityVitalsState  MessageType = 105
+	MessageSiegeMatchState    MessageType = 106
 )
 
 type Delivery uint8
@@ -70,3 +71,33 @@ func (WorldDynamicState) Type() MessageType { return MessageWorldDynamicState }
 // EntityVitalsState 是單一角色完整、可重送的 Reliable vitals snapshot。
 type EntityVitalsState struct { EntityID world.EntityID; HP uint32; MaxHP uint32; Defeated bool }
 func (EntityVitalsState) Type() MessageType { return MessageEntityVitalsState }
+
+type SiegeTeam string
+const (
+	SiegeTeamUnknown SiegeTeam = "unknown"
+	SiegeTeamAttacker SiegeTeam = "attacker"
+	SiegeTeamDefender SiegeTeam = "defender"
+)
+
+type SiegePhase string
+const (
+	SiegePhaseUnknown SiegePhase = "unknown"
+	SiegePhaseGate SiegePhase = "gate"
+	SiegePhaseThrone SiegePhase = "throne"
+	SiegePhaseCompleted SiegePhase = "completed"
+)
+
+// SiegeMatchState 是每個 Session 可重送的 Server-authoritative Siege view。
+// YourTeam 只描述該 recipient 的 Server-owned team assignment；Client 不可自行推導或改寫 phase。
+type SiegeMatchState struct {
+	Revision uint64
+	MatchID string
+	AttackerID string
+	DefenderID string
+	YourTeam SiegeTeam
+	Phase SiegePhase
+	BreachGateID string
+	ThroneObjectiveID string
+	GateBreached bool
+}
+func (SiegeMatchState) Type() MessageType { return MessageSiegeMatchState }
