@@ -28,15 +28,15 @@ func TestSaveJournalAppendReopenRoundTripsAliveAndDefeated(t *testing.T) {
 		CheckpointID: "checkpoint-west",
 	}
 	defeated := SaveIntent{IntentID: 12, Identity: trusted(t, "character:journal-defeated"), Snapshot: defeatedSnapshot}
-	first, err := journal.Append(alive)
+	first, err := journal.Append(alive, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := journal.Append(defeated)
+	second, err := journal.Append(defeated, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.RecordID != 1 || second.RecordID != 2 || second.EndOffset <= first.EndOffset {
+	if first.RecordID != 1 || first.ExpectedRevision != 3 || second.RecordID != 2 || second.ExpectedRevision != 8 || second.EndOffset <= first.EndOffset {
 		t.Fatalf("first=%#v second=%#v", first, second)
 	}
 	if err := journal.Close(); err != nil {
@@ -55,7 +55,7 @@ func TestSaveJournalAppendReopenRoundTripsAliveAndDefeated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 2 || records[0].Intent != alive || records[1].Intent != defeated {
+	if len(records) != 2 || records[0].Intent != alive || records[0].ExpectedRevision != 3 || records[1].Intent != defeated || records[1].ExpectedRevision != 8 {
 		t.Fatalf("records=%#v", records)
 	}
 }
@@ -68,13 +68,13 @@ func TestSaveJournalCheckpointReopenResumesAfterDurableRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:first"), Snapshot: testSnapshot()})
+	first, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:first"), Snapshot: testSnapshot()}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondSnapshot := testSnapshot()
 	secondSnapshot.HP = 700
-	second, err := journal.Append(SaveIntent{IntentID: 2, Identity: trusted(t, "character:second"), Snapshot: secondSnapshot})
+	second, err := journal.Append(SaveIntent{IntentID: 2, Identity: trusted(t, "character:second"), Snapshot: secondSnapshot}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestSaveJournalCheckpointReopenResumesAfterDurableRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].RecordID != second.RecordID || records[0].Intent != second.Intent {
+	if len(records) != 1 || records[0].RecordID != second.RecordID || records[0].Intent != second.Intent || records[0].ExpectedRevision != 0 {
 		t.Fatalf("records=%#v", records)
 	}
 }
@@ -121,7 +121,7 @@ func TestSaveJournalRepairsOnlyIncompleteTrailingFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:torn"), Snapshot: testSnapshot()}); err != nil {
+	if _, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:torn"), Snapshot: testSnapshot()}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := journal.Close(); err != nil {
@@ -155,7 +155,7 @@ func TestSaveJournalCRCcorruptionFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:crc"), Snapshot: testSnapshot()}); err != nil {
+	if _, err := journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:crc"), Snapshot: testSnapshot()}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := journal.Close(); err != nil {
