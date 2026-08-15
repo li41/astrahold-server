@@ -1,0 +1,18 @@
+{
+  "schema_version": 3,
+  "revision": "s4e1-001",
+  "match_id": "castle-sandbox-siege",
+  "attacker_id": "attackers",
+  "defender_id": "defenders",
+  "breach_gate_id": "main-gate",
+  "throne_objective_id": "throne",
+  "throne_zone": {
+    "layer": 0,
+    "bounds": { "min_x": -4, "max_x": 4, "min_z": 27, "max_z": 33 }
+  },
+  "throne_capture_seconds": 1,
+  "participants": [
+    { "character_id": "e2e-attacker", "team": "attacker" },
+    { "character_id": "e2e-defender", "team": "defender" }
+  ]
+}
