@@ -80,6 +80,18 @@ func (r *Runtime) AwaitJoin(ctx context.Context, request JoinRequest) error {
 	return <-completion
 }
 
+// AwaitJoinOwned is the trusted transport seam added by S3-F.18. It uses the same join
+// transaction and completion ordering as AwaitJoin but also returns the active ownership
+// fence minted by the world owner. Ephemeral joins return a zero fence.
+func (r *Runtime) AwaitJoinOwned(ctx context.Context, request JoinRequest) (SessionOwnershipFence, error) {
+	ownership := SessionOwnershipFence{}
+	request.OwnershipFence = &ownership
+	if err := r.AwaitJoin(ctx, request); err != nil {
+		return SessionOwnershipFence{}, err
+	}
+	return ownership, nil
+}
+
 func completeWorldOwnerCommand(completion chan error, err error) {
 	if completion == nil {
 		return
