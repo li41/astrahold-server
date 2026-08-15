@@ -240,7 +240,7 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 
 // recordUDPFailureUnlessStopping 給 TCP shutdown 一個極短 bounded correlation window。
 // Server 關閉共享 UDP socket與 peer TCP connection 時，Linux loopback 可能先回報 UDP ECONNREFUSED，
-// TCP EOF 才隨後抵達並 cancel botCtx。若 TCP 在 window 內同步結束，該 UDP error 屬正常 shutdown；
+// TCP EOF 才隨後抵達並 cancel botCtx。若 TCP 在 window 內同步結束，該 UDP error屬正常 shutdown；
 // 若 TCP 仍存活，仍照常記為真實 network error。send / receive 兩側都使用同一判定。
 func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollector) {
 	if botCtx == nil || collector == nil || botCtx.Err() != nil {
@@ -269,7 +269,7 @@ func sendMove(udp *net.UDPConn, token tcpudp.Token, codec transport.PayloadCodec
 		Sequence: sequence,
 		Message:  protocol.ClientMoveInput{DirectionX: dx, DirectionZ: dz},
 	}
-	packet, err := tcpudp.EncodeDatagram(token, envelope, codec)
+	packet, err := tcpudp.EncodeClientDatagram(token, envelope, codec)
 	if err != nil {
 		return err
 	}
@@ -309,8 +309,8 @@ func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Tok
 			return
 		}
 		collector.udpReceived.Add(uint64(n))
-		token, envelope, err := tcpudp.DecodeDatagram(buffer[:n], codec)
-		if err != nil || token != expectedToken {
+		envelope, err := tcpudp.DecodeServerDatagram(expectedToken, buffer[:n], codec)
+		if err != nil {
 			collector.decodeErrors.Add(1)
 			continue
 		}

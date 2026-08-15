@@ -167,7 +167,7 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	}
 	defer udpConn.Close()
 	moveEnvelope := protocol.Envelope{Delivery: protocol.DeliveryRealtimeSequenced, Sequence: 3, Message: protocol.ClientMoveInput{DirectionX: 1}}
-	packet, err := EncodeDatagram(token, moveEnvelope, codec)
+	packet, err := EncodeClientDatagram(token, moveEnvelope, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +195,11 @@ func TestTCPUDPHandshakeAndRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotToken, got, err := DecodeDatagram(buffer[:n], codec)
+	got, err := DecodeServerDatagram(token, buffer[:n], codec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotToken != token || got.Sequence != 4 || got.ServerTick != 10 {
+	if got.Sequence != 4 || got.ServerTick != 10 {
 		t.Fatal("realtime route mismatch")
 	}
 	if _, ok := got.Message.(protocol.PositionCorrection); !ok {
