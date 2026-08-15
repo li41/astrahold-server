@@ -20,6 +20,11 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions 
 		r.resetSiegeCompletionScheduling()
 		return
 	}
+	ownership, ok := r.siege.CastleOwnershipState()
+	if !ok {
+		r.resetSiegeCompletionScheduling()
+		return
+	}
 
 	active := make(map[session.ID]struct{}, len(sessions))
 	pendingDeliveries := 0
@@ -36,6 +41,7 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions 
 
 		message := protocol.SiegeMatchState{
 			Revision:          state.Revision,
+			Round:             state.Round,
 			MatchID:           state.MatchID,
 			AttackerID:        state.AttackerID,
 			DefenderID:        state.DefenderID,
@@ -44,6 +50,9 @@ func (r *Runtime) replicateSiegeState(tick uint64, report *StepReport, sessions 
 			BreachGateID:      state.BreachGateID,
 			ThroneObjectiveID: state.ThroneObjectiveID,
 			GateBreached:      state.GateBreached,
+			WinnerTeam:        protocolSiegeTeam(state.WinnerTeam),
+			WinnerID:          state.WinnerID,
+			CastleOwnerID:     ownership.OwnerID,
 		}
 		envelope := protocol.Envelope{
 			Delivery:   protocol.DeliveryReliableOrdered,
