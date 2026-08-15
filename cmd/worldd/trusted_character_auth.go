@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	trustedCharacterAuthSchemaVersion   uint16 = 1
-	trustedCharacterAuthMagic                  = "ASTRAH1\x00"
-	trustedCharacterAuthHeaderBytes            = len(trustedCharacterAuthMagic) + 2
-	trustedCharacterAuthMaxCredentialBytes     = 256
+	trustedCharacterAuthSchemaVersion      uint16 = 1
+	trustedCharacterAuthMagic                     = "ASTRAH1\x00"
+	trustedCharacterAuthHeaderBytes               = len(trustedCharacterAuthMagic) + 2
+	trustedCharacterAuthMaxCredentialBytes        = 256
 )
 
 var trustedCharacterAuthFile = flag.String(
@@ -32,10 +32,11 @@ var trustedCharacterAuthFile = flag.String(
 )
 
 var (
-	errTrustedCharacterAuthConfig          = errors.New("worldd: invalid trusted character auth config")
+	errTrustedCharacterAuthConfig           = errors.New("worldd: invalid trusted character auth config")
 	errTrustedCharacterAuthRequiresLoopback = errors.New("worldd: trusted character auth requires loopback TCP listen address")
-	errTrustedCharacterAuthPreface         = errors.New("worldd: invalid trusted character auth preface")
-	errTrustedCharacterAuthCredential      = errors.New("worldd: trusted character credential rejected")
+	errTrustedCharacterAuthPreface          = errors.New("worldd: invalid trusted character auth preface")
+	errTrustedCharacterAuthCredential       = errors.New("worldd: trusted character credential rejected")
+	errTrustedCharacterTakeoverScope        = errors.New("worldd: trusted character takeover credential scope mismatch")
 )
 
 type trustedCharacterAuthDefinition struct {
@@ -45,13 +46,19 @@ type trustedCharacterAuthDefinition struct {
 }
 
 type trustedCharacterAuthCredential struct {
-	TokenSHA256 string `json:"token_sha256"`
-	CharacterID string `json:"character_id"`
+	TokenSHA256         string `json:"token_sha256"`
+	CharacterID         string `json:"character_id"`
+	AllowActiveTakeover bool   `json:"allow_active_takeover,omitempty"`
+}
+
+type trustedCharacterCredentialGrant struct {
+	Identity            characteridentity.Binding
+	AllowActiveTakeover bool
 }
 
 type trustedCharacterAuthenticator struct {
 	revision    string
-	credentials map[[sha256.Size]byte]characteridentity.Binding
+	credentials map[[sha256.Size]byte]trustedCharacterCredentialGrant
 }
 
 func loadTrustedCharacterAuthenticator(path, tcpAddress string) (tcpudp.TrustedCharacterConnectionAuthenticator, string, error) {
@@ -89,7 +96,7 @@ func newTrustedCharacterAuthenticator(definition trustedCharacterAuthDefinition)
 	if definition.SchemaVersion != trustedCharacterAuthSchemaVersion || strings.TrimSpace(definition.Revision) == "" || len(definition.Credentials) == 0 {
 		return nil, errTrustedCharacterAuthConfig
 	}
-	credentials := make(map[[sha256.Size]byte]characteridentity.Binding, len(definition.Credentials))
+	credentials := make(map[[sha256.Size]byte]trustedCharacterCredentialGrant, len(definition.Credentials))
 	for index, item := range definition.Credentials {
 		if len(item.TokenSHA256) != sha256.Size*2 || strings.ToLower(item.TokenSHA256) != item.TokenSHA256 {
 			return nil, fmt.Errorf("%w: credential[%d] token_sha256 must be 64 lowercase hex characters", errTrustedCharacterAuthConfig, index)
@@ -107,7 +114,10 @@ func newTrustedCharacterAuthenticator(definition trustedCharacterAuthDefinition)
 		if err != nil {
 			return nil, fmt.Errorf("%w: credential[%d] character_id: %v", errTrustedCharacterAuthConfig, index, err)
 		}
-		credentials[digest] = binding
+		credentials[digest] = trustedCharacterCredentialGrant{
+			Identity:            binding,
+			AllowActiveTakeover: item.AllowActiveTakeover,
+		}
 	}
 	return &trustedCharacterAuthenticator{revision: definition.Revision, credentials: credentials}, nil
 }
@@ -145,9 +155,19 @@ func (a *trustedCharacterAuthenticator) Authenticate(_ context.Context, request 
 		return tcpudp.TrustedCharacterConnectionAuthentication{}, fmt.Errorf("%w: credential: %v", errTrustedCharacterAuthPreface, err)
 	}
 	digest := sha256.Sum256(credential)
-	identity, ok := a.credentials[digest]
+	grant, ok := a.credentials[digest]
 	if !ok {
 		return tcpudp.TrustedCharacterConnectionAuthentication{}, errTrustedCharacterAuthCredential
 	}
-	return tcpudp.TrustedCharacterConnectionAuthentication{Identity: identity}, nil
+	result := tcpudp.TrustedCharacterConnectionAuthentication{Identity: grant.Identity}
+	if grant.AllowActiveTakeover {
+		characterID := grant.Identity.ID
+		result.TakeoverAuthorizer = func(_ context.Context, takeover tcpudp.CharacterTakeoverRequest) error {
+			if !takeover.Valid() || takeover.Identity.ID != characterID || takeover.ExpectedOwnership.CharacterID != characterID {
+				return errTrustedCharacterTakeoverScope
+			}
+			return nil
+		}
+	}
+	return result, nil
 }

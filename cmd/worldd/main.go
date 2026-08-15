@@ -61,6 +61,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	trustedTLSConfig, err := loadTrustedTLSIngressConfig(*trustedTLSListen, *trustedTLSCertFile, *trustedTLSKeyFile, *tcpAddress, trustedCharacterAuthenticator != nil)
+	if err != nil {
+		log.Fatal(err)
+	}
 	protectionTicks, err := reviveProtectionTicks(*postReviveProtectionSeconds, *tickRate)
 	if err != nil {
 		log.Fatal(err)
@@ -226,8 +230,25 @@ func main() {
 	}
 	defer server.Close()
 
+	var tlsIngress *trustedTLSIngress
+	if trustedTLSConfig != nil {
+		tlsIngress, err = openTrustedTLSIngress(trustedTLSConfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer tlsIngress.Close()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if tlsIngress != nil {
+		go func() {
+			if err := tlsIngress.Serve(ctx); err != nil {
+				log.Printf("trusted TLS ingress stopped with error: %v", err)
+				stop()
+			}
+		}()
+	}
 	loopDone := make(chan error, 1)
 	go func() { loopDone <- loop.RunObserved(ctx, logStepReport) }()
 	go logNetworkErrors(ctx, server.Errors())
@@ -259,11 +280,17 @@ func main() {
 	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true save_journal=%s save_checkpoint=%s journal_append_fsync=true checkpoint_atomic_rename=true startup_recovery=true restore_exact_world=true defeated_restore=true autosave_ticks=%d autosaves_per_tick=%d autosave_capture_process_local=true", characterStateStore.Path(), characterStateOutbox.Capacity(), characterStateSaveJournal.Path(), characterStateSaveCheckpointStore.Path(), autosaveTicks, *characterStateAutosavesPerTick)
 	log.Printf("siege ownership durability: world=%s dir=%s revision=%d owner=%s previous_owner=%s last_transfer_match=%s created=%t single_writer=true optimistic_revision=true temp_fsync=true atomic_rename=true directory_fsync=true startup_recovery=true completion_barrier=true", loadedWorld.Definition.WorldID, siegeOwnershipPersistence.Path(), siegeOwnership.Revision, siegeOwnership.OwnerID, siegeOwnership.PreviousOwnerID, siegeOwnership.LastTransferMatchID, siegeOwnershipCreated)
 	if trustedCharacterAuthenticator != nil {
-		log.Printf("trusted character authentication: enabled=true revision=%s identity_source=server_credential_map pre_gamev1=true tcp_loopback_required=true takeover_authorizer=false", trustedCharacterAuthRevision)
+		log.Printf("trusted character authentication: enabled=true revision=%s identity_source=server_credential_map pre_gamev1=true tcp_loopback_required=true takeover_authorizer=credential_scoped_optional", trustedCharacterAuthRevision)
 	} else {
 		log.Printf("trusted character authentication: enabled=false identity_source=ephemeral_default")
 	}
-	log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
+	if tlsIngress != nil {
+		log.Printf("trusted TLS ingress: enabled=true listen=%s upstream=%s min_tls=1.3 credential_transport=tls", tlsIngress.Addr(), *tcpAddress)
+		log.Printf("realtime UDP remains GameV1 token-authenticated and is not encrypted")
+	} else {
+		log.Printf("trusted TLS ingress: enabled=false")
+		log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
+	}
 	if err := server.Serve(ctx); err != nil {
 		stop()
 		log.Printf("network server stopped with error: %v", err)
