@@ -56,7 +56,7 @@ func (s *Server) authorizeCharacterTakeover(ctx context.Context, candidateSessio
 		return ErrCharacterTakeoverUnauthorized
 	}
 	if err := s.config.CharacterTakeoverAuthorizer(ctx, request); err != nil {
-		return fmt.Errorf("%w: %v", ErrCharacterTakeoverUnauthorized, err)
+		return fmt.Errorf("%w: %w", ErrCharacterTakeoverUnauthorized, err)
 	}
 	return nil
 }
