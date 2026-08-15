@@ -11,6 +11,11 @@ func (r *Runtime) EnqueueStartNextSiegeRound() error {
 }
 
 func (r *Runtime) applyStartNextSiegeRound(name string, report *StepReport) {
+	if r != nil {
+		// A scheduled request is now being consumed. If the reset fails, D.3D may retry on a
+		// later Completed tick instead of leaving the policy permanently latched as queued.
+		r.siegeRoundResetQueued = false
+	}
 	if r == nil || r.siege == nil || r.dynamic == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: ErrSiegeUnavailable})
 		return

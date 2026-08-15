@@ -38,6 +38,8 @@ type Config struct {
 	PostReviveProtectionTicks            uint64
 	CharacterStateAutosaveEveryTicks     uint64
 	MaxCharacterStateAutosavesPerTick    int
+	SiegeCompletedMinHold                time.Duration
+	SiegeCompletedMaxHold                time.Duration
 	AOIOptions                           spatial.QueryOptions
 	ReplicationPolicy                    replication.Policy
 	MaxSpawnsPerSessionBuild             int
@@ -58,6 +60,8 @@ func DefaultConfig() Config {
 		SnapshotEveryTicks:                   2,
 		CharacterMaxHP:                       1000,
 		MaxCharacterStateAutosavesPerTick:    32,
+		SiegeCompletedMinHold:                2 * time.Second,
+		SiegeCompletedMaxHold:                10 * time.Second,
 		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
 		ReplicationPolicy:                    replication.DefaultPolicy(),
 		MaxSpawnsPerSessionBuild:             32,
@@ -123,6 +127,12 @@ type StepMetrics struct {
 	DirtyVitalsMaxRevisionCompletionTicks    uint64
 	DirtyVitalsSessionCursorAdvances         int
 	DirtyVitalsSessionCursorWraps            int
+	SiegeCompletedActiveSessions             int
+	SiegeCompletedPendingDeliveries          int
+	SiegeCompletedElapsed                    time.Duration
+	SiegeRoundResetsScheduled                int
+	SiegeRoundResetsForcedByMaxHold          int
+	SiegeRoundResetScheduleFailures          int
 	SessionsReplicated                       int
 	AOIQueries                               int
 	AOICandidates                            int
@@ -194,6 +204,10 @@ type Runtime struct {
 	config                          Config
 	dynamic                         DynamicWorld
 	siege                           *siege.Service
+	siegeStepDelta                  time.Duration
+	siegeCompletedRevision          uint64
+	siegeCompletedElapsed           time.Duration
+	siegeRoundResetQueued           bool
 	combat                          *combat.Service
 	respawnPolicy                   *respawnpolicy.Service
 	deathPenalty                    *deathpenalty.Service
@@ -236,6 +250,9 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.CharacterStateAutosaveEveryTicks > 0 && config.MaxCharacterStateAutosavesPerTick <= 0 {
 		config.MaxCharacterStateAutosavesPerTick = 32
+	}
+	if config.SiegeCompletedMinHold < 0 || config.SiegeCompletedMaxHold < 0 || (config.SiegeCompletedMaxHold == 0 && config.SiegeCompletedMinHold > 0) || (config.SiegeCompletedMaxHold > 0 && config.SiegeCompletedMinHold > config.SiegeCompletedMaxHold) {
+		panic("worldruntime: invalid siege completed hold policy")
 	}
 	if config.MaxSpawnsPerSessionBuild <= 0 {
 		config.MaxSpawnsPerSessionBuild = 32
