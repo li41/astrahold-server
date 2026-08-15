@@ -21,7 +21,7 @@ func TestTrustedCharacterCredentialActiveTakeoverIsExplicitAndConnectionScoped(t
 	plainDigest := sha256.Sum256(plainToken)
 	takeoverDigest := sha256.Sum256(takeoverToken)
 	authenticator, err := newTrustedCharacterAuthenticator(trustedCharacterAuthDefinition{
-		SchemaVersion: trustedCharacterAuthSchemaVersion,
+		SchemaVersion: trustedCharacterAuthLegacySchemaVersion,
 		Revision:      "s4e4-test-001",
 		Credentials: []trustedCharacterAuthCredential{
 			{TokenSHA256: hex.EncodeToString(plainDigest[:]), CharacterID: "same-character"},
