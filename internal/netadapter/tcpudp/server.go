@@ -32,7 +32,8 @@ var (
 
 type RuntimeSink interface {
 	gateway.MoveCommandSink
-	EnqueueJoin(worldruntime.JoinRequest) error
+	AwaitCharacterAdmission(context.Context, characteridentity.Binding) error
+	AwaitJoin(context.Context, worldruntime.JoinRequest) error
 	EnqueueLeave(session.ID) error
 }
 
@@ -52,9 +53,10 @@ type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 // identity per connection and does not authenticate returning characters.
 type CharacterIdentityFactory func(session.ID, world.EntityID) (characteridentity.Binding, error)
 
-// CharacterRestoreFactory resolves already-durable state for a trusted identity before
-// SessionWelcome is sent. It is never called for the default ephemeral identity path.
-// Implementations may perform storage I/O because handleTCP is not the world-owner tick.
+// CharacterRestoreFactory resolves already-durable state for a trusted identity after the
+// world-owner admission barrier and before SessionWelcome is sent. It is never called for
+// the default ephemeral identity path. Implementations may perform storage I/O because
+// handleTCP is not the world-owner tick.
 type CharacterRestoreFactory func(characteridentity.Binding) (worldruntime.CharacterRestore, bool, error)
 
 type Config struct {
@@ -91,8 +93,10 @@ type peer struct {
 	entityID  world.EntityID
 	token     Token
 	conn      *clientConnection
+	joined    atomic.Bool
 	ready     atomic.Bool
 	closeOnce sync.Once
+	leaveOnce sync.Once
 }
 
 type Server struct {
@@ -288,6 +292,14 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		return
 	}
 
+	if identity.Assurance == characteridentity.AssuranceTrusted {
+		if err := s.runtime.AwaitCharacterAdmission(ctx, identity); err != nil {
+			s.emit(sid, "character_admission", err)
+			_ = raw.Close()
+			return
+		}
+	}
+
 	var restore *worldruntime.CharacterRestore
 	if identity.Assurance == characteridentity.AssuranceTrusted && s.config.CharacterRestoreFactory != nil {
 		candidate, exists, err := s.config.CharacterRestoreFactory(identity)
@@ -318,6 +330,19 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	s.peers[token] = p
 	s.mu.Unlock()
 
+	if err := s.runtime.AwaitJoin(ctx, worldruntime.JoinRequest{
+		Session:       sess,
+		Entity:        spec.Entity,
+		Speed:         spec.Speed,
+		Radius:        spec.Radius,
+		MaxStepHeight: spec.MaxStepHeight,
+		Restore:       restore,
+	}); err != nil {
+		s.closePeer(p, "join_world", err)
+		return
+	}
+	p.joined.Store(true)
+
 	udpPort := uint16(0)
 	if addr := s.UDPAddr(); addr != nil && addr.Port >= 0 && addr.Port <= 65535 {
 		udpPort = uint16(addr.Port)
@@ -338,18 +363,6 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	}
 	if err := transport.WriteEnvelope(raw, welcome, s.codec); err != nil {
 		s.closePeer(p, "welcome_write", err)
-		return
-	}
-
-	if err := s.runtime.EnqueueJoin(worldruntime.JoinRequest{
-		Session:       sess,
-		Entity:        spec.Entity,
-		Speed:         spec.Speed,
-		Radius:        spec.Radius,
-		MaxStepHeight: spec.MaxStepHeight,
-		Restore:       restore,
-	}); err != nil {
-		s.closePeer(p, "enqueue_join", err)
 		return
 	}
 	p.ready.Store(true)
@@ -430,22 +443,24 @@ func (s *Server) closePeer(p *peer, operation string, cause error) {
 		return
 	}
 	p.closeOnce.Do(func() {
-		wasReady := p.ready.Swap(false)
+		p.ready.Store(false)
 		s.mu.Lock()
 		if current := s.peers[p.token]; current == p {
 			delete(s.peers, p.token)
 		}
 		s.mu.Unlock()
 		_ = p.conn.Close()
-		if wasReady {
-			if err := s.runtime.EnqueueLeave(p.sessionID); err != nil {
-				s.emit(p.sessionID, "enqueue_leave", err)
-			}
-		}
 		if cause != nil && !errors.Is(cause, net.ErrClosed) && !errors.Is(cause, io.EOF) {
 			s.emit(p.sessionID, operation, cause)
 		}
 	})
+	if p.joined.Load() {
+		p.leaveOnce.Do(func() {
+			if err := s.runtime.EnqueueLeave(p.sessionID); err != nil {
+				s.emit(p.sessionID, "enqueue_leave", err)
+			}
+		})
+	}
 }
 
 func (s *Server) emit(id session.ID, operation string, err error) {
