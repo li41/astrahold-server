@@ -62,14 +62,19 @@ The existing trusted leave path still captures a final authoritative save before
 
 The sweep has an independent `MaxCharacterStateAutosavesPerTick` ceiling. It does not borrow from or raise lifecycle, Initial Vitals, Dirty Vitals, snapshot, or command budgets.
 
+The Runtime tracks the earliest tick at which any trusted character can next become due. Before that tick the autosave phase returns immediately without listing or sorting sessions. Session enumeration therefore occurs only when a sweep may contain due work, or on following ticks while a budget-limited backlog is being drained.
+
 Active sessions are visited with a persistent round-robin cursor. When more trusted characters are due than the per-tick budget permits:
 
 - only the configured maximum are attempted in that tick;
 - `CharacterStateAutosaveBudgetExhausted` is reported;
 - the cursor resumes at the first due session that did not receive an attempt;
+- the next possible sweep is the following world tick;
 - later ticks continue the sweep instead of restarting from the lowest SessionID.
 
-The metric is intentionally a boolean rather than a fabricated deferred-count: the scheduler does not scan the rest of the due set after it reaches its work ceiling.
+When a sweep completes without exhausting the budget, the Runtime recomputes the earliest next-due tick from the trusted sessions it just examined.
+
+The budget-exhaustion metric is intentionally a boolean rather than a fabricated deferred-count: the scheduler does not scan the rest of the due set after it reaches its work ceiling.
 
 ## Failure and retry
 
@@ -79,6 +84,7 @@ If the bounded outbox is full or snapshot capture fails:
 
 - the failure is reported through the existing Character State save failure path;
 - the character remains due;
+- the next possible sweep is no earlier than the next world tick;
 - a later sweep retries it;
 - active gameplay is not rolled back.
 
@@ -157,7 +163,7 @@ S3-F.16 does not change:
 - snapshot cadence or replication budgets;
 - workflow path filters or acceptance thresholds.
 
-The new autosave capture budget is separate and bounded.
+The new autosave capture budget is separate and bounded, and non-due ticks avoid autosave session enumeration entirely.
 
 ## Explicit non-goals
 
