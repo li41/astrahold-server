@@ -35,13 +35,17 @@ type joinCommand struct {
 }
 func (joinCommand) name() string { return "join_world" }
 
-type leaveCommand struct{ id session.ID }
+type leaveCommand struct {
+	id        session.ID
+	ownership SessionOwnershipFence
+}
 func (leaveCommand) name() string { return "leave_world" }
 
 type moveInputCommand struct {
 	sessionID session.ID
 	sequence  uint32
 	input     protocol.ClientMoveInput
+	ownership SessionOwnershipFence
 }
 func (moveInputCommand) name() string { return "move_input" }
 
@@ -58,6 +62,7 @@ type useActionCommand struct {
 	sessionID session.ID
 	sequence  uint32
 	action    protocol.ClientUseAction
+	ownership SessionOwnershipFence
 }
 func (useActionCommand) name() string { return "use_action" }
 
