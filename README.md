@@ -6,69 +6,68 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-目前主線已完成到 **S4-F.6 — Account Authentication Provider / Human Credential Hardening**。
+目前主線已完成到 **S4-F.7 — Durable Account Backend / Credential Lifecycle & Abuse Controls**。
+
+目前 production vertical slice 已具備：
+
+- XYZ + Layer authoritative 3D world model
+- Server authoritative movement、Navigation、LOS、AOI、Combat、Siege
+- Reliable Spawn / Despawn、Vitals、Dynamic World State、Siege Match State
+- Network LOD、per-session transform cap 與 lifecycle work budget
+- Durable Character state / castle ownership recovery
+- Trusted TLS 1.3 game ingress、duplicate-session fence、Server-authorized takeover
+- Formal TLS 1.3 login control plane與短生命週期 opaque issued session credential
+- Protocol v9 authenticated realtime UDP
+- connection-generation realtime key rotation / revocation
+- authenticated same-IP NAT-like UDP source-port migration
+- WAN-like latency / jitter / loss / burst-loss / reorder / duplication recovery
+- Account-authentication provider seam
+- schema-v1 high-entropy SHA-256 compatibility account map
+- schema-v2 Argon2id human-password reference provider
+- **schema-v3 durable account store** with stable account ID / credential generation / monotonic store revision
+- `accountctl` account create / password rotation / disable / enable lifecycle
+- schema-v3 `SIGHUP` account reload with live issued-bearer revocation
+- stale pre-reload password proof cannot mint a post-reload bearer
+- bounded source-IP login throttling before password KDF work
+- 真實 Go Server ↔ Godot production E2E through F.7
 
 核心 production contract：
 
 ```text
-Godot Client
+Account proof
     │
-    ├── Reliable Ordered / TCP
-    │     └── optional TLS 1.3 trusted ingress
-    │
-    └── Realtime Sequenced / UDP
-          └── Protocol v9 authenticated ASTU datagram
-                    ↓
-              tcpudp adapter
-                    ↓
-          Session / Ownership Fence
-                    ↓
-             Bounded Commands
-                    ↓
-          Single-owner World Loop
-                    ↓
-       Movement / Combat / Siege
-                    ↓
-              Replication
+    └── HTTPS / TLS 1.3
+          ↓
+    Account Auth Provider
+          ↓
+Server-owned CharacterID / takeover grant
+          ↓
+opaque short-lived issued session credential
+          ↓
+TLS 1.3 ASTRAH1 game bootstrap
+          ↓
+Session / Ownership Fence
+          ↓
+Single-owner World Loop
+          ↓
+Movement / Combat / Siege
+          ↓
+Reliable state + Protocol v9 realtime UDP
 ```
-
-目前已具備：
-
-- XYZ + Layer authoritative 3D world model
-- Server authoritative movement、Navigation、LOS、AOI
-- Generic `ClientUseAction` combat intent
-- Gate / Character HP、Defeated、Respawn
-- Reliable entity vitals / dynamic world state
-- Network LOD、per-session transform cap、lifecycle work budget
-- Durable trusted character identity / state restore / autosave
-- Trusted active-session ownership fencing / takeover
-- Formal Server-side session credential provider seam；保留 static SHA-256 compatibility provider，並新增 issued-session provider
-- Credential `not_before` / expiry / revocation policy with bounded rotation overlap
-- Schema-v2 runtime credential `SIGHUP` reload、emergency revocation、live-session invalidation
-- TLS 1.3 formal login control plane、32-byte CSPRNG opaque session credential issuance、explicit logout、exact Server-clock expiry
-- Formal account-authentication provider seam；schema v1 高熵 SHA-256 compatibility 與 schema v2 Argon2id human-password verifier 共用同一 issued-session lifecycle
-- Argon2id provider 的最低 KDF policy、成本上限、unknown-login equivalent KDF work 與 bounded concurrent verification
-- Authoritative Siege match state、Gate breach、Throne capture、winner、castle ownership、next-round role rotation
-- Durable castle ownership recovery
-- Production `worldd` TLS 1.3 trusted ingress
-- Protocol v9 authenticated realtime UDP
-- Connection-generation realtime key rotation / revocation
-- Authenticated same-IP NAT-like UDP source-port migration
-- WAN-like latency / jitter / loss / burst-loss / reorder / duplication recovery E2E
-- 真實 Go Server ↔ Godot multi-client production E2E
 
 ## 核心不變量
 
-Astrahold 的 Server authority 不因 Client、Transport 或 Presentation 需求而放寬：
+Astrahold 的 Server authority 不因 Client、Transport、Account UI 或 Presentation 需求而放寬：
 
-1. **Go Server authoritative**：Client 只送 intent，不送 damage、HP、winner、team、position truth。
+1. **Go Server authoritative**：Client 只送 intent，不送 position truth、damage、HP、team、winner 或 castle ownership。
 2. **單一 world owner**：Network / DB / GM 不直接修改 mutable world state，只能提交 bounded command。
 3. **World tick 不做 blocking I/O**：outbound 只能進非阻塞 connection / outbox。
-4. **Snapshot absence != despawn**：lifecycle 由 Reliable Spawn / Despawn 管理。
+4. **Snapshot absence != despawn**：lifecycle 只由 Reliable Spawn / Despawn 管理。
 5. **Spawn / Despawn confirm only after `TrySend` success**。
 6. **Self correction authoritative**：Client prediction 必須收斂到 `PositionCorrection`。
 7. **Gameplay Proxy 是真相**：Visual Mesh 不得反過來成為 Navigation / LOS / Gate authority。
-8. **Measure → Profile → Optimize**：沒有數據前不拆 world actor、不做激進 quantization / delta compression。
+8. **Account proof != gameplay authority**：登入成功不代表 Client 可以指定 CharacterID、takeover、team、HP 或 ownership。
+9. **Measure → Profile → Optimize**：沒有數據前不拆 world actor、不做激進 quantization / delta compression。
 
 ## Gameplay World
 
@@ -97,7 +96,7 @@ type Position struct {
 
 ## Movement / Combat / Siege
 
-### Movement
+Movement：
 
 ```text
 ClientMoveInput
@@ -110,9 +109,7 @@ ClientMoveInput
 → WorldSnapshot + PositionCorrection
 ```
 
-### Combat
-
-Client 只送：
+Combat Client intent 只有：
 
 ```text
 ClientUseAction
@@ -121,23 +118,20 @@ ClientUseAction
 └── target_id
 ```
 
-Combat 數值由 Server Action Catalog 管理；damage、range、cooldown、HP、Defeated 與 hit result 都不是 Client authority。
+Damage、range、cooldown、HP、Defeated 與 hit result 皆由 Server 決定。
 
-### Siege
-
-目前 authoritative Siege flow：
+Siege authoritative flow：
 
 ```text
 Round start
 → Attacker / Defender role
 → main-gate HP 1000
 → Gate breach / blocker disabled
-→ Throne presence + contest
-→ trusted team capture progress
+→ Throne capture / contest
 → Completed
 → winner + castle owner
 → durable ownership
-→ next round role rotation
+→ next-round role rotation
 ```
 
 `SiegeMatchState` 是 Reliable full state；Client 只保存與呈現，不自行推進 phase、winner 或 castle ownership。
@@ -156,7 +150,7 @@ Round start
 - `EntityVitalsState`
 - `ClientUseAction`
 - `SiegeMatchState`
-- 其他低頻且不可遺失的 gameplay state
+- 其他低頻且不可遺失的 authoritative state
 
 ### Realtime Sequenced / UDP
 
@@ -168,129 +162,206 @@ Round start
 
 Realtime payload 使用 GameV1 compact binary；UDP MTU 上限維持 **1200 bytes**，`WorldSnapshot` 每 chunk 最多 **43 entities**。
 
-### Protocol v9 authenticated datagram
+### Authenticated ASTU
 
-Protocol v9 的 UDP packet 不再直接暴露 bearer token：
+Protocol v9 不把 bearer realtime secret 放在 UDP packet 上：
 
 ```text
 Session realtime secret
        │
-       ├── one-way derived public RoutingID
+       ├── one-way public RoutingID
        │
        └── HMAC-SHA256
              └── truncated 128-bit auth tag
 ```
 
-- ASTU header 只帶 public per-session route。
-- HMAC domain separation 區分 Client→Server 與 Server→Client，阻止方向反射。
-- Server 先以 route 找 peer，再用 secret 驗證 HMAC，通過後才信任 frame / sequence / endpoint。
-- stale/replayed movement 受 transport realtime sequence gate 與 world-runtime sequence gate 雙重約束。
+- ASTU header 只帶 public per-session RoutingID。
+- C2S / S2C 使用不同 HMAC domain。
+- Server 先以 route 找 peer，再驗 HMAC，通過後才信任 frame / sequence / endpoint。
+- stale / replay movement 同時受 transport sequence gate 與 world-runtime sequence gate 約束。
 - UDP **提供 authenticity / integrity，不提供 confidentiality**。
 
 ### NAT-like endpoint migration
 
-S4-E.7 將既有 same-IP rebind policy 做成 production E2E gate。Server 只有在以下條件都成立後才允許更新 realtime destination port：
+Server 只有在現有 connection generation 的 packet 已經通過：
 
 ```text
-live RoutingID generation
+live RoutingID
 → valid C2S HMAC
-→ valid realtime ClientMoveInput
-→ strictly newer sequence
+→ valid ClientMoveInput
+→ strictly newer realtime sequence
 → same source IP
-→ publish new UDP source port
 ```
 
-因此 unauthenticated、tampered、stale / replay、retired old-generation 或 cross-IP packet 都不能修改 S2C route。合法 NAT source-port change 不改 EntityID、ownership 或 gameplay state。
+之後才更新觀察到的 UDP source port。Unauthenticated、tampered、stale / replay、retired generation 或 cross-IP packet 都不能搶走 S2C route。
 
-完整文件：
+## Trusted Identity / Login / Account Lifecycle
 
-- [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md)
-- [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md)
-- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md)
+Production `worldd` 可選擇互斥的 trusted credential source：
 
-## Trusted Identity / Login / TLS / Takeover
+1. `-trusted-character-auth-file` static trusted credential mode；或
+2. `-session-login-account-file` issued-session login mode。
 
-Production `worldd` 現在可選擇兩種互斥的 trusted credential source：既有 `-trusted-character-auth-file` static credential mode，或 issued-session login mode。兩種模式最後都進入同一個 `sessioncredential.Provider`、`ASTRAH1` trusted game admission、Session / Ownership Fence 與既有 world authority path。
+兩種模式最後都進入既有 `sessioncredential.Provider`、ASTRAH1 trusted game admission 與 Session / Ownership Fence。
 
-Issued-session mode 的控制面與 game transport 分離：
+Issued-session flow：
 
 ```text
-TLS 1.3 Login Client
-→ /v1/session/login
+login_id + login_secret
+→ HTTPS / TLS 1.3
 → Server account-authentication provider
 → Server-owned CharacterID / takeover grant
 → 32-byte CSPRNG opaque session credential
-→ Client
 → TLS 1.3 trusted game ingress
 → ASTRAH1 credential preface
-→ literal-loopback worldd TCP backend
 → Session Credential Provider
-→ trusted CharacterID
+→ authoritative Character session
 ```
 
-Account-authentication provider 目前有兩種 file-backed reference schema：
+### Account schema compatibility
 
 ```text
 schema v1
 └── login_secret_sha256
-    └── high-entropy bootstrap / compatibility only
+    └── high-entropy machine/bootstrap secret only
 
 schema v2
 └── password_argon2id PHC verifier
-    ├── Argon2id v=19
-    ├── memory 64..128 MiB
-    ├── passes 3..10
-    ├── parallelism 1..8
-    ├── salt 16..64 bytes
-    └── digest 32 bytes
+    └── restart-only reference human-password provider
+
+schema v3
+└── durable account store
+    ├── stable account_id
+    ├── login_id
+    ├── password_argon2id
+    ├── credential_version
+    ├── created_at / password_changed_at
+    ├── optional disabled_at
+    ├── Server-owned character_id
+    └── optional allow_active_takeover
 ```
 
-Schema v2 在 unknown `login_id` 也會執行同成本的 dummy Argon2id derivation，再回相同 `invalid_credentials` shape；單一 `worldd` 最多同時執行四個 password KDF，以限制 account verification 的記憶體壓力。這是 application-level enumeration hardening，不宣稱網路層 perfect timing indistinguishability。
+Schema v1/v2 保留 compatibility；**schema v3 是目前 durable lifecycle contract**。
 
-Static compatibility mode 則維持：
+### Argon2id policy
+
+目前 Argon2id verifier policy：
 
 ```text
-TLS 1.3 trusted game ingress
-→ ASTRAH1 credential preface
-→ literal-loopback worldd TCP backend
-→ static SHA-256 Session Credential Provider
-     ├── schema v1 timeless / restart-only compatibility
-     └── schema v2 lifecycle + runtime reload / invalidation
-→ trusted CharacterID
+version       v=19
+memory        64..128 MiB
+passes        3..10
+parallelism   1..8
+salt          16..64 bytes
+digest        32 bytes
 ```
 
-重要語意：
+`accountctl` 新增／輪替密碼使用：
 
-- 未設定 trusted auth 時，原本 ephemeral development identity 仍可使用。
-- Trusted bearer bootstrap 的 backend TCP 必須維持 loopback。
-- `sessioncredential.Provider` 不擁有 TCP / SessionID / EntityID / world state；只解析 opaque credential 成 trusted grant。
-- account-authentication provider 只驗證 account proof 並回 Server-owned `sessioncredential.Grant`；issued bearer、revocation scope、logout / expiry lifecycle 仍由原有 issuance runtime 管理。
-- provider grant 必須是 `AssuranceTrusted`，否則 fail-closed before normal GameV1 admission。
-- issued-session mode 與 `-trusted-character-auth-file` 刻意互斥，避免同一 process 出現兩套 credential namespace / revocation-scope authority。
-- login request 只接受 `login_id` + `login_secret`；CharacterID 與 `allow_active_takeover` 只由 Server account record 決定，未知 JSON authority 欄位直接拒絕。
-- 每個 session credential 使用 32-byte `crypto/rand` entropy，Client 看到的是 43-char unpadded base64url opaque bearer；provider map 只保留 SHA-256 digest，不保存 plaintext bearer。
-- issued credential TTL 預設 15 分鐘，可設定 1 分鐘到 24 小時；exact expiry 由 Server clock 判斷。
-- `POST /v1/session/logout` 會撤銷 issued bearer；known / unknown well-formed bearer 都回 204，避免 credential existence oracle。
-- issued credential 的 logout / expiry 都先撤 transport scope，再移除 provider record；live peer 因此沿 S4-F.3 `ready=false` → token/route revocation → TCP close → fenced leave 路徑退休。
-- issued credential 是 process-local；`worldd` restart 後舊 bearer 全部失效並要求重新 login，不把短期 auth proof 變成新的 durable gameplay authority。
-- schema v1 `login_secret_sha256` 只適合高熵 machine/bootstrap secret；human password 使用 schema v2 Argon2id verifier。
-- schema v2 account file 仍只是 reference/bootstrap backend，不等於完整 account DB、registration/recovery、MFA、OIDC 或 password reset service。
-- static schema v1 仍維持 timeless 相容性，而且不能偷偷使用 lifecycle 欄位；v1 runtime reload / live invalidation 刻意不支援。
-- static schema v2 要求唯一 Server-side `credential_id`，可設定 RFC3339 `not_before` / `expires_at` / `revoked_at`。
-- `not_before` 邊界當下可用；`expires_at` / `revoked_at` 邊界當下立即失效。
-- schema v2 會產生 Server-only proof scope，綁定 credential ID / token digest / CharacterID / takeover authority；scope 不送給 Client。
-- lifecycle 時間不參與 static proof scope fingerprint；future expiry/revocation 由 Server-clock boundary timer 在指定時間移除 scope。
-- operator 可 atomically replace schema-v2 credential JSON 後對 `worldd` 發 `SIGHUP`；合法 reload 更新 provider 與 live scope policy，非法 reload 保留 last-known-good。
-- reload 先安裝 transport scope fence，再 publish 新 provider；舊 in-flight authentication 無法在 revocation 後晚到並取得 realtime/world authority。
-- `allow_active_takeover` 預設 `false`，duplicate active session fail-closed。
-- 只有 Server credential / account provider grant 可授權 active takeover；Client 沒有 takeover bit。
-- takeover authority 綁定 exact CharacterID，並轉成既有 connection-scoped authorizer。
-- world ownership transfer 使用 fence / epoch CAS。
-- 舊 peer retirement 後 stale Leave 不能刪掉新 owner。
-- takeover candidate 有 TTL / cooldown，避免連續重奪。
+```text
+m = 65536 KiB
+t = 3
+p = 4
+random salt = 16 bytes
+digest = 32 bytes
+```
 
-完整文件：
+Unknown `login_id` 仍執行同成本 dummy Argon2id derivation後回相同 `invalid_credentials` shape；單一 `worldd` 最多同時執行四個 password KDF，以限制 memory pressure。
 
+### Durable account operations
+
+`cmd/accountctl` 提供 bounded operator surface：
+
+```bash
+accountctl init
+accountctl create
+accountctl set-password
+accountctl disable
+accountctl enable
+```
+
+Password 只從 `-password-stdin` 讀取，不要求把 plaintext password 放入 command-line argument。
+
+Schema-v3 store write：
+
+```text
+validate
+→ temp file in target directory
+→ chmod 0600
+→ write + fsync
+→ atomic rename
+→ chmod 0600
+→ directory fsync
+```
+
+Store 使用 monotonic revision；mutation 依 expected revision fail-closed。這是 **single-writer durable JSON backend**，不宣稱 multi-host distributed transaction / consensus。
+
+### SIGHUP account reload / live revocation
+
+Schema v3 可在 durable store 更新後對 `worldd` 發 `SIGHUP`。
+
+有效 reload 要求 store revision 嚴格前進。Invalid / stale / wrong-schema reload 保留 last-known-good。
+
+安全順序：
+
+```text
+load + validate new account snapshot
+→ serialize with issuance mutation lock
+→ clone current issued-bearer provider
+→ prune expired bearers
+→ remove bearers whose account generation is no longer active
+→ publish reduced transport revocation-scope allow-set
+→ retire affected live peers
+→ publish reduced bearer provider
+→ publish replacement account authenticator
+```
+
+因此 password rotation、account disable、takeover-policy 或其他 proof-generation 變更可讓舊 issued bearer 與 live game session 立即失效。
+
+Argon2id verification 刻意在 issuance lock 外執行；`Issue` 會在同一 serialization boundary 重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification 在 reload 前已完成，只要 rotation / disable reload 已 commit，stale grant 就不能再 mint bearer。
+
+### Login abuse control
+
+Login listener 在 JSON decode / password KDF 前套用 bounded fixed-window source-IP guard。
+
+預設：
+
+```text
+30 login POST attempts / 1 minute / observed source IP
+max tracked source entries = 4096
+```
+
+可調：
+
+```text
+-session-login-ip-attempt-window
+-session-login-ip-max-attempts
+```
+
+超限回：
+
+```text
+HTTP 429
+Retry-After: <seconds>
+{"error":"login_throttled"}
+```
+
+來源身份只相信 TLS socket 的實際 `RemoteAddr`；**不信任 `X-Forwarded-For`**。未來若部署 trusted reverse proxy，必須另設計 proxy-aware attribution，而不能直接信任任意 forwarding header。
+
+### Issued-session lifecycle
+
+- login request 只接受 `login_id` + `login_secret`；Client 不送 CharacterID / takeover bit。
+- successful login response 只包含 `session_credential` + `expires_at`。
+- 每個 bearer 使用 32-byte `crypto/rand` entropy；Server provider map只保存 digest。
+- TTL 預設 15 分鐘，可設定 1 分鐘到 24 小時。
+- `POST /v1/session/logout` 會撤銷 bearer；known / unknown well-formed bearer都回 204。
+- logout / expiry / account-generation revocation 都沿既有 F.3 transport fence退休 live peer。
+- bearer 仍是 process-local；`worldd` restart 後要求重新 login。
+- `allow_active_takeover` 只由 Server account / credential grant提供；Client沒有 takeover bit。
+
+完整身份／登入文件：
+
+- [`docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`](docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md)
 - [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md)
 - [`docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md`](docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md)
 - [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md)
@@ -298,53 +369,7 @@ TLS 1.3 trusted game ingress
 - [`docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md`](docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md)
 - [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md)
 
-## Realtime Key Lifecycle
-
-每次新 TCP connection 都建立新的 128-bit realtime secret，因此 reconnect / trusted takeover 自然形成新的 **connection generation**。
-
-S4-E.6 把 lookup lifecycle 做成 fail-closed：
-
-- token collision → reject
-- derived route collision → reject
-- token / route map 必須 atomic publish
-- `closePeer` 先 `ready=false`
-- revocation 只刪除仍指向該 exact peer generation 的 token / route
-- stale close 不能誤刪 replacement generation
-
-Production E2E 已證明：authorized TLS takeover 後 public route 旋轉，舊 generation 的 authenticated datagram 即使從另一 UDP source port replay，也不能重新取得 authoritative entity control；replacement Client 保留同一 EntityID / live position，並可繼續正常 movement / snapshot / correction。
-
-S4-E.7 沒有加入 periodic in-session rekey。現階段 connection-generation rotation + retirement revocation 已涵蓋 reconnect / takeover 的 key lifecycle；若未來長時 session 的 secret-lifetime policy 要求比 connection lifetime 更短，再導入有 acknowledgement / overlap semantics 的 periodic rekey。
-
-## WAN / Long-session Readiness
-
-S4-E.7 paired production E2E 使用透明 UDP relay，在 real Godot Client 與 production `worldd` 之間驗證：
-
-- same-IP NAT-like source-port rebind
-- authenticated newer-sequence migration
-- attacker wrong-HMAC / tamper rejection
-- stale replay rejection
-- old endpoint 不再接收後續 realtime output
-- latency / jitter
-- packet loss / burst loss
-- reorder / duplication
-- correction sequence lag bounded
-- snapshot / correction freshness recovery
-- bounded post-stop convergence
-- snapshot loss 不產生 local fake despawn
-
-目前沒有 E2E evidence 支持為 MVP 立即引入 explicit rebind challenge、DTLS 或 QUIC。若未來需求包含 UDP confidentiality、跨 IP connection migration、不同 congestion-control contract 或 profiling 顯示現有 split transport 不足，再以具體需求評估。
-
 ## Replication / Scaling
-
-S3-E 已完成從早期 Full AOI snapshot 到 bounded replication 的演進：
-
-- Network LOD / tier cadence
-- shared AOI replication work
-- realtime encode efficiency
-- buffer ownership
-- lifecycle semantic convergence
-- lifecycle churn work budget
-- teleport / repeated churn / mixed gameplay soak
 
 目前重要 scaling gates：
 
@@ -356,7 +381,7 @@ Lifecycle churn max            6000 / snapshot
 Dirty Vitals max               4000 / tick
 ```
 
-24-client Vertical Siege 與 100-client Gate Zerg regression 持續作為 correctness / performance gate；500-client soak workflow 用於較重的 scaling 驗證。
+S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer ownership、lifecycle convergence與 churn budget。24-client Vertical Siege、100-client Gate Zerg持續作為 correctness / performance gate；500-client soak用於較重 scaling evidence。
 
 ## Production E2E Matrix
 
@@ -368,25 +393,26 @@ Dirty Vitals max               4000 / tick
 | S4-E.4 | TLS 1.3 ingress；duplicate fail-closed；authorized takeover / cooldown | ✅ |
 | S4-E.5 | UDP HMAC、tamper / replay rejection、loss / reorder / duplicate impairment recovery | ✅ |
 | S4-E.6 | Connection-generation realtime route rotation + old-generation revocation | ✅ |
-| S4-E.7 | NAT-like endpoint migration、rebind spoof protection、WAN impairment、long-session health | ✅ |
-| S4-F.6 | Schema-v2 Argon2id account provider；real Godot password login → issued bearer → duplicate/takeover/logout/reuse rejection | ✅ |
+| S4-E.7 | NAT-like endpoint migration、spoof protection、WAN impairment、long-session health | ✅ |
+| S4-F.5 | TLS login → issued bearer；duplicate/takeover；logout/expiry live retirement | ✅ |
+| S4-F.6 | Schema-v2 Argon2id human-password provider + real-Godot login / takeover / logout | ✅ |
+| **S4-F.7** | **Schema-v3 durable store；password rotation / disable live revocation；enable/relogin；source-IP 401/401/429 throttle** | **✅** |
+
+S4-F.7 paired Client E2E 直接 build production `worldd` 與 `accountctl`，使用 official Godot 4.7.1 .NET，並在同一 exact Server revision重新通過 E.5 / E.6 / E.7 / F.5 / F.6 compatibility gates；既有 scenario assertion 沒有為 F.7 放寬。
 
 ## 文件入口
 
 ### Current production contract
 
-以下文件描述**目前**架構與 deployment / realtime security boundary：
-
+- 本 `README.md` — current Server / Protocol v9 / account lifecycle / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
-- [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md) — account-auth provider seam / Argon2id human-password reference backend
-- [`docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md`](docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md) — TLS login / short-lived opaque session issuance / logout / expiry
-- [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md) — runtime reload / emergency revocation / live-session invalidation
-- [`docs/S4F2_CREDENTIAL_LIFECYCLE.md`](docs/S4F2_CREDENTIAL_LIFECYCLE.md) — credential expiry / rotation / revocation lifecycle
-- [`docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md`](docs/S4F1_SESSION_CREDENTIAL_PROVIDER_SEAM.md) — opaque session credential → trusted Server claims provider boundary
-- [`docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`](docs/S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md) — TLS trusted ingress / takeover policy
+- [`docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`](docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md) — durable schema-v3 account lifecycle / SIGHUP / abuse control
+- [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md) — account-auth provider seam / Argon2id reference backend
+- [`docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md`](docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md) — TLS login / opaque issuance / logout / expiry
+- [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md) — runtime credential revocation
 - [`docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md`](docs/S4E5_AUTHENTICATED_REALTIME_BINDING.md) — Protocol v9 authenticated ASTU
-- [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md) — connection-generation rotation / revocation
-- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md) — NAT / WAN / deployment readiness
+- [`docs/S4E6_REALTIME_KEY_LIFECYCLE.md`](docs/S4E6_REALTIME_KEY_LIFECYCLE.md) — realtime generation rotation / revocation
+- [`docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md`](docs/S4E7_WAN_NAT_SECURE_DEPLOYMENT_READINESS.md) — NAT / WAN readiness
 
 ### Production E2E / durability evidence
 
@@ -394,13 +420,10 @@ Dirty Vitals max               4000 / tick
 - [`docs/S4E2_RESTART_RECOVERY_HARNESS.md`](docs/S4E2_RESTART_RECOVERY_HARNESS.md)
 - [`docs/S4E3_PRODUCTION_WORLDD_CHARACTER_RESTORE_E2E_SERVER.md`](docs/S4E3_PRODUCTION_WORLDD_CHARACTER_RESTORE_E2E_SERVER.md)
 - [`docs/S4D4A_SIEGE_RESULT_CONTRACT.md`](docs/S4D4A_SIEGE_RESULT_CONTRACT.md)
-- [`docs/S3F18_TRUSTED_SESSION_OWNERSHIP_FENCE_SEAM.md`](docs/S3F18_TRUSTED_SESSION_OWNERSHIP_FENCE_SEAM.md)
-- [`docs/S3F20_TRUSTED_TCPUDP_ACTIVE_TAKEOVER_SEAM.md`](docs/S3F20_TRUSTED_TCPUDP_ACTIVE_TAKEOVER_SEAM.md)
-- [`docs/S3F23_TRUSTED_CONNECTION_AUTHENTICATION_CONTEXT_SEAM.md`](docs/S3F23_TRUSTED_CONNECTION_AUTHENTICATION_CONTEXT_SEAM.md)
 
 ### Historical milestone documents
 
-`S1*` / `S2*` / `S3*` / early `S4*` 文件刻意保留該 milestone 當時的 protocol、schema、transport 與量測結果。看到 Protocol v1/v2/v3/v6/v8、raw bearer realtime token、Gameplay World schema v1、Full AOI snapshot 等內容時，**不要把它當成目前 production contract**。
+`S1*` / `S2*` / `S3*` / early `S4*` 文件刻意保留該 milestone 當時的 protocol、schema、transport與量測結果；不要把舊 Protocol / raw bearer / Gameplay World schema v1 / Full AOI內容當成目前 production contract。
 
 常用歷史文件：
 
@@ -412,7 +435,7 @@ Dirty Vitals max               4000 / tick
 - [`docs/S3E6_LIFECYCLE_WORK_BUDGET.md`](docs/S3E6_LIFECYCLE_WORK_BUDGET.md)
 - [`docs/S3E9_LONG_MIXED_GAMEPLAY_SOAK.md`](docs/S3E9_LONG_MIXED_GAMEPLAY_SOAK.md)
 
-## 開發
+## 開發 / Deployment
 
 一般驗證：
 
@@ -420,6 +443,12 @@ Dirty Vitals max               4000 / tick
 go test ./...
 go vet ./...
 go run ./cmd/worldd
+```
+
+Account lifecycle tool：
+
+```bash
+go run ./cmd/accountctl --help
 ```
 
 預設 development transport：
@@ -433,7 +462,7 @@ Protocol        v9
 Gameplay World  castle-sandbox@s3d-001
 ```
 
-Production static trusted deployment 可設定：
+Production static trusted deployment：
 
 ```text
 -trusted-character-auth-file
@@ -442,7 +471,7 @@ Production static trusted deployment 可設定：
 -trusted-tls-key
 ```
 
-Production issued-session deployment 可設定：
+Production issued-session deployment：
 
 ```text
 -session-login-account-file
@@ -450,29 +479,36 @@ Production issued-session deployment 可設定：
 -session-login-tls-cert
 -session-login-tls-key
 -session-credential-ttl
+-session-login-ip-attempt-window
+-session-login-ip-max-attempts
 -trusted-tls-listen
 -trusted-tls-cert
 -trusted-tls-key
 ```
 
-Static trusted mode 與 issued-session mode 互斥。TLS flag 必須成組使用；login control plane 與 trusted game ingress 都要求 TLS 1.3。Realtime UDP 仍是 Protocol v9 authenticated plaintext datagram。Static schema-v2 credential file 可在 atomically replace 後以 `SIGHUP` reload；login account verifier 與兩組 TLS certificate/key 目前都是 process-start 載入。
+Static trusted mode 與 issued-session mode互斥。Login control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
+
+Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，schema-v3則支援 durable store + SIGHUP account-generation reload。TLS certificate/key目前仍為 process-start載入。
 
 ## 目前刻意保留的限制
 
-- Realtime UDP 尚未加密；目前只有 authenticity / integrity。
-- S4-F.6 已有 formal account-auth provider seam 與 Argon2id human-password reference verifier，但仍是 static file-backed bootstrap backend；尚未有 durable account DB、registration/recovery、password reset/KDF migration、MFA/WebAuthn 或 OIDC adapter。
-- issued session credential 是 process-local、短生命週期 proof；尚無 refresh token、durable/distributed session credential store 或 cross-server revocation propagation。
-- real Godot F.5/F.6 E2E 已走 `/v1/session/login` → issued bearer → `ASTRAH1`，但一般產品 Client 尚未接完整 visual login state machine / secure local credential handling。
-- schema v1 trusted credential config 僅保留 restart-only 相容性，不提供 runtime revocation scope。
-- TLS terminator 與 `worldd` 目前在同一 process，game/login certificate/key 尚未 hot reload。
-- login abuse throttling / IP reputation / CAPTCHA 等 anti-abuse policy 尚未加入。
-- NAT-like migration 目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
+- Realtime UDP尚未加密；目前只有 authenticity / integrity。
+- Schema-v3目前是 **single-writer durable JSON account backend**；尚未有 public registration、verified recovery、online account-management API或 distributed account DB。
+- Operator password rotation已存在，但尚未有 user-facing forgot-password / recovery flow、breached-password corpus或完整 password-policy UX。
+- 尚未加入 MFA / WebAuthn / OIDC external IdP adapter。
+- Login已有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
+- Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、durable bearer recovery或 cross-server revocation propagation。
+- 一般產品 Godot Client尚未接完整 visual login/account-management state machine、OS keychain或 secure local credential handling。
+- TLS game/login certificate與 key尚未 hot reload。
+- NAT-like migration目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
 - 尚未做 multi-server distributed ownership / failover。
-- 尚未加入 periodic in-session realtime rekey、DTLS 或 QUIC；S4-E.7 目前沒有證明 MVP 需要它們。
-- 500 rendered Godot actors、VAT / MultiMesh 與 final commercial art 不是目前 Server MVP gate。
+- 尚未加入 periodic in-session realtime rekey、DTLS或 QUIC；目前 evidence沒有證明 MVP需要它們。
+- 500 rendered Godot actors、VAT / MultiMesh與 final commercial art不是目前 Server MVP gate。
 
 ## 下一個 bounded focus
 
-S4-F.6 已把 human-password verification 從 issued-session lifecycle 中抽成正式 account-authentication seam，並以 Argon2id reference provider + real Godot E2E 證明 account proof 不需要改寫 game-session contract。下一個 bounded stage 應進入 **S4-F.7 — Durable Account Backend / Credential Lifecycle & Abuse Controls**：把 static reference account file 往可管理的 durable account store、password reset/KDF migration、reauthentication 與 login abuse controls 推進；MFA/OIDC 或 distributed issuance 仍應保持可插拔，不把它們硬綁進 Protocol v9。
+S4-F.7 已把 account proof從 restart-only reference file推進到 durable schema-v3 lifecycle，並證明 password rotation / disable可以撤銷已發出的 bearer與 live game session；同時用 production listener驗證 direct source-IP KDF abuse throttle。
+
+下一個 bounded stage 應進入 **S4-F.8 — Client Login UX / Secure Local Credential Handling / Reauthentication**：把已經驗證的 TLS login + issued-session path接入一般產品 Client state machine，定義不持久保存 plaintext password的 local handling、session expiry / logout / reconnect / reauthentication UX，以及 fail-closed error states。MFA / OIDC / distributed issuance仍保持可插拔，不需要重設 Protocol v9。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
