@@ -10,7 +10,7 @@ import (
 var sessionLoginTrustedProxyEdgeRetireOldConnections = flag.Bool(
 	"session-login-trusted-proxy-edge-retire-old-connections",
 	false,
-	"F.20 edge-policy cutover fence: after a successful edge-policy reload, close trusted-proxy TLS connections authenticated by an older edge generation",
+	"F.20/F.22 edge-policy cutover fence: retire stale trusted-proxy TLS authority after a successful edge-policy reload, preserving unaffected bindings when only their exact DNS identity mapping remains compatible",
 )
 
 type sessionEdgeTrackedConnection struct {
@@ -77,7 +77,8 @@ func (a *sessionSourceAttributor) observeEdgeConnectionState(connection net.Conn
 
 	tracker.mu.Lock()
 	generation := tracker.connections[connection]
-	if binding, ok := a.edgePolicy.connection(remote); ok && binding.generation != 0 {
+	binding, authenticated := a.edgePolicy.connection(remote)
+	if authenticated && binding.generation != 0 {
 		generation = binding.generation
 	}
 	tracker.connections[connection] = generation
@@ -88,14 +89,18 @@ func (a *sessionSourceAttributor) observeEdgeConnectionState(connection net.Conn
 	}
 	current := a.edgePolicy.Snapshot().Generation
 	if current != 0 && generation < current {
-		_ = connection.Close()
+		if !authenticated || a.edgePolicy.connectionRequiresRetirement(remote, binding) {
+			_ = connection.Close()
+		}
 	}
 }
 
-// retireOldEdgeConnections closes every currently tracked trusted-proxy TLS
-// connection whose authenticated F.19 generation predates currentGeneration.
-// The caller invokes this only after a candidate edge policy has fully
-// validated and published. Invalid reloads never enter this fence.
+// retireOldEdgeConnections applies the F.22 peer-specific compatibility fence
+// to every currently tracked authenticated proxy connection older than the
+// current generation. Global forwarding-mode, CA-root-set, or trusted-prefix
+// topology changes retire all older proxy connections. Identity-only changes
+// retire only peers whose own prefix->exact-DNS mapping changed. Invalid reloads
+// never enter this fence, and F.21 no-ops keep the generation unchanged.
 func (a *sessionSourceAttributor) retireOldEdgeConnections(currentGeneration uint64) int {
 	if !a.edgeConnectionRetirementEnabled() || currentGeneration == 0 {
 		return 0
@@ -111,11 +116,16 @@ func (a *sessionSourceAttributor) retireOldEdgeConnections(currentGeneration uin
 		if connection == nil || connection.RemoteAddr() == nil {
 			continue
 		}
-		if binding, ok := a.edgePolicy.connection(connection.RemoteAddr().String()); ok && binding.generation != 0 {
+		remote := connection.RemoteAddr().String()
+		binding, authenticated := a.edgePolicy.connection(remote)
+		if authenticated && binding.generation != 0 {
 			generation = binding.generation
 			tracker.connections[connection] = generation
 		}
 		if generation == 0 || generation >= currentGeneration {
+			continue
+		}
+		if authenticated && !a.edgePolicy.connectionRequiresRetirement(remote, binding) {
 			continue
 		}
 		retire = append(retire, sessionEdgeTrackedConnection{connection: connection, generation: generation})
