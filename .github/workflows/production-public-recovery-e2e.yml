@@ -1,0 +1,363 @@
+name: Production Public Recovery E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  public-recovery-product-reauthentication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - name: Checkout current F.8 product client fence
+        uses: actions/checkout@v4
+        with:
+          repository: li41/astrahold-client
+          ref: 7e9e1d9f7493ed1eb939e6e466b284b48a0f3aff
+          path: .e2e-client
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools and client
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .e2e-client rev-parse HEAD)" = "7e9e1d9f7493ed1eb939e6e466b284b48a0f3aff"
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+          dotnet restore .e2e-client/Astrahold.Client.csproj
+          dotnet build .e2e-client/Astrahold.Client.csproj --configuration Debug --no-restore
+
+      - name: Download official Godot 4.7.1 .NET
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools/godot
+          curl --fail --location --retry 3 \
+            --output /tmp/godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_mono_linux_x86_64.zip
+          echo "6ca7ff0459f1b806900be683c1b0837c607a9c16834c530dc68c81b9fc3ae1f6  /tmp/godot.zip" | sha256sum --check --strict
+          unzip -q /tmp/godot.zip -d .tools/godot
+          GODOT="$(find .tools/godot -type f -name 'Godot_v4.7.1-stable_mono_linux*' ! -path '*/GodotSharp/*' | head -n 1)"
+          test -n "$GODOT"
+          chmod +x "$GODOT"
+          echo "GODOT=$GODOT" >> "$GITHUB_ENV"
+          "$GODOT" --version
+
+      - name: Run public recovery reset and immediate product reauthentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f10-data"
+          tls_dir="$data_root/tls"
+          accounts_file="$data_root/accounts.json"
+          legacy_recovery_file="$data_root/f9-recovery.token"
+          provider_file="$data_root/recovery-provider.json"
+          server_log="$RUNNER_TEMP/s4f10-worldd.log"
+          client_log="$RUNNER_TEMP/s4f10-product-main.log"
+          known_request_body="$RUNNER_TEMP/s4f10-known-request.json"
+          unknown_request_body="$RUNNER_TEMP/s4f10-unknown-request.json"
+          unknown_reset_body="$RUNNER_TEMP/s4f10-unknown-reset.json"
+          wrong_reset_body="$RUNNER_TEMP/s4f10-wrong-reset.json"
+          replay_reset_body="$RUNNER_TEMP/s4f10-replay-reset.json"
+          old_login_body="$RUNNER_TEMP/s4f10-old-login.json"
+          old_password="F10-Old-Correct-Horse-Battery-Staple!"
+          new_password="F10-New-Correct-Horse-Battery-Staple!"
+          recovery_code="F10-High-Entropy-Recovery-Code-For-Holder-0123456789abcdef"
+          wrong_recovery_code="F10-Wrong-High-Entropy-Recovery-Code-xxxxxxxxxxxxxxxx"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          mkdir -p "$data_root" "$tls_dir" "$data_root/character-state"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' "$old_password" | "$ACCOUNTCTL" create \
+            -path "$accounts_file" \
+            -login holder \
+            -character f10-character \
+            -password-stdin
+
+          # Preserve one active F.9 grant so F.10 can prove a successful public
+          # reset invalidates all older recovery proofs for the account.
+          "$ACCOUNTCTL" issue-recovery \
+            -path "$accounts_file" \
+            -login holder \
+            -ttl 15m \
+            -token-out "$legacy_recovery_file"
+
+          python3 - "$provider_file" "$recovery_code" "$accounts_file" <<'PY'
+          import hashlib, json, os, sys
+          provider_path, recovery_code, account_path = sys.argv[1:]
+          provider = {
+              "schema_version": 1,
+              "revision": "f10-ci-recovery-provider-001",
+              "subjects": [{
+                  "login_id": "holder",
+                  "recovery_code_sha256": hashlib.sha256(recovery_code.encode()).hexdigest(),
+              }],
+          }
+          with open(provider_path, "x", encoding="utf-8") as f:
+              json.dump(provider, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          os.chmod(provider_path, 0o600)
+          with open(account_path, encoding="utf-8") as f:
+              store_text = f.read()
+              store = json.loads(store_text)
+          assert store["schema_version"] == 4
+          assert store["revision"] == 3
+          assert store["accounts"][0]["credential_version"] == 1
+          assert len(store.get("recovery_grants", [])) == 1
+          assert recovery_code not in store_text
+          print("ASTRAHOLD_F10_PREPARED schema=4 revision=3 credential_version=1 raw_public_proof_persisted=false")
+          PY
+
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/ca.key" -out "$tls_dir/ca.crt" -days 1 -sha256 \
+            -subj "/CN=Astrahold S4-F.10 CI CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server.key" -out "$tls_dir/server.csr" \
+            -subj "/CN=localhost" >/dev/null 2>&1
+          cat >"$tls_dir/server.ext" <<'EOF_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_EXT
+          openssl x509 -req -in "$tls_dir/server.csr" \
+            -CA "$tls_dir/ca.crt" -CAkey "$tls_dir/ca.key" -CAcreateserial \
+            -out "$tls_dir/server.crt" -days 1 -sha256 -extfile "$tls_dir/server.ext" >/dev/null 2>&1
+          chmod 600 "$tls_dir/ca.key" "$tls_dir/server.key" "$accounts_file" "$provider_file"
+
+          cleanup() {
+            set +e
+            for pid in "${client_pid:-}" "${server_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            attempts="$4"
+            i=0
+            while [ "$i" -lt "$attempts" ]; do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                cat "$server_log" || true
+                return 1
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            cat "$server_log" || true
+            return 1
+          }
+
+          wait_success() {
+            pid="$1"
+            label="$2"
+            log_file="$3"
+            set +e
+            wait "$pid"
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
+              echo "$label failed with status $status"
+              cat "$log_file" || true
+              cat "$server_log" || true
+              exit 1
+            fi
+          }
+
+          exec "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:39777 \
+            -udp 127.0.0.1:39778 \
+            -session-login-account-file "$accounts_file" \
+            -session-login-tls-listen 127.0.0.1:39444 \
+            -session-login-tls-cert "$tls_dir/server.crt" \
+            -session-login-tls-key "$tls_dir/server.key" \
+            -session-login-ip-max-attempts 50 \
+            -session-login-ip-attempt-window 1m \
+            -session-credential-ttl 5m \
+            -session-recovery-provider-file "$provider_file" \
+            -session-recovery-challenge-ttl 10m \
+            -session-recovery-challenge-max-attempts 5 \
+            -session-recovery-ip-max-attempts 50 \
+            -session-recovery-ip-attempt-window 1m \
+            -trusted-tls-listen 127.0.0.1:39443 \
+            -trusted-tls-cert "$tls_dir/server.crt" \
+            -trusted-tls-key "$tls_dir/server.key" \
+            -character-state-dir "$data_root/character-state" \
+            -character-state-save-journal "$data_root/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data_root/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
+          server_pid=$!
+
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+          wait_for_marker "$server_log" "session login issuance: enabled=true revision=durable-3" "$server_pid" 300
+          wait_for_marker "$server_log" "session recovery: enabled=true provider=sha256-high-entropy-recovery-code revision=f10-ci-recovery-provider-001" "$server_pid" 300
+
+          ASTRAHOLD_SESSION_LOGIN_URL="https://localhost:39444" \
+          ASTRAHOLD_SESSION_LOGIN_ID=holder \
+          ASTRAHOLD_SERVER_HOST=127.0.0.1 \
+          ASTRAHOLD_SERVER_PORT=39443 \
+          ASTRAHOLD_TLS_SERVER_NAME=localhost \
+          ASTRAHOLD_TLS_CA="$tls_dir/ca.crt" \
+          ASTRAHOLD_F8_AUTOMATION_MODE=lifecycle \
+          ASTRAHOLD_F8_AUTOMATION_INITIAL_SECRET="$old_password" \
+          ASTRAHOLD_F8_AUTOMATION_REAUTH_SECRET="$new_password" \
+          "$GODOT" --headless --path "$GITHUB_WORKSPACE/.e2e-client" res://scenes/Main.tscn >"$client_log" 2>&1 &
+          client_pid=$!
+
+          wait_for_marker "$client_log" "ASTRAHOLD_F8_PRODUCT_CONNECTED generation=1" "$client_pid" 600
+
+          known_status="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output "$known_request_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/account/recovery/request)"
+          unknown_status="$(printf '{"login_id":"missing-holder"}' | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output "$unknown_request_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/account/recovery/request)"
+          test "$known_status" = "202"
+          test "$unknown_status" = "202"
+
+          read -r known_request_id unknown_request_id < <(python3 - "$known_request_body" "$unknown_request_body" <<'PY'
+          import datetime, json, sys
+          known_path, unknown_path = sys.argv[1:]
+          with open(known_path, encoding="utf-8") as f:
+              known = json.load(f)
+          with open(unknown_path, encoding="utf-8") as f:
+              unknown = json.load(f)
+          for body in (known, unknown):
+              assert set(body) == {"request_id", "expires_at"}
+              assert isinstance(body["request_id"], str) and body["request_id"]
+              assert isinstance(body["expires_at"], str) and body["expires_at"].endswith("Z")
+              datetime.datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
+          assert known["request_id"] != unknown["request_id"]
+          print(known["request_id"], unknown["request_id"])
+          PY
+          )
+          test -n "$known_request_id"
+          test -n "$unknown_request_id"
+          echo "ASTRAHOLD_F10_ENUMERATION_SHAPE_OK known_status=202 unknown_status=202 fields=request_id,expires_at"
+
+          unknown_reset_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$unknown_request_id" "$recovery_code" "$new_password" | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output "$unknown_reset_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/account/recovery/reset)"
+          wrong_reset_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$known_request_id" "$wrong_recovery_code" "$new_password" | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output "$wrong_reset_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/account/recovery/reset)"
+          test "$unknown_reset_status" = "401"
+          test "$wrong_reset_status" = "401"
+          cmp "$unknown_reset_body" "$wrong_reset_body"
+          grep -F '"error":"invalid_recovery"' "$unknown_reset_body"
+
+          reset_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$known_request_id" "$recovery_code" "$new_password" | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output /dev/null --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/account/recovery/reset)"
+          test "$reset_status" = "204"
+
+          # No SIGHUP is sent here. The successful public reset itself must
+          # publish the new durable account generation and retire the old peer.
+          wait_for_marker "$client_log" "ASTRAHOLD_F8_REAUTH_REQUIRED" "$client_pid" 300
+
+          old_status="$(printf '{"login_id":"holder","login_secret":"%s"}' "$old_password" | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output "$old_login_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/session/login)"
+          test "$old_status" = "401"
+          grep -F '"error":"invalid_credentials"' "$old_login_body"
+
+          replay_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$known_request_id" "$recovery_code" "$new_password" | curl --silent --show-error \
+            --cacert "$tls_dir/ca.crt" --output "$replay_reset_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/account/recovery/reset)"
+          test "$replay_status" = "401"
+          cmp "$unknown_reset_body" "$replay_reset_body"
+
+          python3 - "$accounts_file" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              store = json.load(f)
+          assert store["schema_version"] == 4
+          assert store["revision"] == 4
+          account = store["accounts"][0]
+          assert account["credential_version"] == 2
+          assert account["password_argon2id"].startswith("$argon2id$v=19$m=65536,t=3,p=4$")
+          assert not store.get("recovery_grants")
+          print("ASTRAHOLD_F10_RESET_COMMITTED revision=4 credential_version=2 legacy_recovery_grants=0")
+          PY
+
+          wait_for_marker "$client_log" "ASTRAHOLD_F8_PRODUCT_LOGIN_UX_OK" "$client_pid" 600
+          wait_success "$client_pid" "F.10 product public recovery reauthentication" "$client_log"
+          client_pid=""
+
+          for secret in "$old_password" "$new_password" "$recovery_code" "$wrong_recovery_code"; do
+            if grep -Fq "$secret" "$client_log" || grep -Fq "$secret" "$server_log"; then
+              echo "captured logs leaked a recovery/password secret"
+              exit 1
+            fi
+          done
+          if grep -Fq "session_credential" "$client_log" || grep -Fq "session_credential" "$server_log"; then
+            echo "logs unexpectedly exposed an issued bearer field"
+            exit 1
+          fi
+
+          echo "ASTRAHOLD_F10_E2E_OK public_request_enumeration_shape=true invalid_recovery_uniform=true challenge_one_time=true immediate_live_revocation=true no_sighup=true old_password_rejected=true product_reauth=true legacy_recovery_invalidated=true protocol=9 tls=1.3"
+
+      - name: Upload F.10 public recovery E2E logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f10-production-public-recovery-logs
+          path: |
+            ${{ runner.temp }}/s4f10-worldd.log
+            ${{ runner.temp }}/s4f10-product-main.log
+            ${{ runner.temp }}/s4f10-known-request.json
+            ${{ runner.temp }}/s4f10-unknown-request.json
+            ${{ runner.temp }}/s4f10-unknown-reset.json
+            ${{ runner.temp }}/s4f10-wrong-reset.json
+            ${{ runner.temp }}/s4f10-replay-reset.json
+            ${{ runner.temp }}/s4f10-old-login.json
+          if-no-files-found: warn

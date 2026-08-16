@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/li41/astrahold-server/internal/accountrecovery"
 	"github.com/li41/astrahold-server/internal/accountstore"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/sessioncredential"
@@ -22,12 +23,15 @@ const (
 )
 
 type durableSessionLoginAccount struct {
-	password argon2idPasswordHash
-	grant    sessioncredential.Grant
-	disabled bool
+	password          argon2idPasswordHash
+	grant             sessioncredential.Grant
+	accountID         string
+	credentialVersion uint64
+	disabled          bool
 }
 
 type durableSessionLoginAuthenticator struct {
+	schemaVersion uint16
 	storeRevision uint64
 	accounts      map[string]durableSessionLoginAccount
 	generations   map[string]string
@@ -73,15 +77,18 @@ func newDurableSessionLoginAuthenticator(definition accountstore.Definition) (*d
 			AuthenticationGeneration: generation,
 		}
 		accounts[item.LoginID] = durableSessionLoginAccount{
-			password: password,
-			grant:    grant,
-			disabled: item.DisabledAt != "",
+			password:          password,
+			grant:             grant,
+			accountID:         item.AccountID,
+			credentialVersion: item.CredentialVersion,
+			disabled:          item.DisabledAt != "",
 		}
 		if item.DisabledAt == "" {
 			generations[item.AccountID] = generation
 		}
 	}
 	return &durableSessionLoginAuthenticator{
+		schemaVersion: definition.SchemaVersion,
 		storeRevision: definition.Revision,
 		accounts:      accounts,
 		generations:   generations,
@@ -107,6 +114,30 @@ func (a *durableSessionLoginAuthenticator) StoreRevision() uint64 {
 		return 0
 	}
 	return a.storeRevision
+}
+
+func (a *durableSessionLoginAuthenticator) RecoveryEnabled() bool {
+	return a != nil && a.schemaVersion == sessionDurableAccountSchemaVersion
+}
+
+func (a *durableSessionLoginAuthenticator) RecoverySubject(loginID string) accountrecovery.Subject {
+	subject := accountrecovery.Subject{
+		LoginID:           loginID,
+		AccountID:         "unmatched-recovery-account",
+		CredentialVersion: 1,
+		Eligible:          false,
+	}
+	if a == nil || !a.RecoveryEnabled() {
+		return subject
+	}
+	account, exists := a.accounts[loginID]
+	if !exists {
+		return subject
+	}
+	subject.AccountID = account.accountID
+	subject.CredentialVersion = account.credentialVersion
+	subject.Eligible = !account.disabled
+	return subject
 }
 
 func (a *durableSessionLoginAuthenticator) GenerationActive(subject, generation string) bool {
@@ -204,6 +235,9 @@ func (r *sessionLoginRuntime) reloadDurableAccounts(now time.Time) (sessionAccou
 	nextDurable, ok := nextAuthenticator.(*durableSessionLoginAuthenticator)
 	if !ok {
 		return sessionAccountReloadResult{}, fmt.Errorf("%w: reload requires durable schema_version %d or %d", errSessionLoginConfig, sessionDurableAccountLegacySchemaVersion, sessionDurableAccountSchemaVersion)
+	}
+	if r.recoveryProvider != nil && !nextDurable.RecoveryEnabled() {
+		return sessionAccountReloadResult{}, fmt.Errorf("%w: recovery-enabled runtime cannot reload below durable schema_version %d", errSessionLoginConfig, sessionDurableAccountSchemaVersion)
 	}
 	if nextDurable.StoreRevision() <= previousStoreRevision {
 		return sessionAccountReloadResult{}, fmt.Errorf("%w: durable account revision must advance: previous=%d next=%d", errSessionLoginConfig, previousStoreRevision, nextDurable.StoreRevision())

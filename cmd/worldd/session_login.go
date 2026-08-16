@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/accountrecovery"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/sessioncredential"
 )
@@ -40,7 +41,7 @@ var (
 	sessionLoginAccountFile = flag.String(
 		"session-login-account-file",
 		"",
-		"Optional server-side account verifier map (schema v1 high-entropy SHA-256, schema v2 Argon2id password, or schema v3 durable account store) used to issue short-lived opaque session credentials",
+		"Optional server-side account verifier map (schema v1 high-entropy SHA-256, schema v2 Argon2id password, or durable schema v3/v4 account store) used to issue short-lived opaque session credentials",
 	)
 	sessionLoginTLSListen = flag.String(
 		"session-login-tls-listen",
@@ -188,15 +189,17 @@ func (a *staticSessionLoginAuthenticator) Authenticate(ctx context.Context, logi
 }
 
 type sessionLoginRuntime struct {
-	accountPath string
-	accountAuth *sessionAccountAuthRuntime
-	abuseGuard  *sessionLoginAbuseGuard
-	provider    *reloadableTrustedCharacterCredentialProvider
-	listener    net.Listener
-	ttl         time.Duration
-	now         func() time.Time
-	random      io.Reader
-	changed     chan struct{}
+	accountPath      string
+	accountAuth      *sessionAccountAuthRuntime
+	abuseGuard       *sessionLoginAbuseGuard
+	recoveryProvider accountrecovery.Provider
+	recoveryGuard    *sessionLoginAbuseGuard
+	provider         *reloadableTrustedCharacterCredentialProvider
+	listener         net.Listener
+	ttl              time.Duration
+	now              func() time.Time
+	random           io.Reader
+	changed          chan struct{}
 
 	mu            sync.Mutex
 	replaceScopes func([]string) int
@@ -207,7 +210,8 @@ func sessionLoginConfigurationRequested() bool {
 	return strings.TrimSpace(*sessionLoginAccountFile) != "" ||
 		strings.TrimSpace(*sessionLoginTLSListen) != "" ||
 		strings.TrimSpace(*sessionLoginTLSCertFile) != "" ||
-		strings.TrimSpace(*sessionLoginTLSKeyFile) != ""
+		strings.TrimSpace(*sessionLoginTLSKeyFile) != "" ||
+		strings.TrimSpace(*sessionRecoveryProviderFile) != ""
 }
 
 func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
@@ -244,6 +248,10 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	recoveryProvider, recoveryGuard, err := loadSessionRecoveryProvider(accountAuth)
+	if err != nil {
+		return nil, err
+	}
 	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("%w: load session login certificate: %v", errSessionLoginConfig, err)
@@ -259,10 +267,12 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 		return nil, err
 	}
 	return &sessionLoginRuntime{
-		accountPath: accountPath,
-		accountAuth: accountAuth,
-		abuseGuard:  newSessionLoginAbuseGuard(*sessionLoginIPAttemptWindow, *sessionLoginIPMaxAttempts, time.Now),
-		provider:    provider,
+		accountPath:      accountPath,
+		accountAuth:      accountAuth,
+		abuseGuard:       newSessionLoginAbuseGuard(*sessionLoginIPAttemptWindow, *sessionLoginIPMaxAttempts, time.Now),
+		recoveryProvider: recoveryProvider,
+		recoveryGuard:    recoveryGuard,
+		provider:         provider,
 		listener: tls.NewListener(base, &tls.Config{
 			Certificates: []tls.Certificate{certificate},
 			MinVersion:   tls.VersionTLS13,
@@ -500,6 +510,10 @@ func (r *sessionLoginRuntime) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/session/login", r.handleSessionLogin)
 	mux.HandleFunc("/v1/session/logout", r.handleSessionLogout)
+	if r.recoveryProvider != nil {
+		mux.HandleFunc("/v1/account/recovery/request", r.handleRecoveryRequest)
+		mux.HandleFunc("/v1/account/recovery/reset", r.handleRecoveryReset)
+	}
 	return mux
 }
 
@@ -651,6 +665,9 @@ func runIssuedSessionCredentialRuntime(
 		reloadMode = "sighup"
 	}
 	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
+	if runtime.recoveryProvider != nil {
+		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion)
+	}
 
 	for {
 		current := runtime.provider.snapshot()
