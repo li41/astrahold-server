@@ -1,6 +1,7 @@
 package accountstore
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +13,14 @@ import (
 )
 
 const (
-	SchemaVersion        uint16 = 3
+	LegacySchemaVersion  uint16 = 3
+	SchemaVersion        uint16 = 4
 	MaxAccountIDBytes           = 128
 	MaxLoginIDBytes             = 128
 	MaxCharacterIDBytes         = 128
+	MaxRecoveryIDBytes          = 128
+	RecoveryTokenHashBytes      = 32
+	MaxRecoveryTTL              = 24 * time.Hour
 )
 
 var (
@@ -24,9 +29,10 @@ var (
 )
 
 type Definition struct {
-	SchemaVersion uint16    `json:"schema_version"`
-	Revision      uint64    `json:"revision"`
-	Accounts      []Account `json:"accounts"`
+	SchemaVersion  uint16          `json:"schema_version"`
+	Revision       uint64          `json:"revision"`
+	Accounts       []Account       `json:"accounts"`
+	RecoveryGrants []RecoveryGrant `json:"recovery_grants,omitempty"`
 }
 
 type Account struct {
@@ -41,8 +47,18 @@ type Account struct {
 	AllowActiveTakeover bool   `json:"allow_active_takeover,omitempty"`
 }
 
+type RecoveryGrant struct {
+	RecoveryID        string `json:"recovery_id"`
+	AccountID         string `json:"account_id"`
+	CredentialVersion uint64 `json:"credential_version"`
+	TokenSHA256       string `json:"token_sha256"`
+	IssuedAt          string `json:"issued_at"`
+	NotBefore         string `json:"not_before"`
+	ExpiresAt         string `json:"expires_at"`
+}
+
 func NewEmpty() Definition {
-	return Definition{SchemaVersion: SchemaVersion, Revision: 1, Accounts: []Account{}}
+	return Definition{SchemaVersion: SchemaVersion, Revision: 1, Accounts: []Account{}, RecoveryGrants: []RecoveryGrant{}}
 }
 
 func Load(path string) (Definition, error) {
@@ -70,7 +86,7 @@ func Load(path string) (Definition, error) {
 }
 
 func Validate(definition Definition) error {
-	if definition.SchemaVersion != SchemaVersion || definition.Revision == 0 {
+	if (definition.SchemaVersion != LegacySchemaVersion && definition.SchemaVersion != SchemaVersion) || definition.Revision == 0 {
 		return ErrInvalidStore
 	}
 	accountIDs := make(map[string]struct{}, len(definition.Accounts))
@@ -109,6 +125,62 @@ func Validate(definition Definition) error {
 		}
 		if err := validateTrimmed("character_id", account.CharacterID, MaxCharacterIDBytes); err != nil {
 			return fmt.Errorf("%w: account[%d] %v", ErrInvalidStore, index, err)
+		}
+	}
+
+	if definition.SchemaVersion == LegacySchemaVersion {
+		if len(definition.RecoveryGrants) != 0 {
+			return fmt.Errorf("%w: schema_version %d does not permit recovery_grants", ErrInvalidStore, LegacySchemaVersion)
+		}
+		return nil
+	}
+
+	recoveryIDs := make(map[string]struct{}, len(definition.RecoveryGrants))
+	tokenHashes := make(map[string]struct{}, len(definition.RecoveryGrants))
+	for index, grant := range definition.RecoveryGrants {
+		if err := validateTrimmed("recovery_id", grant.RecoveryID, MaxRecoveryIDBytes); err != nil {
+			return fmt.Errorf("%w: recovery_grant[%d] %v", ErrInvalidStore, index, err)
+		}
+		if _, exists := recoveryIDs[grant.RecoveryID]; exists {
+			return fmt.Errorf("%w: duplicate recovery_id %q", ErrInvalidStore, grant.RecoveryID)
+		}
+		recoveryIDs[grant.RecoveryID] = struct{}{}
+		if _, exists := accountIDs[grant.AccountID]; !exists {
+			return fmt.Errorf("%w: recovery_grant[%d] references unknown account_id %q", ErrInvalidStore, index, grant.AccountID)
+		}
+		if grant.CredentialVersion == 0 {
+			return fmt.Errorf("%w: recovery_grant[%d] credential_version must be > 0", ErrInvalidStore, index)
+		}
+		if len(grant.TokenSHA256) != RecoveryTokenHashBytes*2 || strings.ToLower(grant.TokenSHA256) != grant.TokenSHA256 {
+			return fmt.Errorf("%w: recovery_grant[%d] token_sha256 must be 64 lowercase hex characters", ErrInvalidStore, index)
+		}
+		if _, err := hex.DecodeString(grant.TokenSHA256); err != nil {
+			return fmt.Errorf("%w: recovery_grant[%d] token_sha256 is invalid", ErrInvalidStore, index)
+		}
+		if _, exists := tokenHashes[grant.TokenSHA256]; exists {
+			return fmt.Errorf("%w: duplicate recovery token digest", ErrInvalidStore)
+		}
+		tokenHashes[grant.TokenSHA256] = struct{}{}
+		issuedAt, err := parseTimestamp("issued_at", grant.IssuedAt)
+		if err != nil {
+			return fmt.Errorf("%w: recovery_grant[%d] %v", ErrInvalidStore, index, err)
+		}
+		notBefore, err := parseTimestamp("not_before", grant.NotBefore)
+		if err != nil {
+			return fmt.Errorf("%w: recovery_grant[%d] %v", ErrInvalidStore, index, err)
+		}
+		expiresAt, err := parseTimestamp("expires_at", grant.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("%w: recovery_grant[%d] %v", ErrInvalidStore, index, err)
+		}
+		if notBefore.Before(issuedAt) {
+			return fmt.Errorf("%w: recovery_grant[%d] not_before must not precede issued_at", ErrInvalidStore, index)
+		}
+		if !expiresAt.After(notBefore) {
+			return fmt.Errorf("%w: recovery_grant[%d] expires_at must be after not_before", ErrInvalidStore, index)
+		}
+		if expiresAt.Sub(issuedAt) > MaxRecoveryTTL {
+			return fmt.Errorf("%w: recovery_grant[%d] lifetime exceeds %s", ErrInvalidStore, index, MaxRecoveryTTL)
 		}
 	}
 	return nil
@@ -195,12 +267,17 @@ func validateTrimmed(name, value string, maxBytes int) error {
 }
 
 func validateTimestamp(name, value string) error {
+	_, err := parseTimestamp(name, value)
+	return err
+}
+
+func parseTimestamp(name, value string) (time.Time, error) {
 	if value == "" {
-		return fmt.Errorf("%s is required", name)
+		return time.Time{}, fmt.Errorf("%s is required", name)
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil || parsed.Location() != time.UTC {
-		return fmt.Errorf("%s must be UTC RFC3339", name)
+		return time.Time{}, fmt.Errorf("%s must be UTC RFC3339", name)
 	}
-	return nil
+	return parsed, nil
 }

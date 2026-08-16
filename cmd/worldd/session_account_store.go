@@ -16,7 +16,10 @@ import (
 	"github.com/li41/astrahold-server/internal/sessioncredential"
 )
 
-const sessionDurableAccountSchemaVersion = accountstore.SchemaVersion
+const (
+	sessionDurableAccountLegacySchemaVersion = accountstore.LegacySchemaVersion
+	sessionDurableAccountSchemaVersion       = accountstore.SchemaVersion
+)
 
 type durableSessionLoginAccount struct {
 	password argon2idPasswordHash
@@ -42,7 +45,7 @@ func loadDurableSessionLoginAuthenticator(path string) (*durableSessionLoginAuth
 }
 
 func newDurableSessionLoginAuthenticator(definition accountstore.Definition) (*durableSessionLoginAuthenticator, error) {
-	if definition.SchemaVersion != sessionDurableAccountSchemaVersion || definition.Revision == 0 || len(definition.Accounts) == 0 {
+	if (definition.SchemaVersion != sessionDurableAccountLegacySchemaVersion && definition.SchemaVersion != sessionDurableAccountSchemaVersion) || definition.Revision == 0 || len(definition.Accounts) == 0 {
 		return nil, errSessionLoginConfig
 	}
 	accounts := make(map[string]durableSessionLoginAccount, len(definition.Accounts))
@@ -200,7 +203,7 @@ func (r *sessionLoginRuntime) reloadDurableAccounts(now time.Time) (sessionAccou
 	}
 	nextDurable, ok := nextAuthenticator.(*durableSessionLoginAuthenticator)
 	if !ok {
-		return sessionAccountReloadResult{}, fmt.Errorf("%w: reload requires schema_version %d", errSessionLoginConfig, sessionDurableAccountSchemaVersion)
+		return sessionAccountReloadResult{}, fmt.Errorf("%w: reload requires durable schema_version %d or %d", errSessionLoginConfig, sessionDurableAccountLegacySchemaVersion, sessionDurableAccountSchemaVersion)
 	}
 	if nextDurable.StoreRevision() <= previousStoreRevision {
 		return sessionAccountReloadResult{}, fmt.Errorf("%w: durable account revision must advance: previous=%d next=%d", errSessionLoginConfig, previousStoreRevision, nextDurable.StoreRevision())

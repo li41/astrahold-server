@@ -188,7 +188,7 @@ func loadSessionAccountAuthenticator(path string) (sessionAccountAuthenticator, 
 		return loadStaticSessionLoginAuthenticator(path)
 	case sessionPasswordSchemaVersion:
 		return loadArgon2idSessionLoginAuthenticatorData(data)
-	case sessionDurableAccountSchemaVersion:
+	case sessionDurableAccountLegacySchemaVersion, sessionDurableAccountSchemaVersion:
 		return loadDurableSessionLoginAuthenticator(path)
 	default:
 		return nil, fmt.Errorf("%w: unsupported schema_version %d", errSessionLoginConfig, header.SchemaVersion)
