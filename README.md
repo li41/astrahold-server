@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.10 — Verified Recovery Provider / Public Reset Exchange**；paired Godot Client 已完成 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.12 — Verified Recovery Delivery Adapter / Provider Integration**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -40,6 +40,9 @@ Server runtime 主線已完成到 **S4-F.10 — Verified Recovery Provider / Pub
 - F.11 Client只保存opaque recovery challenge於process memory；不顯示、不持久化、不寫log
 - F.11 successful reset回normal login並要求fresh password submit；不自動replay replacement password
 - F.11 production gate同時驗證generic unknown request、generic `invalid_recovery`、`recovery_throttled + Retry-After`與13/13 Client workflows
+- **F.12 provider-neutral `DeliveryAdapter` seam + schema-v2 delivered recovery reference provider**
+- F.12 destination只由Server/provider config決定；public request仍只送`login_id`且不回destination/account existence
+- F.12 filesystem reference adapter以0600 proof handoff完成真實F.11 `Main.tscn` reset/fresh-login E2E；delivery failure維持generic accepted public shape但challenge不可兌換
 
 核心 production contract：
 
@@ -370,7 +373,7 @@ POST /v1/account/recovery/request
 POST /v1/account/recovery/reset
 ```
 
-`accountrecovery.Provider` 負責 challenge與proof verification。內建 reference provider為：
+`accountrecovery.Provider` 負責 challenge與proof verification。內建 F.10 compatibility reference provider為：
 
 ```text
 sha256-high-entropy-recovery-code
@@ -443,6 +446,20 @@ F.11 product E2E證明：unknown-account request使用generic accepted UX、wron
 
 F.11 Client exact final head通過13/13 workflows；這個Stage沒有新增GameV1、Protocol v10或任何Client gameplay/account authority。
 
+### F.12 verified recovery delivery adapter
+
+F.12 保留 F.10 public API與 `accountrecovery.Provider` authority boundary，新增只負責transport的 `accountrecovery.DeliveryAdapter`。Client仍不能選destination；destination ownership完全來自Server/provider config。
+
+既有 `-session-recovery-provider-file` 維持單一入口：schema v1仍相容F.10 digest-only recovery code；schema v2加入 delivered reference provider，使用32-byte proof key產生domain-separated HMAC-SHA256 proof並綁定Server-owned `login_id + account_id + credential_version`。
+
+F.12 reference transport為 `filesystem-reference-v1`：inbox root必須是無group/other權限的真實directory，每次delivery只原子發布 `<destination>.proof` 且檔案mode為0600；不把opaque `request_id`寫進handoff file或一般log。這是deterministic / CI-friendly reference adapter，**不是 production email/SMS vendor integration**。
+
+Enumeration-safe failure mapping保持public contract不變：unknown/ineligible account不delivery；per-subject transient/permanent delivery failure仍回同一`202 + request_id + expires_at` shape，但reserved challenge維持non-authorizing。Wrong、expired、inactive、consumed或stale-generation proof都回generic `401 invalid_recovery`；source-IP throttle仍回`429 recovery_throttled + Retry-After`。
+
+F.12 production E2E固定paired Client F.11 main，證明unknown no-delivery、known delivery、forced delivery failure不洩漏existence、delivered proof可由真實normal `Main.tscn`完成reset/fresh-login、舊密碼失效、stale generation/replay fail-closed、throttle與secret/log gate。既有F.10 exact-head E2E同時持續證明successful reset立即退休舊bearer/live peer且不需要SIGHUP。
+
+完整 F.12 contract：[`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md)。
+
 ### KDF migration
 
 ```bash
@@ -483,7 +500,7 @@ load + validate new account snapshot
 
 Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 generation已 commit，stale grant就不能再 mint bearer。
 
-F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11再由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle。Recovery proof、password與issued bearer持續有log-leak fail-fast檢查。
+F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12再把proof取得路徑接到Server-owned delivery adapter而不改Client authority。Recovery proof、password、opaque request metadata與issued bearer持續有log-leak fail-fast檢查。
 
 ### Login / recovery abuse control
 
@@ -513,6 +530,7 @@ Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds�
 
 完整身份／登入文件：
 
+- [`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md)
 - [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md)
 - [`docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`](docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md)
 - [`docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`](docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md)
@@ -554,9 +572,10 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.8 | Normal Godot `Main.tscn` login / live-revocation reauth / logout / 401 / 429 UX | ✅ |
 | S4-F.9 | Schema-v4 operator recovery；digest-only proof；issue不踢人；one-time reset後live retirement | ✅ |
 | S4-F.10 | Provider seam + public recovery request/reset；same known/unknown response schema；no-SIGHUP immediate retirement；normal Main reauth | ✅ |
-| **S4-F.11** | **Normal Godot Client recovery UX；generic unknown/wrong-proof；reset→fresh login；recovery throttle；secret/challenge no-persistence** | **✅** |
+| S4-F.11 | Normal Godot Client recovery UX；generic unknown/wrong-proof；reset→fresh login；recovery throttle；secret/challenge no-persistence | ✅ |
+| **S4-F.12** | **DeliveryAdapter seam；Server-owned destination；filesystem reference delivery；enumeration-safe failure；F.11 Main delivered-proof reset/fresh-login** | **✅** |
 
-Server runtime contract仍停在F.10；F.11是paired Client integration stage。F.11 final exact head通過13/13 Client workflows，並將七條歷史E.5/E.6/E.7/F.5/F.6/F.7/F.8 workflow修為真正checkout其原先assert的固定Server milestone SHA，scenario本體未改。
+Server runtime contract現在是F.12；paired Client runtime仍是F.11。F.12 exact product head通過Server CI、Production Account Recovery E2E、Production Public Recovery E2E與Production Recovery Delivery E2E；Protocol仍v9，Client product code未為F.12增加任何account/game authority。
 
 ## 文件入口
 
@@ -564,6 +583,7 @@ Server runtime contract仍停在F.10；F.11是paired Client integration stage。
 
 - 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md) — provider-neutral verified delivery adapter / reference transport / failure mapping
 - [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md) — verified recovery provider / public reset / immediate revocation
 - Client `docs/S4F11_CLIENT_RECOVERY_UX.md` — provider-neutral normal Client recovery / fresh-login / secret-handling acceptance
 - [`docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`](docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md) — schema-v4 operator recovery / one-time reset / KDF migration
@@ -660,7 +680,7 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 - Realtime UDP尚未加密；目前只有 authenticity / integrity。
 - Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
-- F.11 Client已有provider-neutral recovery API/UX，但Server內建F.10 provider仍只驗high-entropy recovery code；尚未有verified email/SMS ownership / delivery provider。
+- F.12 已有provider-neutral verified-delivery seam與deterministic filesystem reference adapter，但它不是production email/SMS provider；尚未整合真實verified delivery service、provider credentials lifecycle或外部send retry/observability contract。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
 - Login/recovery都有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
@@ -673,10 +693,10 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.11 已把 F.10 public recovery contract正式接進normal Godot Client，並證明generic unknown-account feedback、opaque challenge、wrong-proof UX、successful reset→fresh login、recovery throttle與secret/challenge no-persistence都可在不新增任何Client authority的前提下成立。
+S4-F.12 已把F.10 provider authority與F.11 Client UX之間缺少的delivery layer補齊：Server決定destination、delivery adapter只負責transport、unknown與delivery-failure保持enumeration-safe public shape，reference proof由真實normal `Main.tscn`完成reset/fresh-login，既有no-SIGHUP bearer/live-peer retirement也在同一exact head持續成立。
 
-下一個 bounded stage 應進入 **S4-F.12 — Verified Recovery Delivery Adapter / Provider Integration**：把F.10 provider seam從「預先配置的high-entropy recovery code」推進到可插拔verified delivery adapter contract，定義destination ownership、challenge correlation、send/retry/expiry/failure mapping與enumeration-resistant request行為；先建立provider-neutral adapter seam與可自動驗證的reference transport，不把真實email/SMS vendor credentials綁進核心Server。
+下一個 bounded stage 建議進入 **S4-F.13 — Production Recovery Delivery Provider / Operational Hardening**：在不改public recovery API與Client authority的前提下，為`DeliveryAdapter`加入一個真正可部署但仍vendor-isolated的delivery integration contract，收斂provider credential載入、timeout/retry/idempotency、send outcome分類、secret-safe observability與CI fake endpoint；真實vendor選型與credentials不應成為core Server compile-time dependency。
 
-實際email/SMS vendor、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與transport替換仍保持獨立 decision gate。
+Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
