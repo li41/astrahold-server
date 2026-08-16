@@ -62,6 +62,7 @@ func (p *reloadableTrustedCharacterCredentialProvider) replace(next *staticTrust
 type trustedCharacterAuthRuntime struct {
 	path     string
 	provider *reloadableTrustedCharacterCredentialProvider
+	issued   *sessionLoginRuntime
 }
 
 type trustedCharacterAuthReloadResult struct {
@@ -72,6 +73,26 @@ type trustedCharacterAuthReloadResult struct {
 }
 
 func loadRuntimeTrustedCharacterAuthenticator(path, tcpAddress string) (tcpudp.TrustedCharacterConnectionAuthenticator, *trustedCharacterAuthRuntime, string, error) {
+	issuedRuntime, err := loadSessionLoginRuntime(tcpAddress)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if issuedRuntime != nil {
+		if strings.TrimSpace(path) != "" {
+			_ = issuedRuntime.Close()
+			return nil, nil, "", errSessionLoginAuthModeConflict
+		}
+		authenticator, err := newTrustedCharacterAuthenticatorWithProvider(issuedRuntime.provider)
+		if err != nil {
+			_ = issuedRuntime.Close()
+			return nil, nil, "", err
+		}
+		return authenticator.Authenticate, &trustedCharacterAuthRuntime{
+			provider: issuedRuntime.provider,
+			issued:   issuedRuntime,
+		}, "session-login/" + issuedRuntime.accountAuth.revision, nil
+	}
+
 	if strings.TrimSpace(path) == "" {
 		return nil, nil, "", nil
 	}
@@ -142,7 +163,7 @@ func nextTrustedCharacterAuthenticationBoundary(provider *staticTrustedCharacter
 }
 
 func applyTrustedCharacterAuthReload(runtime *trustedCharacterAuthRuntime, replaceScopes func([]string) int, now time.Time) (trustedCharacterAuthReloadResult, error) {
-	if runtime == nil || runtime.provider == nil || strings.TrimSpace(runtime.path) == "" || replaceScopes == nil {
+	if runtime == nil || runtime.provider == nil || strings.TrimSpace(runtime.path) == "" || replaceScopes == nil || runtime.issued != nil {
 		return trustedCharacterAuthReloadResult{}, errTrustedCharacterAuthRuntimeReloadUnavailable
 	}
 	if now.IsZero() {
@@ -192,6 +213,10 @@ func runTrustedCharacterAuthRuntime(
 	logf func(string, ...any),
 ) {
 	if ctx == nil || runtime == nil || replaceScopes == nil {
+		return
+	}
+	if runtime.issued != nil {
+		runIssuedSessionCredentialRuntime(ctx, reloadSignals, runtime.issued, replaceScopes, logf)
 		return
 	}
 	if logf == nil {
@@ -248,6 +273,9 @@ func stopTrustedCharacterAuthTimer(timer *time.Timer) {
 func describeTrustedCharacterAuthRuntime(runtime *trustedCharacterAuthRuntime) string {
 	if runtime == nil || runtime.provider == nil {
 		return "disabled"
+	}
+	if runtime.issued != nil {
+		return fmt.Sprintf("issued-session/login-tls@%s", runtime.issued.Addr())
 	}
 	current := runtime.provider.snapshot()
 	if current == nil {
