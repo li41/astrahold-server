@@ -1,6 +1,6 @@
 # Astrahold Server Current Architecture Baseline
 
-> **Current production contract.** 本文件描述截至 **S4-E.7 — WAN / NAT & Secure Deployment Readiness E2E** 的現行架構。早期 `S2*`、`S3*` stage 文件保留當時的 Protocol / Transport / Gameplay World contract 作為歷史紀錄；若內容與本文件或 `README.md` 衝突，以目前 production contract 為準。
+> **Current production contract.** 本文件描述截至 **S4-F.23 — Authenticated Proxy Identity-Aware Retirement / Partial Binding Rotation** 的現行 Server 架構；paired Godot Client runtime 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**，wire contract 維持 **Protocol v9**。早期 `S1*`、`S2*`、`S3*` 與較早 `S4*` stage 文件保留當時的 Protocol / Transport / Gameplay / Security contract 作為歷史證據；若內容與本文件或 root `README.md` 衝突，以目前 production contract 為準。
 
 ## 核心決策
 
@@ -13,7 +13,8 @@ Astrahold Server 是全新 Go authoritative MMORPG Server Core。舊系統只能
 3. **World tick 不做 blocking I/O。** Network / persistence 都在 owner loop 外處理。
 4. **Gameplay Proxy 是權威契約。** Visual Mesh 永遠不能成為 Navigation、LOS、Gate 或 objective truth。
 5. **Snapshot absence != despawn。** Entity lifecycle 只相信 Reliable Spawn / Despawn。
-6. **Measure → Profile → Optimize。** 沒有 profiling 證據前，不拆 world actor、不做激進 quantization / delta compression，也不因技術偏好替換 transport。
+6. **Account / recovery proof != gameplay authority。** Login 或 recovery 成功不代表 Client 可以指定 CharacterID、takeover、team、HP 或 ownership。
+7. **Measure → Profile → Optimize。** 沒有 profiling 證據前，不拆 world actor、不做激進 quantization / delta compression，也不因技術偏好替換 transport。
 
 ## 世界模型
 
@@ -70,6 +71,7 @@ Network Reader / Trusted Ingress / Persistence
 - World tick 不得直接做 blocking socket / file / DB I/O。
 - Join、Leave、restore、ownership transfer 都必須經 WorldRuntime transaction / fence。
 - outbound queue 必須 bounded；backpressure 不能靠無限記憶體吸收。
+- Account generation、issued bearer、recovery reset、connection takeover 與 edge reload 都必須在各自的 mutation / publication fence 內保持可驗證 ordering。
 
 ## Protocol v9
 
@@ -77,7 +79,7 @@ Network Reader / Trusted Ingress / Persistence
 
 ### ASTR frame
 
-Gameplay envelope 仍使用固定 28-byte ASTR frame header：
+Gameplay envelope 使用固定 28-byte ASTR frame header：
 
 ```text
 0   uint32  Magic = ASTR
@@ -105,7 +107,7 @@ Frame decoder 必須驗證 magic、version、header size、delivery 與 payload 
 - `ClientUseAction`
 - `SiegeMatchState` (`MessageType = 106`)
 
-Production trusted bootstrap 可使用同 process **TLS 1.3 ingress**。TLS terminator 只允許轉發到 literal-loopback backend；trusted bearer credential 不應暴露在 Internet-facing plaintext listener。
+Production trusted ingress 與 issued-session game bootstrap 都使用 TLS 1.3。Client 取得 gameplay admission 的 authority 來自 Server-owned credential / issued-session state，不來自 Client 自報 CharacterID 或 takeover bit。
 
 ### Realtime Sequenced / UDP
 
@@ -148,7 +150,7 @@ MaxSnapshotEntitiesPerChunk       43
 
 ## Realtime endpoint / NAT policy
 
-S4-E.7 已把 same-IP NAT-like source-port migration 做成 production E2E gate。
+Same-IP NAT-like source-port migration 已是 production gate。
 
 Server 對 C2S realtime datagram 的安全順序：
 
@@ -176,22 +178,71 @@ live public RoutingID
 
 ## Session / identity / ownership
 
-Development path 可使用 ephemeral identity；production trusted path 使用 Server-owned credential map 將 opaque credential 綁到 trusted `CharacterID`。
+Production `worldd` 有兩個互斥的 trusted identity 入口：
+
+1. **Static trusted credential mode**：`-trusted-character-auth-file`；
+2. **Issued-session login mode**：`-session-login-account-file` + TLS 1.3 login control plane。
+
+兩條路徑最後都進入 Server-owned session credential provider、ASTRAH1 trusted game admission 與 Session / Ownership Fence。
 
 Client 不提交：
 
 - CharacterID
 - ownership epoch
 - takeover permission
+- account generation
 - team
 - HP / damage
 - restore transform
 
-Active takeover authority 只存在 Server credential policy。Ownership transfer 使用 exact fence / epoch CAS；成功 takeover 保留 authoritative EntityID / live state，advance ownership epoch，retire old peer，再建立 replacement connection generation。
+Active takeover authority 只存在 Server policy。Ownership transfer 使用 exact fence / epoch CAS；成功 takeover 保留 authoritative EntityID / live state，advance ownership epoch，retire old peer，再建立 replacement connection generation。
 
-每個新 reliable connection 都取得新的 realtime secret / public route generation。Old peer retirement 立即撤銷該 exact generation 的 token / route lookup；stale close 不能刪除 replacement generation。
+每個新 reliable connection 都取得新的 realtime secret / public route generation。Old peer retirement 立即撤銷該 exact generation 的 route lookup；stale close 不能刪除 replacement generation。
 
-目前沒有 periodic in-session realtime rekey。若 secret-lifetime policy 要求比 connection lifetime 更短，才加入有 acknowledgement / overlap semantics 的 rotation。
+### Issued-session login
+
+Public login request 只接受：
+
+```text
+login_id + login_secret
+```
+
+成功後 Server 發出短生命週期 opaque `session_credential`；Client 不從 bearer 推導 CharacterID 或 account authority。Issued bearer 為 process-local proof；logout、expiry、account-generation change、password reset 或其他明確 revocation 都可沿既有 transport/session fence 退休 live peer。
+
+Account provider compatibility：
+
+- schema-v1：high-entropy SHA-256 compatibility map；
+- schema-v2：Argon2id human-password reference provider；
+- schema-v3：durable account lifecycle；
+- schema-v4：durable account + recovery generation contract。
+
+Schema-v3 / v4 支援 `SIGHUP` account reload；public recovery 啟用時要求 schema-v4。Account disable、password rotation、recovery reset 或 verifier generation 變更都不能讓 pre-change proof 在 post-change generation 繼續取得 authority。
+
+## Public recovery / delivery lifecycle
+
+F.10–F.15 建立的 recovery contract 不把 provider 或 destination authority交給 Client：
+
+```text
+Client sends login_id
+→ Server resolves eligibility + destination internally
+→ generic public request response returns opaque request_id + expires_at
+→ Server-owned recovery provider / delivery path emits proof out of band
+→ Client submits opaque request_id + proof + replacement password
+→ Server validates provider proof + account generation + attempt/TTL bounds
+→ successful reset advances account generation
+→ old issued bearer / live peer retired immediately
+→ Client returns to fresh normal login
+```
+
+Current recovery layers：
+
+- **F.10** provider-neutral public request/reset seam；known/unknown request維持 enumeration-safe response shape。
+- **F.12** `DeliveryAdapter` seam；destination只由 Server/provider config 決定。
+- **F.13** vendor-isolated `https-json-v1` relay；TLS 1.3、owner-only Bearer credential、bounded retry、stable idempotency identity與 secret-safe observability。
+- **F.14** schema-v2 provider / credential / private-CA `SIGHUP` generation reload；invalid replacement保留 LKG，pre-cutover challenge仍路由到原 verifier。
+- **F.15** optional bounded single-host durable delivery/challenge outbox；pending delivery可跨 `worldd` restart 重播，terminal/success state會 scrub raw proof與destination。
+
+這不是 distributed broker、multi-writer recovery CAS 或 exactly-once vendor delivery。
 
 ## Durable character state
 
@@ -208,7 +259,7 @@ World owner captures authoritative state
 → WorldRuntime join transaction
 ```
 
-Restore truth 來自 durable Server state；Client 不提供 HP、position 或 revision。S4-E.3 production E2E 已用真實 `cmd/worldd` + Godot Client 驗證 HP / position autosave、SIGKILL、restart、fresh reconnect restore。
+Restore truth 來自 durable Server state；Client 不提供 HP、position 或 revision。Production E2E 已用真實 `cmd/worldd` + Godot Client 驗證 HP / position autosave、SIGKILL、restart、fresh reconnect restore。
 
 ## Replication semantics
 
@@ -228,7 +279,7 @@ WorldSnapshot       → Realtime partial transform update batch
 PositionCorrection  → Realtime authoritative self correction
 ```
 
-`WorldSnapshot` 是 chunked update batch，不再代表 Full AOI entity list。Client 只有在同 tick chunk set 完整時才提交該 batch；缺少某 Entity transform 不代表 lifecycle change。
+`WorldSnapshot` 是 chunked update batch，不代表 Full AOI entity list。Client 只有在同 tick chunk set 完整時才提交該 batch；缺少某 Entity transform 不代表 lifecycle change。
 
 目前 replication scaling gates：
 
@@ -255,34 +306,147 @@ Navigation backend 可以演進，但 gameplay result 必須由 Server 可重現
 
 Client raycast、ground probe、Navigation preview、Visual Mesh collision 都只是 prediction / presentation，不可取代 Server legality。
 
+## TLS certificate lifecycle
+
+自 **F.16** 起，session-login/public-recovery TLS listener 與 trusted game ingress certificate/key 都可由同一 process `SIGHUP` 觸發各自獨立的 fail-closed generation reload：
+
+```text
+load candidate certificate + private key
+→ validate key match
+→ validate X.509 validity / ServerAuth usage
+→ failure: keep listener LKG
+→ success: publish immutable certificate generation
+→ established TLS connection keeps negotiated state
+→ new handshake resolves new generation
+```
+
+因此「Server certificate只能 process start 載入」已不是目前 contract。Client trust-store / CA hot reload、ACME/PKI automation、OCSP lifecycle與multi-host certificate atomic cutover仍未納入本階段。
+
+## Trusted reverse proxy / source attribution
+
+### F.17 source attribution
+
+Direct/untrusted TLS socket peer 永遠只以實際 `RemoteAddr` 作 login/recovery abuse-control source，並忽略 forwarding headers。只有 operator 信任的 reverse-proxy socket peer 才能使用選定的 `X-Forwarded-For` 或 `Forwarded`。
+
+Forwarding parser維持：
+
+- field size ≤ 1024 bytes；
+- hop count ≤ 16；
+- IPv4/IPv6 normalization；
+- right-to-left trusted-hop stripping；
+- trusted peer缺少或 malformed selected metadata時，在 password KDF / recovery provider之前 fail closed。
+
+### F.18 legacy upstream mTLS
+
+Legacy F.17 allowlisted proxy可再要求 upstream client certificate chain + exact DNS SAN identity。Direct Godot Client仍是 TLS 1.3 **server-auth-only**，不持有 reverse-proxy client certificate。
+
+### F.19 atomic edge-policy generation
+
+F.19 strict schema-v1 edge-policy file把下列 authority 一次 validate 後原子 publish：
+
+- forwarding mode；
+- client CA bundle；
+- trusted network prefixes；
+- per-binding exact DNS SAN identity allowlist。
+
+Configured prefixes禁止 overlap。每條 trusted proxy TLS connection完整 pin 在握手時的 immutable edge snapshot，因此 existing connection不會混用另一 generation 的 header / prefix / identity rules。
+
+### F.20 immediate retirement fence
+
+`-session-login-trusted-proxy-edge-retire-old-connections` 是 F.19 mode 的 optional cutover fence。未啟用時保留 graceful pinned-generation behavior；啟用後，successful real authority publication 才會退休與 current authority不相容的 trusted-proxy connections。Invalid candidate不觸發 retirement，direct/untrusted Client connection也不在集合內。
+
+### F.21 semantic no-op detection
+
+Validated candidate 只有在 effective authority真的變更時才 publish新 edge generation。Revision、JSON/binding order、等價 prefix spelling、DNS case/duplicates、相同 CA PEM 的重排/重複等 representation-only 變更不會製造新 generation，也不會造成 proxy reconnect。
+
+### F.22 binding-aware cutover
+
+Immediate retirement啟用時，global authority變更仍全域 fail closed：
+
+- forwarding mode；
+- actual CA root certificate set；
+- normalized trusted-prefix topology。
+
+只有 global authority相同、純 identity mapping變更時，才允許 peer-specific selective retirement。
+
+### F.23 authenticated identity-aware preservation
+
+F.23 將同一 binding 的 compatibility 再細化到**握手真正被原 generation 授權的 exact DNS identity**。
+
+TLS verify成功時保存：
+
+```text
+normalized leaf DNS SANs
+INTERSECT
+pinned generation binding allowlist
+= bounded matched identity set
+```
+
+Identity-only reload後，只要 current peer binding仍允許至少一個原本已授權的 matched identity，old connection可保留原 pinned snapshot；所有原授權 identity都被移除時才 retirement。
+
+Multi-SAN certificate 不會 retroactive promotion：certificate雖可能早已有某個 SAN，但若原握手 generation沒有授權它，之後 policy新增該 SAN 也不能讓 old connection用它續命。Fresh handshake才依 current generation重新取得 authority。
+
+Header mode、CA root set或trusted-prefix topology一變仍沿 F.22 全域 fail closed。Late old-generation handshake使用同一 compatibility rule。
+
+目前剩餘的最細 edge credential gap 是：同一 CA + 同一 exact DNS identity下，尚不能單獨撤銷某一張已外洩 leaf credential / key instance；目前需移除整個 identity或做較大範圍 CA cutover。這是 F.24 的獨立 bounded focus，不代表 F.23 identity authority未完成。
+
 ## Security / deployment boundary
 
 目前 bounded production deployment：
 
-- trusted reliable bootstrap：TLS 1.3；
-- trusted plaintext backend：literal loopback only；
-- trusted credential map：Server static SHA-256 config；
-- active takeover policy：Server-owned credential entry；
+- login / public recovery control plane：TLS 1.3；
+- trusted game ingress：TLS 1.3；
+- Client→Server identity：static trusted credential或issued-session bearer；
+- durable account lifecycle：schema-v3/v4，public recovery要求schema-v4；
+- recovery delivery：provider-neutral seam + optional HTTPS relay + optional single-host durable outbox；
+- login/game TLS certificate：F.16 independent fail-closed runtime generations；
+- reverse-proxy source attribution：F.17 bounded HTTP forwarding boundary；
+- reverse-proxy upstream identity：F.18 legacy mTLS或F.19 atomic edge-policy mode；
+- edge reload：F.21 semantic no-op detection；
+- optional immediate proxy cutover：F.20 + F.22/F.23 selective compatibility；
+- direct/untrusted Godot Client：永遠不需要 reverse-proxy client certificate；
 - realtime secret：fresh per reliable connection generation；
 - realtime integrity：Protocol v9 HMAC-SHA256-128；
 - realtime confidentiality：**沒有**；
 - NAT migration：same-IP source-port only；
-- TLS certificate：process start 載入，尚無 hot reload；
+- issued bearer：process-local short-lived proof；
+- account backend：目前仍是 single-writer durable JSON；
+- recovery outbox：single-host bounded durability，不是 distributed broker；
 - multi-server distributed ownership / CAS / failover：尚未實作。
+
+尚未加入的獨立 decision gates包括：distributed rate limit / IP reputation / WAF/CDN、PROXY protocol、CRL/OCSP、ACME/PKI automation、Client mTLS enrollment、public registration、MFA/WebAuthn/passkeys/OIDC、refresh-token / remember-session、distributed account DB、multi-host edge coordination，以及 Protocol v10。
 
 ## Current contract 與歷史 stage 文件
 
 本文件與 root `README.md` 是 current architecture 的主要入口。
 
-以下文件刻意保留當時的 milestone contract，因此看到 Protocol v1/v2/v3/v6/v8、raw realtime bearer token、Gameplay World schema v1、Full AOI snapshot 等敘述時，應視為**歷史證據**而不是目前 production contract：
+目前 account / recovery / TLS / edge security 的直接 current references：
+
+- `S4F23_AUTHENTICATED_PROXY_IDENTITY_RETIREMENT.md`
+- `S4F22_BINDING_AWARE_TRUSTED_PROXY_RETIREMENT.md`
+- `S4F21_EDGE_POLICY_NOOP_RELOAD.md`
+- `S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md`
+- `S4F19_TRUSTED_PROXY_EDGE_POLICY_RUNTIME_RELOAD.md`
+- `S4F18_TRUSTED_PROXY_MTLS_EDGE_IDENTITY.md`
+- `S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md`
+- `S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md`
+- `S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`
+- `S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`
+- `S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md`
+- `S4F12_VERIFIED_RECOVERY_DELIVERY.md`
+- `S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`
+- `S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`
+- `S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`
+
+以下文件刻意保留當時的 milestone contract，因此看到 Protocol v1/v2/v3/v6/v8、raw realtime bearer token、Gameplay World schema v1、Full AOI snapshot 或較早 deployment assumptions 時，應視為**歷史證據**而不是目前 production contract：
 
 - `S2_PROTOCOL.md`
 - `S2B_TRANSPORT.md`
 - `S3_GAMEPLAY_WORLD.md`
 - `S3C6_REALTIME_REPLICATION.md`
-- 其他以 S1/S2/S3/S4 stage 命名的 milestone 文件
+- 其他以 S1/S2/S3/早期 S4 stage 命名的 milestone 文件
 
-目前 realtime / deployment security 的直接參考：
+Realtime / trusted-ingress基線仍可參考：
 
 - `S4E4_SECURE_TRUSTED_INGRESS_TAKEOVER.md`
 - `S4E5_AUTHENTICATED_REALTIME_BINDING.md`
