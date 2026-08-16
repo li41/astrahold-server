@@ -59,10 +59,24 @@ func newReloadableSessionRecoveryProvider(initial *staticSessionRecoveryProvider
 	if now == nil {
 		now = time.Now
 	}
+	routes := make(map[string]sessionRecoveryProviderRoute)
+	currentTime := now().UTC()
+	initial.mu.Lock()
+	initial.pruneLocked(currentTime)
+	for requestID, state := range initial.challenges {
+		if currentTime.Before(state.expires) {
+			routes[requestID] = sessionRecoveryProviderRoute{
+				provider:   initial,
+				generation: 1,
+				expiresAt:  state.expires,
+			}
+		}
+	}
+	initial.mu.Unlock()
 	return &reloadableSessionRecoveryProvider{
 		current:    initial,
 		generation: 1,
-		routes:     make(map[string]sessionRecoveryProviderRoute),
+		routes:     routes,
 		now:        now,
 	}, nil
 }
@@ -85,6 +99,7 @@ func (r *reloadableSessionRecoveryProvider) Begin(ctx context.Context, subject a
 		if _, collision := r.routes[challenge.RequestID]; collision {
 			r.routeMu.Unlock()
 			provider.Consume(context.Background(), challenge.RequestID)
+			deleteSessionRecoveryDurableChallenge(provider, challenge.RequestID)
 			r.generationMu.RUnlock()
 			return accountrecovery.Challenge{}, accountrecovery.ErrUnavailable
 		}
@@ -94,6 +109,7 @@ func (r *reloadableSessionRecoveryProvider) Begin(ctx context.Context, subject a
 			expiresAt:  challenge.ExpiresAt,
 		}
 		r.routeMu.Unlock()
+		publishSessionRecoveryDurableChallenge(provider, challenge.RequestID)
 	}
 	r.generationMu.RUnlock()
 	return challenge, err
@@ -108,6 +124,9 @@ func (r *reloadableSessionRecoveryProvider) Verify(ctx context.Context, requestI
 	r.routeMu.Unlock()
 	if routed {
 		grant, err := route.provider.Verify(ctx, requestID, proof)
+		if persistErr := persistSessionRecoveryDurableChallenge(route.provider, requestID); persistErr != nil {
+			return accountrecovery.Grant{}, accountrecovery.ErrRejected
+		}
 		if !r.now().UTC().Before(route.expiresAt) {
 			r.removeRoute(requestID, route)
 		}
@@ -123,7 +142,11 @@ func (r *reloadableSessionRecoveryProvider) Verify(ctx context.Context, requestI
 		return accountrecovery.Grant{}, accountrecovery.ErrRejected
 	}
 	grant, err := provider.Verify(ctx, requestID, proof)
+	persistErr := persistSessionRecoveryDurableChallenge(provider, requestID)
 	r.generationMu.RUnlock()
+	if persistErr != nil {
+		return accountrecovery.Grant{}, accountrecovery.ErrRejected
+	}
 	return grant, err
 }
 
@@ -139,12 +162,14 @@ func (r *reloadableSessionRecoveryProvider) Consume(ctx context.Context, request
 	r.routeMu.Unlock()
 	if routed {
 		route.provider.Consume(ctx, requestID)
+		deleteSessionRecoveryDurableChallenge(route.provider, requestID)
 		return
 	}
 	r.generationMu.RLock()
 	provider := r.current
 	if provider != nil {
 		provider.Consume(ctx, requestID)
+		deleteSessionRecoveryDurableChallenge(provider, requestID)
 	}
 	r.generationMu.RUnlock()
 }
@@ -186,7 +211,9 @@ func (r *reloadableSessionRecoveryProvider) Generation() uint64 {
 // generation. It waits for old-generation Begin calls to finish. Existing
 // challenge verifiers remain routed to their original provider, but proof-key
 // and delivery-adapter credentials from the retired generation are cleared at
-// cutover because Verify no longer needs them.
+// cutover because Verify no longer needs them. When the F.15 durable outbox is
+// enabled, the outbox itself stays process-global while the validated HTTPS
+// transport is atomically replaced behind its worker after the same barrier.
 func (r *reloadableSessionRecoveryProvider) Replace(next *staticSessionRecoveryProvider) (sessionRecoveryProviderReloadResult, error) {
 	if r == nil || next == nil || next.delivery == nil {
 		if next != nil {
@@ -206,6 +233,18 @@ func (r *reloadableSessionRecoveryProvider) Replace(next *staticSessionRecoveryP
 	oldGeneration := r.generation
 	oldRevision := old.Revision()
 	oldMethod := old.Method()
+
+	if outbox, ok := old.delivery.(*sessionRecoveryDurableOutbox); ok {
+		nextTransport := next.delivery
+		if nextTransport == outbox {
+			return sessionRecoveryProviderReloadResult{}, fmt.Errorf("%w: recovery outbox replacement transport is invalid", errSessionLoginConfig)
+		}
+		if err := outbox.ReplaceTransport(nextTransport, next); err != nil {
+			next.retireDeliverySecrets()
+			return sessionRecoveryProviderReloadResult{}, err
+		}
+		next.delivery = outbox
+	}
 
 	r.routeMu.Lock()
 	retiredChallenges := r.pruneExpiredRoutesLocked(r.now().UTC())
@@ -244,6 +283,7 @@ func (r *reloadableSessionRecoveryProvider) removeRoute(requestID string, route 
 	}
 	r.routeMu.Unlock()
 	route.provider.Consume(context.Background(), requestID)
+	deleteSessionRecoveryDurableChallenge(route.provider, requestID)
 }
 
 func (r *reloadableSessionRecoveryProvider) pruneExpiredRoutesLocked(now time.Time) int {
@@ -252,6 +292,7 @@ func (r *reloadableSessionRecoveryProvider) pruneExpiredRoutesLocked(now time.Ti
 		if !now.Before(route.expiresAt) {
 			delete(r.routes, requestID)
 			route.provider.Consume(context.Background(), requestID)
+			deleteSessionRecoveryDurableChallenge(route.provider, requestID)
 			retired++
 		}
 	}
@@ -277,6 +318,7 @@ func (r *reloadableSessionRecoveryProvider) retireGenerationRoutesLocked(generat
 		}
 		delete(r.routes, requestID)
 		route.provider.Consume(context.Background(), requestID)
+		deleteSessionRecoveryDurableChallenge(route.provider, requestID)
 		retired++
 	}
 	return retired
@@ -304,19 +346,30 @@ func (r *reloadableSessionRecoveryProvider) compactRetiredOrderLocked() {
 // retireDeliverySecrets is called only after the generation barrier has waited
 // for all old Begin/delivery calls to finish. Existing challenges keep their
 // verifier digest and Subject binding, so the HMAC proof key and transport
-// credentials are no longer needed for Verify/Consume.
+// credentials are no longer needed for Verify/Consume. A shared F.15 durable
+// outbox owns the active transport separately and is therefore not retired here;
+// ReplaceTransport already fenced and cleared the previous HTTPS credential.
 func (p *staticSessionRecoveryProvider) retireDeliverySecrets() {
 	if p == nil || p.delivery == nil {
 		return
 	}
 	clear(p.proofKey[:])
+	if _, shared := p.delivery.(sessionRecoverySharedDelivery); shared {
+		return
+	}
 	if retirer, ok := p.delivery.(sessionRecoveryDeliveryRetirer); ok {
 		retirer.Retire()
 	}
 }
 
 func wrapSessionRecoveryProviderForRuntime(provider *staticSessionRecoveryProvider) (accountrecovery.Provider, error) {
-	if provider == nil || provider.delivery == nil {
+	if provider == nil {
+		return provider, nil
+	}
+	if err := configureSessionRecoveryDurableOutbox(provider); err != nil {
+		return nil, err
+	}
+	if provider.delivery == nil {
 		return provider, nil
 	}
 	return newReloadableSessionRecoveryProvider(provider, time.Now)

@@ -1,0 +1,453 @@
+name: Production Recovery Delivery Outbox E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  durable-recovery-delivery-restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run durable recovery delivery restart acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f15-data"
+          login_tls="$data_root/login-tls"
+          relay_tls="$data_root/relay-tls"
+          accounts_file="$data_root/accounts.json"
+          provider_file="$data_root/recovery-provider.json"
+          relay_credential_file="$data_root/recovery-relay.token"
+          outbox_dir="$data_root/recovery-outbox"
+          relay_script="$data_root/fake-relay.py"
+          relay_mode="$data_root/relay-mode.txt"
+          relay_state="$data_root/relay-state.json"
+          relay_proof="$data_root/relay-proof.txt"
+          relay_log="$RUNNER_TEMP/s4f15-relay.log"
+          server_log_1="$RUNNER_TEMP/s4f15-worldd-before-restart.log"
+          server_log_2="$RUNNER_TEMP/s4f15-worldd-after-restart.log"
+          request_body="$RUNNER_TEMP/s4f15-request.json"
+          reset_body="$RUNNER_TEMP/s4f15-reset.json"
+          old_login_body="$RUNNER_TEMP/s4f15-old-login.json"
+          old_password="F15-Old-Correct-Horse-Battery-Staple!"
+          new_password="F15-New-Correct-Horse-Battery-Staple!"
+          relay_credential="F15-Relay-Credential-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+          destination="holder-f15@example.invalid"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          mkdir -p "$data_root" "$login_tls" "$relay_tls" "$outbox_dir" "$data_root/character-state"
+          chmod 700 "$outbox_dir"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' "$old_password" | "$ACCOUNTCTL" create \
+            -path "$accounts_file" -login holder -character f15-holder-character -password-stdin
+
+          make_tls_pair() {
+            dir="$1"
+            label="$2"
+            openssl req -x509 -newkey rsa:2048 -nodes \
+              -keyout "$dir/ca.key" -out "$dir/ca.crt" -days 1 -sha256 \
+              -subj "/CN=$label CA" \
+              -addext "basicConstraints=critical,CA:TRUE" \
+              -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+            openssl req -newkey rsa:2048 -nodes \
+              -keyout "$dir/server.key" -out "$dir/server.csr" \
+              -subj "/CN=localhost" >/dev/null 2>&1
+            cat >"$dir/server.ext" <<'EOF_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_EXT
+            openssl x509 -req -in "$dir/server.csr" \
+              -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
+              -out "$dir/server.crt" -days 1 -sha256 -extfile "$dir/server.ext" >/dev/null 2>&1
+            chmod 600 "$dir/ca.key" "$dir/server.key"
+          }
+
+          make_tls_pair "$login_tls" "Astrahold S4-F.15 Login"
+          make_tls_pair "$relay_tls" "Astrahold S4-F.15 Relay"
+
+          printf '%s\n' "$relay_credential" > "$relay_credential_file"
+          chmod 600 "$relay_credential_file"
+          printf '%s\n' transient > "$relay_mode"
+
+          python3 - "$provider_file" "$relay_credential_file" "$relay_tls/ca.crt" "$destination" <<'PY'
+          import base64, hashlib, json, os, sys
+          path, credential_path, ca_path, destination = sys.argv[1:]
+          key = hashlib.sha256(b"Astrahold S4-F.15 durable proof key").digest()
+          definition = {
+              "schema_version": 2,
+              "revision": "s4f15-provider-001",
+              "proof_key_base64url": base64.urlsafe_b64encode(key).rstrip(b"=").decode("ascii"),
+              "delivery": {
+                  "adapter": "https-json-v1",
+                  "revision": "s4f15-relay-001",
+                  "endpoint": "https://localhost:43445/deliver",
+                  "credential_file": credential_path,
+                  "ca_file": ca_path,
+                  "request_timeout": "300ms",
+                  "max_attempts": 1,
+                  "retry_backoff": "0s",
+              },
+              "subjects": [
+                  {"login_id": "holder", "destination": destination},
+              ],
+          }
+          fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          with os.fdopen(fd, "w", encoding="utf-8") as f:
+              json.dump(definition, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          PY
+          if grep -Fq "$relay_credential" "$provider_file"; then
+            echo "provider config embedded relay credential"
+            exit 1
+          fi
+
+          cat > "$relay_script" <<'PY'
+          import http.server
+          import json
+          import os
+          import ssl
+          import sys
+
+          host, port, cert, key, credential_file, mode_file, proof_file, state_file = sys.argv[1:]
+          port = int(port)
+          with open(credential_file, encoding="utf-8") as f:
+              credential = f.read().strip()
+          attempts = 0
+          first_raw = None
+          first_delivery_id = None
+
+          def save_state(last_status):
+              tmp = state_file + ".tmp"
+              with open(tmp, "w", encoding="utf-8") as f:
+                  json.dump({"attempts": attempts, "delivery_id": first_delivery_id, "last_status": last_status}, f, sort_keys=True)
+                  f.write("\n")
+                  f.flush()
+                  os.fsync(f.fileno())
+              os.replace(tmp, state_file)
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+              def log_message(self, fmt, *args):
+                  return
+              def respond(self, status):
+                  self.send_response(status)
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+              def do_POST(self):
+                  global attempts, first_raw, first_delivery_id
+                  if self.path != "/deliver":
+                      self.respond(404)
+                      return
+                  if self.headers.get("Authorization") != "Bearer " + credential:
+                      print("F15_RELAY_AUTH_REJECTED", flush=True)
+                      self.respond(401)
+                      return
+                  length = int(self.headers.get("Content-Length", "0"))
+                  if length <= 0 or length > 4096:
+                      self.respond(400)
+                      return
+                  raw = self.rfile.read(length)
+                  try:
+                      body = json.loads(raw)
+                  except Exception:
+                      self.respond(400)
+                      return
+                  if set(body) != {"schema_version", "delivery_id", "destination", "proof", "expires_at"}:
+                      self.respond(400)
+                      return
+                  delivery_id = body.get("delivery_id")
+                  proof = body.get("proof")
+                  if body.get("schema_version") != 1 or not isinstance(delivery_id, str) or not delivery_id or not isinstance(proof, str) or not proof:
+                      self.respond(400)
+                      return
+                  if self.headers.get("Idempotency-Key") != delivery_id or self.headers.get("X-Astrahold-Delivery-ID") != delivery_id:
+                      self.respond(400)
+                      return
+                  if b"request_id" in raw or credential.encode() in raw:
+                      self.respond(400)
+                      return
+                  if first_raw is None:
+                      first_raw = raw
+                      first_delivery_id = delivery_id
+                  elif raw != first_raw or delivery_id != first_delivery_id:
+                      print("F15_RELAY_IDEMPOTENCY_MISMATCH", flush=True)
+                      self.respond(409)
+                      return
+                  attempts += 1
+                  with open(mode_file, encoding="utf-8") as f:
+                      mode = f.read().strip()
+                  if mode != "success":
+                      save_state(503)
+                      print("F15_RELAY_TRANSIENT attempts=" + str(attempts), flush=True)
+                      self.respond(503)
+                      return
+                  fd = os.open(proof_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                  with os.fdopen(fd, "w", encoding="utf-8") as f:
+                      f.write(proof + "\n")
+                      f.flush()
+                      os.fsync(f.fileno())
+                  save_state(202)
+                  print("F15_RELAY_ACCEPTED attempts=" + str(attempts) + " tls=1.3 stable_id=true", flush=True)
+                  self.respond(202)
+
+          server = http.server.ThreadingHTTPServer((host, port), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.load_cert_chain(cert, key)
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          print("F15_RELAY_READY tls=1.3", flush=True)
+          server.serve_forever()
+          PY
+
+          cleanup() {
+            set +e
+            for pid in "${server_pid:-}" "${relay_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            attempts="$4"
+            i=0
+            while [ "$i" -lt "$attempts" ]; do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                return 1
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            return 1
+          }
+
+          start_worldd() {
+            log_file="$1"
+            "$GITHUB_WORKSPACE/.tools/worldd" \
+              -tcp 127.0.0.1:43777 \
+              -udp 127.0.0.1:43778 \
+              -session-login-account-file "$accounts_file" \
+              -session-login-tls-listen 127.0.0.1:43444 \
+              -session-login-tls-cert "$login_tls/server.crt" \
+              -session-login-tls-key "$login_tls/server.key" \
+              -session-login-ip-max-attempts 100 \
+              -session-login-ip-attempt-window 1m \
+              -session-credential-ttl 5m \
+              -session-recovery-provider-file "$provider_file" \
+              -session-recovery-challenge-ttl 5m \
+              -session-recovery-challenge-max-attempts 5 \
+              -session-recovery-ip-max-attempts 100 \
+              -session-recovery-ip-attempt-window 1m \
+              -session-recovery-outbox-dir "$outbox_dir" \
+              -session-recovery-outbox-max-records 16 \
+              -session-recovery-outbox-max-delivery-attempts 4 \
+              -session-recovery-outbox-retry-min 100ms \
+              -session-recovery-outbox-retry-max 200ms \
+              -trusted-tls-listen 127.0.0.1:43443 \
+              -trusted-tls-cert "$login_tls/server.crt" \
+              -trusted-tls-key "$login_tls/server.key" \
+              -character-state-dir "$data_root/character-state" \
+              -character-state-save-journal "$data_root/character-state-saves.journal" \
+              -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+              -death-outcome-journal "$data_root/death-outcomes.journal" \
+              -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+              -siege-ownership-dir "$data_root/siege-ownership" >"$log_file" 2>&1 &
+            server_pid=$!
+            wait_for_marker "$log_file" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+            wait_for_marker "$log_file" "session recovery: enabled=true provider=hmac-sha256-generation-delivery revision=s4f15-provider-001" "$server_pid" 300
+          }
+
+          python3 "$relay_script" 127.0.0.1 43445 "$relay_tls/server.crt" "$relay_tls/server.key" \
+            "$relay_credential_file" "$relay_mode" "$relay_proof" "$relay_state" >"$relay_log" 2>&1 &
+          relay_pid=$!
+          wait_for_marker "$relay_log" "F15_RELAY_READY tls=1.3" "$relay_pid" 200
+
+          start_worldd "$server_log_1"
+
+          request_status="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$request_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:43444/v1/account/recovery/request)"
+          test "$request_status" = "202"
+          request_id="$(python3 - "$request_body" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              body = json.load(f)
+          assert set(body) == {"request_id", "expires_at"}
+          print(body["request_id"])
+          PY
+          )"
+          test -n "$request_id"
+          delivery_id="$(python3 - "$request_id" <<'PY'
+          import base64, hashlib, sys
+          digest = hashlib.sha256(b"astrahold-recovery-delivery-id-v1\x00" + sys.argv[1].encode()).digest()
+          print(base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode())
+          PY
+          )"
+          record_path="$outbox_dir/$delivery_id.json"
+
+          wait_for_marker "$relay_log" "F15_RELAY_TRANSIENT" "$relay_pid" 300
+          i=0
+          while [ "$i" -lt 200 ]; do
+            if python3 - "$record_path" "$delivery_id" "$destination" <<'PY'
+          import json, os, stat, sys
+          path, delivery_id, destination = sys.argv[1:]
+          if not os.path.exists(path): raise SystemExit(1)
+          with open(path, encoding="utf-8") as f: record = json.load(f)
+          assert record["schema_version"] == 1
+          assert record["delivery_id"] == delivery_id
+          assert record["delivery_state"] == "pending"
+          assert record["active"] is True
+          assert record["destination"] == destination
+          assert record["proof"]
+          assert record["delivery_attempts"] >= 1
+          assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+          PY
+            then break; fi
+            sleep 0.05
+            i=$((i + 1))
+          done
+          test "$i" -lt 200
+          test "$(stat -c '%a' "$outbox_dir")" = "700"
+
+          kill -KILL "$server_pid"
+          wait "$server_pid" 2>/dev/null || true
+          server_pid=""
+          printf '%s\n' success > "$relay_mode"
+
+          start_worldd "$server_log_2"
+          wait_for_marker "$server_log_2" "recovery outbox: outcome=restored records=1 pending=1" "$server_pid" 300
+          wait_for_marker "$relay_log" "F15_RELAY_ACCEPTED" "$relay_pid" 300
+          test -f "$relay_proof"
+          proof="$(tr -d '\n' < "$relay_proof")"
+          test -n "$proof"
+
+          i=0
+          while [ "$i" -lt 200 ]; do
+            if python3 - "$record_path" <<'PY'
+          import json, os, stat, sys
+          path = sys.argv[1]
+          if not os.path.exists(path): raise SystemExit(1)
+          with open(path, encoding="utf-8") as f: record = json.load(f)
+          assert record["delivery_state"] == "delivered"
+          assert record["active"] is True
+          assert "proof" not in record
+          assert "destination" not in record
+          assert "next_attempt_at" not in record
+          assert record["delivery_attempts"] >= 2
+          assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+          PY
+            then break; fi
+            sleep 0.05
+            i=$((i + 1))
+          done
+          test "$i" -lt 200
+          if grep -Fq "$proof" "$record_path" || grep -Fq "$destination" "$record_path"; then
+            echo "delivered durable record retained proof or destination"
+            exit 1
+          fi
+
+          reset_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$request_id" "$proof" "$new_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$reset_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:43444/v1/account/recovery/reset)"
+          test "$reset_status" = "204"
+          test ! -e "$record_path"
+
+          old_status="$(printf '{"login_id":"holder","login_secret":"%s"}' "$old_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$old_login_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:43444/v1/session/login)"
+          test "$old_status" = "401"
+          grep -F '"error":"invalid_credentials"' "$old_login_body"
+          new_status="$(printf '{"login_id":"holder","login_secret":"%s"}' "$new_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output /dev/null --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:43444/v1/session/login)"
+          test "$new_status" = "200"
+
+          python3 - "$accounts_file" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              store = json.load(f)
+          assert store["schema_version"] == 4
+          account = next(item for item in store["accounts"] if item["login_id"] == "holder")
+          assert account["credential_version"] == 2, account
+          assert not store.get("recovery_grants")
+          PY
+
+          state_delivery_id="$(python3 - "$relay_state" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              state = json.load(f)
+          assert state["attempts"] >= 2
+          assert state["last_status"] == 202
+          print(state["delivery_id"])
+          PY
+          )"
+          test "$state_delivery_id" = "$delivery_id"
+          if grep -Fq "F15_RELAY_IDEMPOTENCY_MISMATCH" "$relay_log" || grep -Fq "F15_RELAY_AUTH_REJECTED" "$relay_log"; then
+            echo "relay observed unstable identity or auth failure"
+            exit 1
+          fi
+
+          for secret in "$old_password" "$new_password" "$relay_credential" "$proof" "$destination" "$request_id" "$delivery_id"; do
+            if grep -Fq "$secret" "$server_log_1" "$server_log_2" "$relay_log"; then
+              echo "F.15 secret/log metadata leak detected"
+              exit 1
+            fi
+          done
+
+          echo "ASTRAHOLD_F15_E2E_OK durable_enqueue=true restart_replay=true challenge_restored=true stable_idempotency=true scrub_after_delivery=true consume_delete=true schema=4 protocol=9 tls=1.3"
+
+      - name: Upload F.15 outbox logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f15-recovery-delivery-outbox-logs
+          path: |
+            ${{ runner.temp }}/s4f15-worldd-before-restart.log
+            ${{ runner.temp }}/s4f15-worldd-after-restart.log
+            ${{ runner.temp }}/s4f15-relay.log
+          if-no-files-found: ignore
