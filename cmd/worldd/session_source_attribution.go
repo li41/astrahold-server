@@ -45,21 +45,36 @@ type sessionSourceAttributor struct {
 	headerName      string
 	trustedPrefixes []netip.Prefix
 	proxyMTLS       *reloadableSessionProxyMTLS
+	edgePolicy      *reloadableSessionEdgePolicy
 }
 
 func loadSessionSourceAttributor() (*sessionSourceAttributor, error) {
-	attributor, err := newSessionSourceAttributor(*sessionLoginForwardedHeader, *sessionLoginTrustedProxyCIDRs)
+	edgePolicyFile := strings.TrimSpace(*sessionLoginTrustedProxyEdgePolicyFile)
+	legacyHeader := strings.TrimSpace(*sessionLoginForwardedHeader)
+	legacyCIDRs := strings.TrimSpace(*sessionLoginTrustedProxyCIDRs)
+	legacyMTLS := strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile)
+	if edgePolicyFile != "" {
+		if legacyHeader != "" || legacyCIDRs != "" || legacyMTLS != "" {
+			return nil, fmt.Errorf("%w: session-login-trusted-proxy-edge-policy-file is mutually exclusive with the F.17/F.18 trusted proxy flags", errSessionSourceAttribution)
+		}
+		edgePolicy, err := newReloadableSessionEdgePolicy(edgePolicyFile, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &sessionSourceAttributor{edgePolicy: edgePolicy}, nil
+	}
+
+	attributor, err := newSessionSourceAttributor(legacyHeader, legacyCIDRs)
 	if err != nil {
 		return nil, err
 	}
-	mtlsFile := strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile)
-	if mtlsFile == "" {
+	if legacyMTLS == "" {
 		return attributor, nil
 	}
 	if attributor == nil {
 		return nil, fmt.Errorf("%w: session-login-trusted-proxy-mtls-file requires the trusted proxy allowlist/header pair", errSessionSourceAttribution)
 	}
-	proxyMTLS, err := newReloadableSessionProxyMTLS(mtlsFile, nil)
+	proxyMTLS, err := newReloadableSessionProxyMTLS(legacyMTLS, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +183,32 @@ func (a *sessionSourceAttributor) TLSConfig(certificate *reloadableTLSCertificat
 	if base == nil {
 		return nil, errSessionSourceAttribution
 	}
-	if a == nil || a.proxyMTLS == nil {
+	if a == nil {
+		return base, nil
+	}
+	if a.edgePolicy != nil {
+		base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			if hello == nil || hello.Conn == nil || hello.Conn.RemoteAddr() == nil {
+				return nil, fmt.Errorf("%w: TLS client has no socket peer", errSessionSourceAttribution)
+			}
+			remote := hello.Conn.RemoteAddr().String()
+			peerText := sessionLoginSourceIP(remote)
+			peer, err := netip.ParseAddr(peerText)
+			if err != nil {
+				return nil, fmt.Errorf("%w: invalid TLS socket peer", errSessionSourceAttribution)
+			}
+			config, trusted, err := a.edgePolicy.TLSConfigForPeer(certificate, remote, peer.Unmap())
+			if err != nil {
+				return nil, err
+			}
+			if !trusted {
+				return nil, nil
+			}
+			return config, nil
+		}
+		return base, nil
+	}
+	if a.proxyMTLS == nil {
 		return base, nil
 	}
 	base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
@@ -199,7 +239,31 @@ func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error
 		return "", fmt.Errorf("%w: invalid socket peer", errSessionSourceAttribution)
 	}
 	peer = peer.Unmap()
-	if !a.trusted(peer) {
+
+	if a != nil && a.edgePolicy != nil {
+		connection, ok := a.edgePolicy.connection(request.RemoteAddr)
+		if !ok {
+			current, _ := a.edgePolicy.currentSnapshot()
+			if current != nil {
+				if _, trusted := current.bindingForPeer(peer); trusted {
+					return "", fmt.Errorf("%w: trusted proxy edge-policy connection is not authenticated", errSessionSourceAttribution)
+				}
+			}
+			return peer.String(), nil
+		}
+		if connection.snapshot == nil || connection.bindingIndex < 0 || connection.bindingIndex >= len(connection.snapshot.bindings) {
+			return "", fmt.Errorf("%w: invalid trusted proxy edge-policy connection binding", errSessionSourceAttribution)
+		}
+		if request.TLS == nil || len(request.TLS.PeerCertificates) == 0 || len(request.TLS.VerifiedChains) == 0 {
+			return "", fmt.Errorf("%w: trusted proxy edge-policy TLS identity is not verified", errSessionSourceAttribution)
+		}
+		if err := connection.snapshot.verifyConnection(*request.TLS, connection.bindingIndex); err != nil {
+			return "", fmt.Errorf("%w: trusted proxy edge-policy identity mismatch", errSessionSourceAttribution)
+		}
+		return sessionSourceIPFromForwarding(request, connection.snapshot.mode, connection.snapshot.headerName, connection.snapshot.trusted)
+	}
+
+	if a == nil || !a.trusted(peer) {
 		return peer.String(), nil
 	}
 	if a.proxyMTLS != nil {
@@ -207,18 +271,25 @@ func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error
 			return "", fmt.Errorf("%w: trusted proxy mTLS identity is not verified", errSessionSourceAttribution)
 		}
 	}
+	return sessionSourceIPFromForwarding(request, a.mode, a.headerName, a.trusted)
+}
 
-	values := request.Header.Values(a.headerName)
+func sessionSourceIPFromForwarding(request *http.Request, mode sessionSourceHeaderMode, headerName string, trusted func(netip.Addr) bool) (string, error) {
+	if request == nil || trusted == nil || strings.TrimSpace(headerName) == "" {
+		return "", fmt.Errorf("%w: forwarding attribution is unavailable", errSessionSourceAttribution)
+	}
+	values := request.Header.Values(headerName)
 	if len(values) != 1 {
-		return "", fmt.Errorf("%w: trusted proxy must provide exactly one %s field", errSessionSourceAttribution, a.headerName)
+		return "", fmt.Errorf("%w: trusted proxy must provide exactly one %s field", errSessionSourceAttribution, headerName)
 	}
 	value := strings.TrimSpace(values[0])
 	if value == "" || len(value) > sessionSourceAttributionMaxHeaderBytes {
-		return "", fmt.Errorf("%w: trusted proxy %s field is empty or too large", errSessionSourceAttribution, a.headerName)
+		return "", fmt.Errorf("%w: trusted proxy %s field is empty or too large", errSessionSourceAttribution, headerName)
 	}
 
 	var chain []netip.Addr
-	switch a.mode {
+	var err error
+	switch mode {
 	case sessionSourceHeaderXForwardedFor:
 		chain, err = parseSessionXForwardedFor(value)
 	case sessionSourceHeaderForwarded:
@@ -233,18 +304,20 @@ func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error
 		return "", fmt.Errorf("%w: forwarding chain is empty", errSessionSourceAttribution)
 	}
 
-	// The TCP/TLS socket peer is already trusted. Walk the header from the
-	// nearest advertised hop toward the original client. Trusted intermediaries
-	// are stripped; the first untrusted hop is the client boundary. If every
-	// advertised hop is trusted, the left-most hop is still the originating
-	// address for this bounded chain.
 	for index := len(chain) - 1; index >= 0; index-- {
 		candidate := chain[index].Unmap()
-		if !a.trusted(candidate) {
+		if !trusted(candidate) {
 			return candidate.String(), nil
 		}
 	}
 	return chain[0].Unmap().String(), nil
+}
+
+func (a *sessionSourceAttributor) releaseConnection(remote string) {
+	if a == nil || a.edgePolicy == nil {
+		return
+	}
+	a.edgePolicy.releaseConnection(remote)
 }
 
 func (a *sessionSourceAttributor) wrap(next http.Handler) http.Handler {
@@ -271,6 +344,10 @@ func sessionSourceAttributionMetadata(a *sessionSourceAttributor) (string, int) 
 	if a == nil {
 		return "socket", 0
 	}
+	if a.edgePolicy != nil {
+		metadata := a.edgePolicy.Snapshot()
+		return "edge-policy/" + metadata.HeaderMode, metadata.PrefixCount
+	}
 	switch a.mode {
 	case sessionSourceHeaderXForwardedFor:
 		return "trusted-proxy/x-forwarded-for", len(a.trustedPrefixes)
@@ -282,10 +359,29 @@ func sessionSourceAttributionMetadata(a *sessionSourceAttributor) (string, int) 
 }
 
 func sessionProxyMTLSMetadataForAttributor(a *sessionSourceAttributor) (string, sessionProxyMTLSMetadata) {
-	if a == nil || a.proxyMTLS == nil {
+	if a == nil {
+		return "none", sessionProxyMTLSMetadata{}
+	}
+	if a.edgePolicy != nil {
+		metadata := a.edgePolicy.Snapshot()
+		return "edge-policy-mtls-v1", sessionProxyMTLSMetadata{
+			Generation:    metadata.Generation,
+			Revision:      metadata.Revision,
+			RootCount:     metadata.RootCount,
+			IdentityCount: metadata.IdentityCount,
+		}
+	}
+	if a.proxyMTLS == nil {
 		return "none", sessionProxyMTLSMetadata{}
 	}
 	return "mtls-v1", a.proxyMTLS.Snapshot()
+}
+
+func sessionEdgePolicyMetadataForAttributor(a *sessionSourceAttributor) sessionEdgePolicyMetadata {
+	if a == nil || a.edgePolicy == nil {
+		return sessionEdgePolicyMetadata{}
+	}
+	return a.edgePolicy.Snapshot()
 }
 
 func parseSessionXForwardedFor(value string) ([]netip.Addr, error) {
