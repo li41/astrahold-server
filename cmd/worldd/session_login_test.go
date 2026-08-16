@@ -195,7 +195,10 @@ func TestSessionLoginHTTPLoginThenLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := newTestSessionLoginRuntime(t, func() time.Time { return now })
-	runtime.accountAuth = authenticator
+	runtime.accountAuth, err = newSessionAccountAuthRuntime(authenticator)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var latestScopes []string
 	runtime.replaceScopes = func(scopes []string) int {
 		latestScopes = append([]string(nil), scopes...)
@@ -258,7 +261,10 @@ func TestSessionLoginHTTPRejectsUnknownFieldsAndWrongSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := newTestSessionLoginRuntime(t, func() time.Time { return now })
-	runtime.accountAuth = authenticator
+	runtime.accountAuth, err = newSessionAccountAuthRuntime(authenticator)
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtime.replaceScopes = func([]string) int { return 0 }
 
 	cases := map[string]struct {

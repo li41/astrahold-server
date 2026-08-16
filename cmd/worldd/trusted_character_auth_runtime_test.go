@@ -47,7 +47,7 @@ func TestStaticCredentialRevocationScopeIsStableForSameRecordAndChangesWithSecur
 }
 
 func TestApplyTrustedCharacterAuthReloadPublishesFenceBeforeProviderAndRetainsLastKnownGoodOnFailure(t *testing.T) {
-	now := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	oldToken := []byte("runtime-old")
 	newToken := []byte("runtime-new")
 	path := filepath.Join(t.TempDir(), "trusted-auth.json")
