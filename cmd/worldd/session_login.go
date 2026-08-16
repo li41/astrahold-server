@@ -217,7 +217,8 @@ func sessionLoginConfigurationRequested() bool {
 		strings.TrimSpace(*sessionLoginTrustedProxyCIDRs) != "" ||
 		strings.TrimSpace(*sessionLoginForwardedHeader) != "" ||
 		strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile) != "" ||
-		strings.TrimSpace(*sessionLoginTrustedProxyEdgePolicyFile) != ""
+		strings.TrimSpace(*sessionLoginTrustedProxyEdgePolicyFile) != "" ||
+		sessionEdgeConnectionRetirementRequested()
 }
 
 func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
@@ -243,6 +244,9 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	sourceAttributor, err := loadSessionSourceAttributor()
 	if err != nil {
 		return nil, err
+	}
+	if sessionEdgeConnectionRetirementRequested() && (sourceAttributor == nil || sourceAttributor.edgePolicy == nil) {
+		return nil, fmt.Errorf("%w: session-login-trusted-proxy-edge-retire-old-connections requires session-login-trusted-proxy-edge-policy-file", errSessionLoginConfig)
 	}
 	if err := validateTrustedCharacterAuthListenAddress(tcpAddress); err != nil {
 		return nil, err
@@ -667,9 +671,7 @@ func (r *sessionLoginRuntime) serve(ctx context.Context) error {
 			if r.sourceAttributor == nil || connection == nil || connection.RemoteAddr() == nil {
 				return
 			}
-			if state == http.StateClosed || state == http.StateHijacked {
-				r.sourceAttributor.releaseConnection(connection.RemoteAddr().String())
-			}
+			r.sourceAttributor.observeEdgeConnectionState(connection, state)
 		},
 	}
 	shutdownDone := make(chan struct{})
@@ -719,7 +721,8 @@ func runIssuedSessionCredentialRuntime(
 	sourceAttribution, trustedProxyPrefixes := sessionSourceAttributionMetadata(runtime.sourceAttributor)
 	proxyAuth, proxyTrust := sessionProxyMTLSMetadataForAttributor(runtime.sourceAttributor)
 	edgePolicy := sessionEdgePolicyMetadataForAttributor(runtime.sourceAttributor)
-	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s source_attribution=%s trusted_proxy_prefixes=%d forwarded_max_hops=%d proxy_auth=%s proxy_trust_generation=%d proxy_trust_revision=%s proxy_identity_count=%d edge_policy_generation=%d edge_policy_revision=%s edge_policy_bindings=%d login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), sourceAttribution, trustedProxyPrefixes, sessionSourceAttributionMaxHops, proxyAuth, proxyTrust.Generation, proxyTrust.Revision, proxyTrust.IdentityCount, edgePolicy.Generation, edgePolicy.Revision, edgePolicy.BindingCount, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
+	edgeConnectionCutover := runtime.sourceAttributor.edgeConnectionCutoverMode()
+	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s source_attribution=%s trusted_proxy_prefixes=%d forwarded_max_hops=%d proxy_auth=%s proxy_trust_generation=%d proxy_trust_revision=%s proxy_identity_count=%d edge_policy_generation=%d edge_policy_revision=%s edge_policy_bindings=%d edge_policy_connection_cutover=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), sourceAttribution, trustedProxyPrefixes, sessionSourceAttributionMaxHops, proxyAuth, proxyTrust.Generation, proxyTrust.Revision, proxyTrust.IdentityCount, edgePolicy.Generation, edgePolicy.Revision, edgePolicy.BindingCount, edgeConnectionCutover, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
 	if runtime.recoveryProvider != nil {
 		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
 		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d source_attribution=%s proxy_auth=%s edge_policy_generation=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration, sourceAttribution, proxyAuth, edgePolicy.Generation)
@@ -769,7 +772,8 @@ func runIssuedSessionCredentialRuntime(
 					currentEdge := runtime.sourceAttributor.edgePolicy.Snapshot()
 					logf("session trusted proxy edge policy reload rejected; last-known-good retained: generation=%d revision=%s header=%s bindings=%d err=%v", currentEdge.Generation, currentEdge.Revision, currentEdge.HeaderMode, currentEdge.BindingCount, err)
 				} else {
-					logf("session trusted proxy edge policy reload applied: previous_generation=%d generation=%d previous_revision=%s revision=%s previous_header=%s header=%s roots=%d bindings=%d prefixes=%d identities=%d", edgeResult.PreviousGeneration, edgeResult.Generation, edgeResult.PreviousRevision, edgeResult.Revision, edgeResult.PreviousHeaderMode, edgeResult.HeaderMode, edgeResult.RootCount, edgeResult.BindingCount, edgeResult.PrefixCount, edgeResult.IdentityCount)
+					retiredConnections := runtime.sourceAttributor.retireOldEdgeConnections(edgeResult.Generation)
+					logf("session trusted proxy edge policy reload applied: previous_generation=%d generation=%d previous_revision=%s revision=%s previous_header=%s header=%s roots=%d bindings=%d prefixes=%d identities=%d connection_cutover=%s retired_connections=%d", edgeResult.PreviousGeneration, edgeResult.Generation, edgeResult.PreviousRevision, edgeResult.Revision, edgeResult.PreviousHeaderMode, edgeResult.HeaderMode, edgeResult.RootCount, edgeResult.BindingCount, edgeResult.PrefixCount, edgeResult.IdentityCount, runtime.sourceAttributor.edgeConnectionCutoverMode(), retiredConnections)
 				}
 			} else if runtime.sourceAttributor != nil && runtime.sourceAttributor.proxyMTLS != nil {
 				proxyResult, err := runtime.sourceAttributor.proxyMTLS.Reload()
