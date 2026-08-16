@@ -39,7 +39,7 @@ var (
 	sessionLoginAccountFile = flag.String(
 		"session-login-account-file",
 		"",
-		"Optional server-side SHA-256 account-login map used to issue short-lived opaque session credentials",
+		"Optional server-side account verifier map (schema v1 high-entropy SHA-256 or schema v2 Argon2id password) used to issue short-lived opaque session credentials",
 	)
 	sessionLoginTLSListen = flag.String(
 		"session-login-tls-listen",
@@ -177,7 +177,7 @@ func (a *staticSessionLoginAuthenticator) Authenticate(ctx context.Context, logi
 }
 
 type sessionLoginRuntime struct {
-	accountAuth *staticSessionLoginAuthenticator
+	accountAuth *sessionAccountAuthRuntime
 	provider    *reloadableTrustedCharacterCredentialProvider
 	listener    net.Listener
 	ttl         time.Duration
@@ -217,7 +217,11 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	if _, _, err := net.SplitHostPort(listenAddress); err != nil {
 		return nil, fmt.Errorf("%w: session login listen address: %v", errSessionLoginConfig, err)
 	}
-	accountAuth, err := loadStaticSessionLoginAuthenticator(accountPath)
+	authenticator, err := loadSessionAccountAuthenticator(accountPath)
+	if err != nil {
+		return nil, err
+	}
+	accountAuth, err := newSessionAccountAuthRuntime(authenticator)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +603,7 @@ func runIssuedSessionCredentialRuntime(
 
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- runtime.serve(ctx) }()
-	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_secret=sha256_high_entropy restart_persistence=false", runtime.accountAuth.revision, runtime.Addr(), runtime.ttl)
+	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s restart_persistence=false", runtime.accountAuth.revision, runtime.Addr(), runtime.ttl, runtime.accountAuth.method)
 
 	for {
 		current := runtime.provider.snapshot()
