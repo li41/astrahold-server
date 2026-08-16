@@ -90,7 +90,7 @@ func loadRuntimeTrustedCharacterAuthenticator(path, tcpAddress string) (tcpudp.T
 		return authenticator.Authenticate, &trustedCharacterAuthRuntime{
 			provider: issuedRuntime.provider,
 			issued:   issuedRuntime,
-		}, "session-login/" + issuedRuntime.accountAuth.revision, nil
+		}, "session-login/" + issuedRuntime.accountAuth.Revision(), nil
 	}
 
 	if strings.TrimSpace(path) == "" {

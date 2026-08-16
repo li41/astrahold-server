@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 
@@ -38,9 +39,13 @@ type sessionAccountAuthenticator interface {
 	Method() string
 }
 
+type sessionAccountGenerationValidator interface {
+	StoreRevision() uint64
+	GenerationActive(string, string) bool
+}
+
 type sessionAccountAuthRuntime struct {
-	revision      string
-	method        string
+	mu            sync.RWMutex
 	authenticator sessionAccountAuthenticator
 }
 
@@ -48,18 +53,76 @@ func newSessionAccountAuthRuntime(authenticator sessionAccountAuthenticator) (*s
 	if authenticator == nil || strings.TrimSpace(authenticator.Revision()) == "" || strings.TrimSpace(authenticator.Method()) == "" {
 		return nil, errSessionLoginConfig
 	}
-	return &sessionAccountAuthRuntime{
-		revision:      authenticator.Revision(),
-		method:        authenticator.Method(),
-		authenticator: authenticator,
-	}, nil
+	return &sessionAccountAuthRuntime{authenticator: authenticator}, nil
+}
+
+func (r *sessionAccountAuthRuntime) snapshot() sessionAccountAuthenticator {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.authenticator
 }
 
 func (r *sessionAccountAuthRuntime) Authenticate(ctx context.Context, loginID string, secret []byte) (sessioncredential.Grant, error) {
-	if r == nil || r.authenticator == nil {
+	authenticator := r.snapshot()
+	if authenticator == nil {
 		return sessioncredential.Grant{}, errSessionLoginRejected
 	}
-	return r.authenticator.Authenticate(ctx, loginID, secret)
+	return authenticator.Authenticate(ctx, loginID, secret)
+}
+
+func (r *sessionAccountAuthRuntime) Revision() string {
+	authenticator := r.snapshot()
+	if authenticator == nil {
+		return ""
+	}
+	return authenticator.Revision()
+}
+
+func (r *sessionAccountAuthRuntime) Method() string {
+	authenticator := r.snapshot()
+	if authenticator == nil {
+		return ""
+	}
+	return authenticator.Method()
+}
+
+func (r *sessionAccountAuthRuntime) replace(authenticator sessionAccountAuthenticator) {
+	if r == nil || authenticator == nil {
+		return
+	}
+	r.mu.Lock()
+	r.authenticator = authenticator
+	r.mu.Unlock()
+}
+
+func (r *sessionAccountAuthRuntime) grantCurrent(grant sessioncredential.Grant) bool {
+	if !grant.Valid() {
+		return false
+	}
+	if grant.AuthenticationSubject == "" && grant.AuthenticationGeneration == "" {
+		return true
+	}
+	if grant.AuthenticationSubject == "" || grant.AuthenticationGeneration == "" {
+		return false
+	}
+	authenticator := r.snapshot()
+	validator, ok := authenticator.(sessionAccountGenerationValidator)
+	if !ok {
+		return false
+	}
+	return validator.GenerationActive(grant.AuthenticationSubject, grant.AuthenticationGeneration)
+}
+
+func (r *sessionAccountAuthRuntime) reloadMetadata() (string, uint64, bool) {
+	authenticator := r.snapshot()
+	validator, ok := authenticator.(sessionAccountGenerationValidator)
+	if !ok || authenticator == nil || validator.StoreRevision() == 0 {
+		return "", 0, false
+	}
+	return authenticator.Revision(), validator.StoreRevision(), true
 }
 
 func (a *staticSessionLoginAuthenticator) Revision() string {
@@ -125,6 +188,8 @@ func loadSessionAccountAuthenticator(path string) (sessionAccountAuthenticator, 
 		return loadStaticSessionLoginAuthenticator(path)
 	case sessionPasswordSchemaVersion:
 		return loadArgon2idSessionLoginAuthenticatorData(data)
+	case sessionDurableAccountSchemaVersion:
+		return loadDurableSessionLoginAuthenticator(path)
 	default:
 		return nil, fmt.Errorf("%w: unsupported schema_version %d", errSessionLoginConfig, header.SchemaVersion)
 	}
