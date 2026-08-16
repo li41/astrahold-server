@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,10 +44,27 @@ type sessionSourceAttributor struct {
 	mode            sessionSourceHeaderMode
 	headerName      string
 	trustedPrefixes []netip.Prefix
+	proxyMTLS       *reloadableSessionProxyMTLS
 }
 
 func loadSessionSourceAttributor() (*sessionSourceAttributor, error) {
-	return newSessionSourceAttributor(*sessionLoginForwardedHeader, *sessionLoginTrustedProxyCIDRs)
+	attributor, err := newSessionSourceAttributor(*sessionLoginForwardedHeader, *sessionLoginTrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	mtlsFile := strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile)
+	if mtlsFile == "" {
+		return attributor, nil
+	}
+	if attributor == nil {
+		return nil, fmt.Errorf("%w: session-login-trusted-proxy-mtls-file requires the trusted proxy allowlist/header pair", errSessionSourceAttribution)
+	}
+	proxyMTLS, err := newReloadableSessionProxyMTLS(mtlsFile, nil)
+	if err != nil {
+		return nil, err
+	}
+	attributor.proxyMTLS = proxyMTLS
+	return attributor, nil
 }
 
 func newSessionSourceAttributor(headerMode, trustedCIDRs string) (*sessionSourceAttributor, error) {
@@ -142,6 +160,35 @@ func (a *sessionSourceAttributor) trusted(address netip.Addr) bool {
 	return false
 }
 
+func (a *sessionSourceAttributor) TLSConfig(certificate *reloadableTLSCertificate) (*tls.Config, error) {
+	if certificate == nil {
+		return nil, errSessionSourceAttribution
+	}
+	base := certificate.TLSConfig()
+	if base == nil {
+		return nil, errSessionSourceAttribution
+	}
+	if a == nil || a.proxyMTLS == nil {
+		return base, nil
+	}
+	base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		if hello == nil || hello.Conn == nil || hello.Conn.RemoteAddr() == nil {
+			return nil, fmt.Errorf("%w: TLS client has no socket peer", errSessionSourceAttribution)
+		}
+		peerText := sessionLoginSourceIP(hello.Conn.RemoteAddr().String())
+		peer, err := netip.ParseAddr(peerText)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid TLS socket peer", errSessionSourceAttribution)
+		}
+		peer = peer.Unmap()
+		if !a.trusted(peer) {
+			return nil, nil
+		}
+		return a.proxyMTLS.TLSConfig(certificate)
+	}
+	return base, nil
+}
+
 func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error) {
 	if request == nil {
 		return "", fmt.Errorf("%w: nil request", errSessionSourceAttribution)
@@ -154,6 +201,11 @@ func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error
 	peer = peer.Unmap()
 	if !a.trusted(peer) {
 		return peer.String(), nil
+	}
+	if a.proxyMTLS != nil {
+		if request.TLS == nil || len(request.TLS.PeerCertificates) == 0 || len(request.TLS.VerifiedChains) == 0 {
+			return "", fmt.Errorf("%w: trusted proxy mTLS identity is not verified", errSessionSourceAttribution)
+		}
 	}
 
 	values := request.Header.Values(a.headerName)
@@ -227,6 +279,13 @@ func sessionSourceAttributionMetadata(a *sessionSourceAttributor) (string, int) 
 	default:
 		return "invalid", len(a.trustedPrefixes)
 	}
+}
+
+func sessionProxyMTLSMetadataForAttributor(a *sessionSourceAttributor) (string, sessionProxyMTLSMetadata) {
+	if a == nil || a.proxyMTLS == nil {
+		return "none", sessionProxyMTLSMetadata{}
+	}
+	return "mtls-v1", a.proxyMTLS.Snapshot()
 }
 
 func parseSessionXForwardedFor(value string) ([]netip.Addr, error) {

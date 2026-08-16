@@ -1,0 +1,487 @@
+name: Production Trusted Proxy mTLS E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-proxy-mtls-edge-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run trusted proxy mTLS edge acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f18-data"
+          tls_dir="$data_root/tls"
+          accounts_file="$data_root/accounts.json"
+          recovery_file="$data_root/recovery-provider.json"
+          proxy_policy="$data_root/proxy-mtls.json"
+          proxy_ca_live="$tls_dir/proxy-client-ca-live.crt"
+          server_log="$RUNNER_TEMP/s4f18-worldd.log"
+          proxy_a_log="$RUNNER_TEMP/s4f18-proxy-a.log"
+          proxy_b_log="$RUNNER_TEMP/s4f18-proxy-b.log"
+          holder_log="$RUNNER_TEMP/s4f18-holder.log"
+          proxy_script="$RUNNER_TEMP/s4f18-proxy.py"
+          holder_script="$RUNNER_TEMP/s4f18-holder.py"
+          holder_ready="$RUNNER_TEMP/s4f18-holder.ready"
+          holder_continue="$RUNNER_TEMP/s4f18-holder.continue"
+          wrong_password="F18-Wrong-Password-Should-Not-Log!"
+          recovery_code="F18-High-Entropy-Recovery-Code-0123456789abcdef"
+          proxy_identity="edge-proxy.astrahold.test"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          rm -f "$holder_ready" "$holder_continue"
+          mkdir -p "$data_root" "$tls_dir" "$data_root/character-state"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' 'F18-Correct-Horse-Battery-Staple!' | "$ACCOUNTCTL" create \
+            -path "$accounts_file" \
+            -login holder \
+            -character f18-character \
+            -password-stdin
+
+          python3 - "$recovery_file" "$recovery_code" <<'PY'
+          import hashlib, json, os, sys
+          path, code = sys.argv[1:]
+          with open(path, "x", encoding="utf-8") as f:
+              json.dump({
+                  "schema_version": 1,
+                  "revision": "f18-ci-recovery-provider-001",
+                  "subjects": [{
+                      "login_id": "holder",
+                      "recovery_code_sha256": hashlib.sha256(code.encode()).hexdigest(),
+                  }],
+              }, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          os.chmod(path, 0o600)
+          PY
+
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server-ca.key" -out "$tls_dir/server-ca.crt" -days 1 -sha256 \
+            -subj "/CN=Astrahold S4-F.18 Server CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server-a.key" -out "$tls_dir/server-a.csr" \
+            -subj "/CN=localhost" >/dev/null 2>&1
+          cat >"$tls_dir/server.ext" <<'EOF_SERVER_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_SERVER_EXT
+          openssl x509 -req -in "$tls_dir/server-a.csr" \
+            -CA "$tls_dir/server-ca.crt" -CAkey "$tls_dir/server-ca.key" -CAcreateserial \
+            -out "$tls_dir/server-a.crt" -days 1 -sha256 -extfile "$tls_dir/server.ext" >/dev/null 2>&1
+          cp "$tls_dir/server-a.crt" "$tls_dir/server-live.crt"
+          cp "$tls_dir/server-a.key" "$tls_dir/server-live.key"
+
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server-c.key" -out "$tls_dir/server-c.csr" \
+            -subj "/CN=localhost" >/dev/null 2>&1
+          openssl x509 -req -in "$tls_dir/server-c.csr" \
+            -CA "$tls_dir/server-ca.crt" -CAkey "$tls_dir/server-ca.key" -CAcreateserial \
+            -out "$tls_dir/server-c.crt" -days 1 -sha256 -extfile "$tls_dir/server.ext" >/dev/null 2>&1
+
+          make_proxy_ca() {
+            label="$1"
+            openssl req -x509 -newkey rsa:2048 -nodes \
+              -keyout "$tls_dir/proxy-ca-$label.key" -out "$tls_dir/proxy-ca-$label.crt" -days 1 -sha256 \
+              -subj "/CN=Astrahold S4-F.18 Proxy CA $label" \
+              -addext "basicConstraints=critical,CA:TRUE" \
+              -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          }
+
+          make_proxy_cert() {
+            label="$1"
+            ca_label="$2"
+            dns_name="$3"
+            openssl req -newkey rsa:2048 -nodes \
+              -keyout "$tls_dir/proxy-$label.key" -out "$tls_dir/proxy-$label.csr" \
+              -subj "/CN=$dns_name" >/dev/null 2>&1
+            cat >"$tls_dir/proxy-$label.ext" <<EOF_PROXY_EXT
+          subjectAltName=DNS:$dns_name
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature
+          extendedKeyUsage=clientAuth
+          EOF_PROXY_EXT
+            openssl x509 -req -in "$tls_dir/proxy-$label.csr" \
+              -CA "$tls_dir/proxy-ca-$ca_label.crt" -CAkey "$tls_dir/proxy-ca-$ca_label.key" -CAcreateserial \
+              -out "$tls_dir/proxy-$label.crt" -days 1 -sha256 -extfile "$tls_dir/proxy-$label.ext" >/dev/null 2>&1
+          }
+
+          make_proxy_ca a
+          make_proxy_ca b
+          make_proxy_cert a a "$proxy_identity"
+          make_proxy_cert wrong-a a "wrong-proxy.astrahold.test"
+          make_proxy_cert b b "$proxy_identity"
+          cp "$tls_dir/proxy-ca-a.crt" "$proxy_ca_live"
+
+          write_proxy_policy() {
+            revision="$1"
+            python3 - "$proxy_policy" "$revision" "$proxy_identity" <<'PY'
+          import json, os, sys
+          path, revision, identity = sys.argv[1:]
+          temp = path + ".tmp"
+          with open(temp, "w", encoding="utf-8") as f:
+              json.dump({
+                  "schema_version": 1,
+                  "revision": revision,
+                  "client_ca_file": "tls/proxy-client-ca-live.crt",
+                  "dns_names": [identity],
+              }, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          os.replace(temp, path)
+          os.chmod(path, 0o600)
+          PY
+          }
+          write_proxy_policy f18-proxy-001
+          chmod 600 "$accounts_file" "$recovery_file" "$proxy_policy" "$tls_dir"/*.key
+
+          cat >"$proxy_script" <<'PY'
+          import http.client
+          import http.server
+          import ssl
+          import sys
+
+          listen_port, server_ca, public_cert, public_key, client_cert, client_key = sys.argv[1:]
+          upstream_context = ssl.create_default_context(cafile=server_ca)
+          upstream_context.minimum_version = ssl.TLSVersion.TLSv1_3
+          upstream_context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def log_message(self, *_):
+                  pass
+
+              def do_POST(self):
+                  length = int(self.headers.get("Content-Length", "0"))
+                  body = self.rfile.read(length)
+                  headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+                  if "X-Forwarded-For" in self.headers:
+                      headers["X-Forwarded-For"] = self.headers["X-Forwarded-For"]
+                  try:
+                      connection = http.client.HTTPSConnection(
+                          "127.0.0.1",
+                          39444,
+                          context=upstream_context,
+                          source_address=("127.0.0.2", 0),
+                          timeout=5,
+                      )
+                      connection.request("POST", self.path, body=body, headers=headers)
+                      response = connection.getresponse()
+                      response_body = response.read()
+                      self.send_response(response.status)
+                      for name in ("Content-Type", "Cache-Control", "Pragma", "Retry-After"):
+                          value = response.getheader(name)
+                          if value is not None:
+                              self.send_header(name, value)
+                      self.send_header("Content-Length", str(len(response_body)))
+                      self.end_headers()
+                      self.wfile.write(response_body)
+                      connection.close()
+                  except Exception as exc:
+                      data = b"upstream unavailable\n"
+                      self.send_response(502)
+                      self.send_header("Content-Type", "text/plain")
+                      self.send_header("Content-Length", str(len(data)))
+                      self.end_headers()
+                      self.wfile.write(data)
+                      print("upstream failure", type(exc).__name__, flush=True)
+
+          server = http.server.ThreadingHTTPServer(("127.0.0.1", int(listen_port)), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.load_cert_chain(certfile=public_cert, keyfile=public_key)
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          server.serve_forever()
+          PY
+
+          cat >"$holder_script" <<'PY'
+          import http.client
+          import os
+          import ssl
+          import sys
+          import time
+
+          server_ca, client_cert, client_key, ready, go = sys.argv[1:]
+          context = ssl.create_default_context(cafile=server_ca)
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+          connection = http.client.HTTPSConnection(
+              "127.0.0.1",
+              39444,
+              context=context,
+              source_address=("127.0.0.2", 0),
+              timeout=5,
+          )
+
+          def login(source):
+              body = b'{"login_id":"holder","login_secret":"F18-holder-wrong"}'
+              connection.request("POST", "/v1/session/login", body=body, headers={
+                  "Content-Type": "application/json",
+                  "X-Forwarded-For": source,
+              })
+              response = connection.getresponse()
+              response.read()
+              return response.status
+
+          assert login("198.51.100.70") == 401
+          with open(ready, "w", encoding="utf-8") as f:
+              f.write("ready\n")
+          for _ in range(300):
+              if os.path.exists(go):
+                  break
+              time.sleep(0.1)
+          else:
+              raise RuntimeError("timed out waiting for proxy trust rotation")
+          assert login("198.51.100.71") == 401
+          connection.close()
+          print("ASTRAHOLD_F18_OLD_PROXY_CONNECTION_OK", flush=True)
+          PY
+
+          cleanup() {
+            set +e
+            for pid in "${holder_pid:-}" "${proxy_a_pid:-}" "${proxy_b_pid:-}" "${server_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            attempts="${4:-300}"
+            i=0
+            while [ "$i" -lt "$attempts" ]; do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                cat "$server_log" || true
+                return 1
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            cat "$server_log" || true
+            return 1
+          }
+
+          wait_for_file() {
+            path="$1"
+            pid="$2"
+            for _ in $(seq 1 300); do
+              if [ -f "$path" ]; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                cat "$holder_log" || true
+                return 1
+              fi
+              sleep 0.1
+            done
+            echo "timed out waiting for $path"
+            cat "$holder_log" || true
+            return 1
+          }
+
+          "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:39777 \
+            -udp 127.0.0.1:39778 \
+            -session-login-account-file "$accounts_file" \
+            -session-login-tls-listen 127.0.0.1:39444 \
+            -session-login-tls-cert "$tls_dir/server-live.crt" \
+            -session-login-tls-key "$tls_dir/server-live.key" \
+            -session-login-trusted-proxy-cidrs '127.0.0.2/32' \
+            -session-login-forwarded-header x-forwarded-for \
+            -session-login-trusted-proxy-mtls-file "$proxy_policy" \
+            -session-login-ip-max-attempts 50 \
+            -session-login-ip-attempt-window 1m \
+            -session-recovery-provider-file "$recovery_file" \
+            -session-recovery-challenge-ttl 10m \
+            -session-recovery-challenge-max-attempts 5 \
+            -session-recovery-ip-max-attempts 50 \
+            -session-recovery-ip-attempt-window 1m \
+            -character-state-dir "$data_root/character-state" \
+            -character-state-save-journal "$data_root/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data_root/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
+          server_pid=$!
+
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "source_attribution=trusted-proxy/x-forwarded-for trusted_proxy_prefixes=1 forwarded_max_hops=16 proxy_auth=mtls-v1 proxy_trust_generation=1 proxy_trust_revision=f18-proxy-001 proxy_identity_count=1" "$server_pid"
+
+          login_body="$(printf '{"login_id":"holder","login_secret":"%s"}' "$wrong_password")"
+
+          direct_status="$(printf '%s' "$login_body" | curl --silent --show-error \
+            --cacert "$tls_dir/server-ca.crt" --output /tmp/f18-direct --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'X-Forwarded-For: forged-direct-value' \
+            --data-binary @- https://localhost:39444/v1/session/login)"
+          test "$direct_status" = "401"
+
+          expect_proxy_tls_reject() {
+            label="$1"
+            cert="$2"
+            key="$3"
+            cert_args=()
+            if [ -n "$cert" ]; then
+              cert_args=(--cert "$cert" --key "$key")
+            fi
+            set +e
+            status="$(printf '%s' "$login_body" | curl --silent --show-error \
+              --interface 127.0.0.2 --cacert "$tls_dir/server-ca.crt" \
+              "${cert_args[@]}" \
+              --output "/tmp/f18-$label-body" --write-out '%{http_code}' \
+              -H 'Content-Type: application/json' -H 'X-Forwarded-For: 198.51.100.1' \
+              --data-binary @- https://localhost:39444/v1/session/login 2>"/tmp/f18-$label-error")"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ] || [ "$status" != "000" ]; then
+              echo "expected TLS rejection for $label, rc=$rc status=$status"
+              cat "/tmp/f18-$label-error" || true
+              cat "/tmp/f18-$label-body" || true
+              exit 1
+            fi
+          }
+
+          expect_proxy_tls_reject no-cert "" ""
+          expect_proxy_tls_reject wrong-identity "$tls_dir/proxy-wrong-a.crt" "$tls_dir/proxy-wrong-a.key"
+          expect_proxy_tls_reject future-ca "$tls_dir/proxy-b.crt" "$tls_dir/proxy-b.key"
+
+          python3 "$proxy_script" 39555 "$tls_dir/server-ca.crt" "$tls_dir/server-a.crt" "$tls_dir/server-a.key" \
+            "$tls_dir/proxy-a.crt" "$tls_dir/proxy-a.key" >"$proxy_a_log" 2>&1 &
+          proxy_a_pid=$!
+          for _ in $(seq 1 100); do
+            status="$(printf '%s' "$login_body" | curl --silent --show-error --cacert "$tls_dir/server-ca.crt" \
+              --output /tmp/f18-proxy-a --write-out '%{http_code}' \
+              -H 'Content-Type: application/json' -H 'X-Forwarded-For: 198.51.100.10' \
+              --data-binary @- https://localhost:39555/v1/session/login 2>/dev/null || true)"
+            if [ "$status" = "401" ]; then break; fi
+            if ! kill -0 "$proxy_a_pid" 2>/dev/null; then cat "$proxy_a_log"; exit 1; fi
+            sleep 0.1
+          done
+          test "${status:-}" = "401"
+
+          recovery_status="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$tls_dir/server-ca.crt" --output /tmp/f18-recovery-a --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'X-Forwarded-For: 203.0.113.10' \
+            --data-binary @- https://localhost:39555/v1/account/recovery/request)"
+          test "$recovery_status" = "202"
+
+          python3 "$holder_script" "$tls_dir/server-ca.crt" "$tls_dir/proxy-a.crt" "$tls_dir/proxy-a.key" \
+            "$holder_ready" "$holder_continue" >"$holder_log" 2>&1 &
+          holder_pid=$!
+          wait_for_file "$holder_ready" "$holder_pid"
+
+          cp "$tls_dir/proxy-ca-b.crt" "$proxy_ca_live"
+          write_proxy_policy f18-proxy-002
+          cp "$tls_dir/server-c.crt" "$tls_dir/server-live.crt"
+          kill -HUP "$server_pid"
+          wait_for_marker "$server_log" "session login TLS certificate reload rejected; last-known-good retained: generation=1" "$server_pid"
+          wait_for_marker "$server_log" "session trusted proxy mTLS reload applied: previous_generation=1 generation=2 previous_revision=f18-proxy-001 revision=f18-proxy-002 roots=1 identities=1" "$server_pid"
+
+          touch "$holder_continue"
+          wait "$holder_pid"
+          holder_pid=""
+          grep -F "ASTRAHOLD_F18_OLD_PROXY_CONNECTION_OK" "$holder_log"
+
+          post_rotation_a="$(printf '%s' "$login_body" | curl --silent --show-error --cacert "$tls_dir/server-ca.crt" \
+            --output /tmp/f18-proxy-a-after --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'X-Forwarded-For: 198.51.100.11' \
+            --data-binary @- https://localhost:39555/v1/session/login)"
+          test "$post_rotation_a" = "502"
+
+          python3 "$proxy_script" 39556 "$tls_dir/server-ca.crt" "$tls_dir/server-a.crt" "$tls_dir/server-a.key" \
+            "$tls_dir/proxy-b.crt" "$tls_dir/proxy-b.key" >"$proxy_b_log" 2>&1 &
+          proxy_b_pid=$!
+          for _ in $(seq 1 100); do
+            status_b="$(printf '%s' "$login_body" | curl --silent --show-error --cacert "$tls_dir/server-ca.crt" \
+              --output /tmp/f18-proxy-b --write-out '%{http_code}' \
+              -H 'Content-Type: application/json' -H 'X-Forwarded-For: 198.51.100.20' \
+              --data-binary @- https://localhost:39556/v1/session/login 2>/dev/null || true)"
+            if [ "$status_b" = "401" ]; then break; fi
+            if ! kill -0 "$proxy_b_pid" 2>/dev/null; then cat "$proxy_b_log"; exit 1; fi
+            sleep 0.1
+          done
+          test "${status_b:-}" = "401"
+
+          recovery_status_b="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$tls_dir/server-ca.crt" --output /tmp/f18-recovery-b --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'X-Forwarded-For: 203.0.113.20' \
+            --data-binary @- https://localhost:39556/v1/account/recovery/request)"
+          test "$recovery_status_b" = "202"
+
+          printf '%s\n' 'not a PEM bundle' >"$proxy_ca_live"
+          kill -HUP "$server_pid"
+          wait_for_marker "$server_log" "session trusted proxy mTLS reload rejected; last-known-good retained: generation=2 revision=f18-proxy-002" "$server_pid"
+          lkg_status="$(printf '%s' "$login_body" | curl --silent --show-error --cacert "$tls_dir/server-ca.crt" \
+            --output /tmp/f18-proxy-b-lkg --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'X-Forwarded-For: 198.51.100.21' \
+            --data-binary @- https://localhost:39556/v1/session/login)"
+          test "$lkg_status" = "401"
+
+          direct_after="$(printf '%s' "$login_body" | curl --silent --show-error \
+            --cacert "$tls_dir/server-ca.crt" --output /tmp/f18-direct-after --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:39444/v1/session/login)"
+          test "$direct_after" = "401"
+
+          for forbidden in "$wrong_password" "$recovery_code" "BEGIN PRIVATE KEY" "$proxy_identity" "wrong-proxy.astrahold.test"; do
+            if grep -Fq "$forbidden" "$server_log"; then
+              echo "worldd log leaked F.18 secret or proxy identity: $forbidden"
+              cat "$server_log"
+              exit 1
+            fi
+          done
+
+          echo "ASTRAHOLD_F18_E2E_OK direct_client_unchanged=true proxy_mtls_required=true exact_dns_identity=true ca_rotation=true old_connection_survives=true invalid_lkg=true tls_reload_independent=true recovery_unchanged=true protocol=9 tls=1.3"
+
+      - name: Upload F.18 mTLS logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f18-trusted-proxy-mtls-logs
+          path: |
+            ${{ runner.temp }}/s4f18-worldd.log
+            ${{ runner.temp }}/s4f18-proxy-a.log
+            ${{ runner.temp }}/s4f18-proxy-b.log
+            ${{ runner.temp }}/s4f18-holder.log
+          if-no-files-found: ignore

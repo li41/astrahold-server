@@ -215,7 +215,8 @@ func sessionLoginConfigurationRequested() bool {
 		strings.TrimSpace(*sessionLoginTLSKeyFile) != "" ||
 		strings.TrimSpace(*sessionRecoveryProviderFile) != "" ||
 		strings.TrimSpace(*sessionLoginTrustedProxyCIDRs) != "" ||
-		strings.TrimSpace(*sessionLoginForwardedHeader) != ""
+		strings.TrimSpace(*sessionLoginForwardedHeader) != "" ||
+		strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile) != ""
 }
 
 func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
@@ -270,6 +271,10 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: load session login certificate: %v", errSessionLoginConfig, err)
 	}
+	tlsConfig, err := sourceAttributor.TLSConfig(tlsCertificate)
+	if err != nil {
+		return nil, fmt.Errorf("%w: configure session login TLS edge trust: %v", errSessionLoginConfig, err)
+	}
 	base, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return nil, fmt.Errorf("open session login listener: %w", err)
@@ -287,7 +292,7 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 		recoveryProvider: recoveryProvider,
 		recoveryGuard:    recoveryGuard,
 		provider:         provider,
-		listener:         tls.NewListener(base, tlsCertificate.TLSConfig()),
+		listener:         tls.NewListener(base, tlsConfig),
 		tlsCertificate:   tlsCertificate,
 		sourceAttributor: sourceAttributor,
 		ttl:              *issuedSessionCredentialTTL,
@@ -703,10 +708,11 @@ func runIssuedSessionCredentialRuntime(
 	}
 	tlsSnapshot := runtime.TLSCertificateSnapshot()
 	sourceAttribution, trustedProxyPrefixes := sessionSourceAttributionMetadata(runtime.sourceAttributor)
-	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s source_attribution=%s trusted_proxy_prefixes=%d forwarded_max_hops=%d login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), sourceAttribution, trustedProxyPrefixes, sessionSourceAttributionMaxHops, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
+	proxyAuth, proxyTrust := sessionProxyMTLSMetadataForAttributor(runtime.sourceAttributor)
+	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s source_attribution=%s trusted_proxy_prefixes=%d forwarded_max_hops=%d proxy_auth=%s proxy_trust_generation=%d proxy_trust_revision=%s proxy_identity_count=%d login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), sourceAttribution, trustedProxyPrefixes, sessionSourceAttributionMaxHops, proxyAuth, proxyTrust.Generation, proxyTrust.Revision, proxyTrust.IdentityCount, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
 	if runtime.recoveryProvider != nil {
 		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
-		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d source_attribution=%s", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration, sourceAttribution)
+		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d source_attribution=%s proxy_auth=%s", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration, sourceAttribution, proxyAuth)
 	}
 
 	for {
@@ -746,6 +752,15 @@ func runIssuedSessionCredentialRuntime(
 				logf("session login TLS certificate reload rejected; last-known-good retained: generation=%d err=%v", currentTLS.Generation, err)
 			} else {
 				logf("session login TLS certificate reload applied: previous_generation=%d generation=%d not_after=%s", tlsResult.PreviousGeneration, tlsResult.Generation, tlsResult.NotAfter.UTC().Format(time.RFC3339Nano))
+			}
+			if runtime.sourceAttributor != nil && runtime.sourceAttributor.proxyMTLS != nil {
+				proxyResult, err := runtime.sourceAttributor.proxyMTLS.Reload()
+				if err != nil {
+					currentProxy := runtime.sourceAttributor.proxyMTLS.Snapshot()
+					logf("session trusted proxy mTLS reload rejected; last-known-good retained: generation=%d revision=%s err=%v", currentProxy.Generation, currentProxy.Revision, err)
+				} else {
+					logf("session trusted proxy mTLS reload applied: previous_generation=%d generation=%d previous_revision=%s revision=%s roots=%d identities=%d", proxyResult.PreviousGeneration, proxyResult.Generation, proxyResult.PreviousRevision, proxyResult.Revision, proxyResult.RootCount, proxyResult.IdentityCount)
+				}
 			}
 			if _, _, ok := runtime.accountAuth.reloadMetadata(); !ok {
 				logf("session login account verifier is restart-only; SIGHUP does not reload schema v1/v2 issuance accounts")
