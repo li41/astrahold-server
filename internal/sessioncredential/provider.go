@@ -29,10 +29,18 @@ var (
 // to the Client. Providers that support live session invalidation should keep the
 // value stable while the credential record is unchanged and change it whenever a
 // security-relevant credential record changes.
+//
+// AuthenticationSubject and AuthenticationGeneration are optional Server-only
+// provenance for credentials issued from an account-authentication layer. They
+// are never sent to the Client and do not grant gameplay authority. An issuance
+// runtime may retain them so a password rotation, account disable, or other
+// account-proof generation change can revoke already-issued game credentials.
 type Grant struct {
-	Identity            characteridentity.Binding
-	AllowActiveTakeover bool
-	RevocationScope     string
+	Identity                 characteridentity.Binding
+	AllowActiveTakeover      bool
+	RevocationScope          string
+	AuthenticationSubject    string
+	AuthenticationGeneration string
 }
 
 func (g Grant) Valid() bool {

@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,7 @@ var (
 	sessionLoginAccountFile = flag.String(
 		"session-login-account-file",
 		"",
-		"Optional server-side account verifier map (schema v1 high-entropy SHA-256 or schema v2 Argon2id password) used to issue short-lived opaque session credentials",
+		"Optional server-side account verifier map (schema v1 high-entropy SHA-256, schema v2 Argon2id password, or schema v3 durable account store) used to issue short-lived opaque session credentials",
 	)
 	sessionLoginTLSListen = flag.String(
 		"session-login-tls-listen",
@@ -60,6 +61,16 @@ var (
 		"session-credential-ttl",
 		15*time.Minute,
 		"Lifetime of an issued opaque session credential (1m..24h)",
+	)
+	sessionLoginIPAttemptWindow = flag.Duration(
+		"session-login-ip-attempt-window",
+		time.Minute,
+		"Fixed source-IP login attempt window used before password KDF work (1s..1h)",
+	)
+	sessionLoginIPMaxAttempts = flag.Int(
+		"session-login-ip-max-attempts",
+		30,
+		"Maximum login POST attempts per observed TLS source IP in one attempt window (1..10000)",
 	)
 )
 
@@ -177,7 +188,9 @@ func (a *staticSessionLoginAuthenticator) Authenticate(ctx context.Context, logi
 }
 
 type sessionLoginRuntime struct {
+	accountPath string
 	accountAuth *sessionAccountAuthRuntime
+	abuseGuard  *sessionLoginAbuseGuard
 	provider    *reloadableTrustedCharacterCredentialProvider
 	listener    net.Listener
 	ttl         time.Duration
@@ -211,6 +224,12 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	if *issuedSessionCredentialTTL < issuedSessionCredentialMinTTL || *issuedSessionCredentialTTL > issuedSessionCredentialMaxTTL {
 		return nil, fmt.Errorf("%w: session-credential-ttl must be between %s and %s", errSessionLoginConfig, issuedSessionCredentialMinTTL, issuedSessionCredentialMaxTTL)
 	}
+	if *sessionLoginIPAttemptWindow < time.Second || *sessionLoginIPAttemptWindow > time.Hour {
+		return nil, fmt.Errorf("%w: session-login-ip-attempt-window must be between 1s and 1h", errSessionLoginConfig)
+	}
+	if *sessionLoginIPMaxAttempts < 1 || *sessionLoginIPMaxAttempts > 10000 {
+		return nil, fmt.Errorf("%w: session-login-ip-max-attempts must be between 1 and 10000", errSessionLoginConfig)
+	}
 	if err := validateTrustedCharacterAuthListenAddress(tcpAddress); err != nil {
 		return nil, err
 	}
@@ -240,7 +259,9 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 		return nil, err
 	}
 	return &sessionLoginRuntime{
+		accountPath: accountPath,
 		accountAuth: accountAuth,
+		abuseGuard:  newSessionLoginAbuseGuard(*sessionLoginIPAttemptWindow, *sessionLoginIPMaxAttempts, time.Now),
 		provider:    provider,
 		listener: tls.NewListener(base, &tls.Config{
 			Certificates: []tls.Certificate{certificate},
@@ -314,6 +335,9 @@ func (r *sessionLoginRuntime) Issue(ctx context.Context, grant sessioncredential
 	if r.replaceScopes == nil {
 		return sessioncredential.IssuedCredential{}, errSessionLoginRuntimeUnavailable
 	}
+	if !r.accountAuth.grantCurrent(grant) {
+		return sessioncredential.IssuedCredential{}, errSessionLoginRejected
+	}
 	now := r.now().UTC()
 	nextRevision := r.revision + 1
 	next := cloneIssuedSessionCredentialProvider(r.provider.snapshot(), nextRevision, r.now)
@@ -346,9 +370,11 @@ func (r *sessionLoginRuntime) Issue(ctx context.Context, grant sessioncredential
 		tokenDigest:     digest,
 		revocationScope: scope,
 		grant: sessioncredential.Grant{
-			Identity:            grant.Identity,
-			AllowActiveTakeover: grant.AllowActiveTakeover,
-			RevocationScope:     scope,
+			Identity:                 grant.Identity,
+			AllowActiveTakeover:      grant.AllowActiveTakeover,
+			RevocationScope:          scope,
+			AuthenticationSubject:    grant.AuthenticationSubject,
+			AuthenticationGeneration: grant.AuthenticationGeneration,
 		},
 		lifecycle: sessioncredential.Lifecycle{ExpiresAt: expiresAt},
 	}
@@ -483,6 +509,18 @@ func (r *sessionLoginRuntime) handleSessionLogin(w http.ResponseWriter, request 
 		writeSessionLoginError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
+	if r.abuseGuard != nil {
+		allowed, retry := r.abuseGuard.Allow(request.RemoteAddr)
+		if !allowed {
+			seconds := int((retry + time.Second - 1) / time.Second)
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			writeSessionLoginError(w, http.StatusTooManyRequests, "login_throttled")
+			return
+		}
+	}
 	request.Body = http.MaxBytesReader(w, request.Body, sessionLoginMaxRequestBytes)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
@@ -505,6 +543,10 @@ func (r *sessionLoginRuntime) handleSessionLogin(w http.ResponseWriter, request 
 	}
 	issued, err := r.Issue(request.Context(), grant)
 	if err != nil {
+		if errors.Is(err, errSessionLoginRejected) {
+			writeSessionLoginError(w, http.StatusUnauthorized, "invalid_credentials")
+			return
+		}
 		writeSessionLoginError(w, http.StatusServiceUnavailable, "issuance_unavailable")
 		return
 	}
@@ -603,7 +645,12 @@ func runIssuedSessionCredentialRuntime(
 
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- runtime.serve(ctx) }()
-	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s restart_persistence=false", runtime.accountAuth.revision, runtime.Addr(), runtime.ttl, runtime.accountAuth.method)
+	_, _, durableReload := runtime.accountAuth.reloadMetadata()
+	reloadMode := "restart-only"
+	if durableReload {
+		reloadMode = "sighup"
+	}
+	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
 
 	for {
 		current := runtime.provider.snapshot()
@@ -636,7 +683,16 @@ func runIssuedSessionCredentialRuntime(
 			continue
 		case <-reloadSignals:
 			stopTrustedCharacterAuthTimer(timer)
-			logf("session login account verifier is restart-only; SIGHUP does not reload issuance accounts")
+			if _, _, ok := runtime.accountAuth.reloadMetadata(); !ok {
+				logf("session login account verifier is restart-only; SIGHUP does not reload schema v1/v2 issuance accounts")
+				continue
+			}
+			result, err := runtime.reloadDurableAccounts(time.Now().UTC())
+			if err != nil {
+				logf("session login durable account reload rejected; last-known-good retained: err=%v", err)
+				continue
+			}
+			logf("session login durable account reload applied: previous_revision=%s revision=%s removed_bearers=%d retired_peers=%d", result.PreviousRevision, result.Revision, result.RemovedBearers, result.RetiredPeers)
 		case <-timerC:
 			retired := runtime.expireAt(time.Now().UTC())
 			if retired > 0 {

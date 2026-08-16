@@ -39,8 +39,8 @@ func TestArgon2idSessionLoginRuntimeServesTLS13AndIssuesGameCredential(t *testin
 		t.Fatal(err)
 	}
 	defer runtime.Close()
-	if runtime.accountAuth.method != "argon2id-password" || runtime.accountAuth.revision != definition.Revision {
-		t.Fatalf("account auth method=%q revision=%q", runtime.accountAuth.method, runtime.accountAuth.revision)
+	if runtime.accountAuth.Method() != "argon2id-password" || runtime.accountAuth.Revision() != definition.Revision {
+		t.Fatalf("account auth method=%q revision=%q", runtime.accountAuth.Method(), runtime.accountAuth.Revision())
 	}
 
 	replaceScopes := func([]string) int { return 0 }
