@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.25 — Multi-Instance Trusted Proxy Revocation Distribution Fence**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.26 — Revocation Rollout Orchestration / Required-Ack Gate**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -82,6 +82,9 @@ Server runtime 主線已完成到 **S4-F.25 — Multi-Instance Trusted Proxy Rev
 - **F.25 multi-instance trusted-proxy revocation distribution fence**
 - F.25 在F.24 revocation authority上加入strict schema-v1 distribution manifest：monotonic epoch + F.24 semantic authority SHA-256 + 最長24小時`valid_until` lease；revocation candidate與manifest digest不一致、epoch rollback或same-epoch conflicting reuse一律fail-closed並保留LKG
 - F.25 每個`worldd`使用stable operator-owned instance ID與local durable 0600 ack作restart epoch floor與convergence evidence；漏掉新distribution的instance最晚在lease到期時失去全部trusted-proxy forwarding authority，ack寫入失敗則維持新revocation但fence proxy authority直到same-epoch ack重試成功；direct/untrusted Client不受影響
+- **F.26 revocation rollout orchestration / required-ack gate**
+- F.26 新增Server/deployment-side `revocationctl publish|wait|rollout`：strict schema-v1 plan明列單一target epoch/lease、F.24 source與explicit required instance set；controller使用與`worldd`完全相同的F.24 semantic digest，先對全部target stage canonical revocation，再以F.25 manifest作per-target commit marker
+- F.26 rollback/same-epoch conflict在任何write前reject；mid-manifest failure採fail-forward且允許identical epoch/digest/lease idempotent retry。Required member只有在durable F.25 ack的`instance_id + epoch + revocation_revision + digest + valid_until`完全命中時才converged；missing/older ack為pending，timeout/lease expiry回`incomplete`/exit 2，direct Client與F.25 authorization fence均不變
 
 核心 production contract：
 
@@ -797,6 +800,18 @@ Fresh proxy handshake與existing keep-alive request-time attribution都要求cur
 
 F.25 final exact product head `d0896c73442e13ac8f2e8af58998bc0fbcaa6ee4`通過17/17 workflows；Server CI的Test、Vet、Race detector及新的Production Trusted Proxy Revocation Distribution Fence E2E全部success。Production gate以兩個real `worldd`證明delayed member lease expiry fail-closed、healthy Leaf B preservation、epoch/digest/lease ack convergence、rollback fence與direct Client unchanged。Product以squash merge進main，merge SHA為`a87dfbe93f5e19989b6466183b8cbb0a0d86da4c`。
 
+### F.26 revocation rollout orchestration / required-ack gate
+
+F.26 維持F.25 `worldd` authorization fence原封不動，新增獨立Server/deployment-side `revocationctl`。Strict schema-v1 rollout plan指定單一target `epoch + valid_until`、F.24 revocation source與最多64個explicit required instances；每個member明列revocation/distribution/ack path，relative path以plan directory為基準，並沿用F.24最多256個SPKI與F.25最長24小時lease界線。
+
+Controller會完整validate/canonicalize F.24 source，使用與`worldd`相同的`astrahold/session-leaf-revocation-authority/v1\x00` domain separator與sorted raw SPKI digest計算semantic SHA-256。Publish先preflight全部targets的newer-epoch / same-epoch conflict，再對全部unique target pair atomic stage canonical F.24 revocation；只有全部stage成功後才逐一atomic publish F.25 manifest作commit marker。若manifest commit中途失敗不做可能重新授權compromised key的rollback，而是回partial並允許identical target idempotent retry。
+
+`revocationctl wait` / `rollout`只在所有required members的durable F.25 ack精確命中`instance_id + epoch + revocation_revision + revocation_authority_sha256 + valid_until`時回`converged`/exit 0。Missing或older ack保持pending；timeout或lease expiry回`incomplete`/exit 2；malformed/conflicting/superseded ack與invalid publication回exit 1。F.26不發明remote process-control protocol，SIGHUP/restart仍由deployment supervisor負責。
+
+F.26 final exact product head `9e777aad8bea033acba919e196102d14dcfc1717`通過18/18 workflows；Server CI Test/Vet/Race全部success，新增Production Trusted Proxy Revocation Rollout E2E以兩個real TLS 1.3 `worldd`證明required A+B gate、delayed member阻止convergence、timeout incomplete、後續`wait`可續收斂、rollback fence、healthy Leaf B preservation與direct Client unchanged。Product以squash merge進main，merge SHA為`453e237863e64442a2e68e4efdee39627fb0bacf`。
+
+完整 F.26 contract：[`docs/S4F26_REVOCATION_ROLLOUT_ORCHESTRATION.md`](docs/S4F26_REVOCATION_ROLLOUT_ORCHESTRATION.md)。
+
 完整 F.25 contract：[`docs/S4F25_TRUSTED_PROXY_REVOCATION_DISTRIBUTION_FENCE.md`](docs/S4F25_TRUSTED_PROXY_REVOCATION_DISTRIBUTION_FENCE.md)。
 
 完整 F.24 contract：[`docs/S4F24_TRUSTED_PROXY_LEAF_CREDENTIAL_REVOCATION.md`](docs/S4F24_TRUSTED_PROXY_LEAF_CREDENTIAL_REVOCATION.md)。
@@ -980,8 +995,9 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | **S4-F.23** | **authenticated identity-aware partial binding rotation；同一binding中still-authorized `edge-a` keep-alive保留、removed `edge-canary`退休；multi-SAN原未授權`edge-future`不得retroactive續命；fresh handshake可依new generation授權；invalid replacement LKG；direct Client unchanged** | **✅** |
 | **S4-F.24** | **independent trusted-proxy SPKI revocation generation；same exact DNS identity下Leaf A revoked/retired、healthy Leaf B存活；fresh revoked key reject；invalid replacement LKG；semantic no-op retire 0；direct Client server-auth-only unchanged** | **✅** |
 | **S4-F.25** | **multi-instance revocation distribution fence；monotonic epoch + F.24 semantic digest + bounded lease；per-instance durable ack/restart floor；delayed member lease expiry fail-closed；ack convergence與rollback fence；healthy Leaf B/direct Client unchanged** | **✅** |
+| **S4-F.26** | **Server/deployment `revocationctl`；explicit required instance set；exact F.24 semantic digest；all-revocation-stage-before-manifest-commit；rollback/conflict preflight；fail-forward idempotent retry；all-required exact durable-ack gate；incomplete exit 2/resumable wait；worldd/Client contract unchanged** | **✅** |
 
-Server runtime contract現在是F.25；paired Client runtime仍是F.11。F.25 final exact product head `d0896c73442e13ac8f2e8af58998bc0fbcaa6ee4`通過17/17 workflows：原有16個exact-head workflows全部success，新增的Production Trusted Proxy Revocation Distribution Fence E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，Client product code未為F.25增加任何edge-policy/network/certificate/connection-retirement/revocation/distribution-epoch/lease/ack/fingerprint authority。
+Server runtime contract現在是F.26；paired Client runtime仍是F.11。F.26 final exact product head `9e777aad8bea033acba919e196102d14dcfc1717`通過18/18 workflows：既有17個exact-head workflows全部success，新增的Production Trusted Proxy Revocation Rollout E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，`worldd` F.25 authorization semantics未改，Client product code未為F.26增加任何edge-policy/network/certificate/revocation/distribution-epoch/lease/ack/required-membership/rollout-control authority。
 
 ## 文件入口
 
@@ -1130,9 +1146,9 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.25 已把F.24的single-process SPKI revocation authority延伸成bounded multi-instance consumption fence：每個`worldd`只在manifest semantic digest對上current revoked set、local durable ack健康且lease未過期時保有trusted-proxy authority。某member漏掉新distribution不會永久stale，最晚在既有lease到期時fail-closed；收到新epoch後則可用`instance_id + epoch + digest + valid_until`形成可聚合的convergence evidence。Direct Godot Client、Protocol v9與gameplay authority都沒有參與這個deployment control plane。
+S4-F.26 已把F.25提供的per-instance durable convergence evidence收斂成explicit required-membership rollout gate：單一target epoch先安全發布paired F.24/F.25 authority，所有required members都必須ack完全相同的epoch/revision/digest/lease才算`converged`；delayed member會阻止成功，timeout明確回`incomplete`，後續同plan可繼續`wait`收斂。這仍是Server/deployment control plane，`worldd` F.25 runtime fence、Direct Godot Client、Protocol v9與gameplay authority都沒有擴權。
 
-下一個 bounded stage 建議進入 **S4-F.26 — Revocation Rollout Orchestration / Required-Ack Gate**：維持F.25 `worldd` authorization fence不變，將operator流程收斂成一個Server/deployment-side bounded controller：以單一target epoch發布paired F.24/F.25 authority、定義本次rollout必須acknowledge的explicit instance set、收集各instance durable ack並在timeout前給出converged / incomplete的明確結果。F.26不把quorum或deployment membership塞進Godot Client、gameplay protocol或F.19 edge schema，也不宣稱multi-writer consensus；CRL/OCSP、ACME/PKI automation、HSM、自動compromise detection、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
+**下一個 bounded focus 先回到 deployment evidence decision gate。** F.26 production evidence顯示目前剩餘的操作依賴是由既有deployment supervisor送出SIGHUP/restart activation；本階段刻意沒有把remote process execution、service discovery或quorum membership塞進controller。是否需要下一個S4-F.27 activation/supervisor handoff contract，應以實際部署中「publish成功但activation遺漏/延遲」的量測證據決定；沒有這類證據前不自動加入remote executor、consensus或更大的PKI control plane。CRL/OCSP、ACME/PKI automation、HSM、自動compromise detection、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
 
 Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
 
