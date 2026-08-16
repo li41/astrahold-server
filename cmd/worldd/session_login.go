@@ -51,12 +51,12 @@ var (
 	sessionLoginTLSCertFile = flag.String(
 		"session-login-tls-cert",
 		"",
-		"PEM certificate chain for -session-login-tls-listen",
+		"PEM certificate chain for -session-login-tls-listen; reloaded with its key on SIGHUP",
 	)
 	sessionLoginTLSKeyFile = flag.String(
 		"session-login-tls-key",
 		"",
-		"PEM private key for -session-login-tls-listen",
+		"PEM private key for -session-login-tls-listen; reloaded with its certificate on SIGHUP",
 	)
 	issuedSessionCredentialTTL = flag.Duration(
 		"session-credential-ttl",
@@ -196,6 +196,7 @@ type sessionLoginRuntime struct {
 	recoveryGuard    *sessionLoginAbuseGuard
 	provider         *reloadableTrustedCharacterCredentialProvider
 	listener         net.Listener
+	tlsCertificate   *reloadableTLSCertificate
 	ttl              time.Duration
 	now              func() time.Time
 	random           io.Reader
@@ -258,7 +259,7 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 			return nil, err
 		}
 	}
-	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	tlsCertificate, err := newReloadableTLSCertificate(certFile, keyFile, time.Now)
 	if err != nil {
 		return nil, fmt.Errorf("%w: load session login certificate: %v", errSessionLoginConfig, err)
 	}
@@ -279,14 +280,12 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 		recoveryProvider: recoveryProvider,
 		recoveryGuard:    recoveryGuard,
 		provider:         provider,
-		listener: tls.NewListener(base, &tls.Config{
-			Certificates: []tls.Certificate{certificate},
-			MinVersion:   tls.VersionTLS13,
-		}),
-		ttl:     *issuedSessionCredentialTTL,
-		now:     time.Now,
-		random:  rand.Reader,
-		changed: make(chan struct{}, 1),
+		listener:         tls.NewListener(base, tlsCertificate.TLSConfig()),
+		tlsCertificate:   tlsCertificate,
+		ttl:              *issuedSessionCredentialTTL,
+		now:              time.Now,
+		random:           rand.Reader,
+		changed:          make(chan struct{}, 1),
 	}, nil
 }
 
@@ -495,6 +494,20 @@ func (r *sessionLoginRuntime) Addr() net.Addr {
 	return r.listener.Addr()
 }
 
+func (r *sessionLoginRuntime) TLSCertificateSnapshot() tlsCertificateSnapshot {
+	if r == nil || r.tlsCertificate == nil {
+		return tlsCertificateSnapshot{}
+	}
+	return r.tlsCertificate.Snapshot()
+}
+
+func (r *sessionLoginRuntime) reloadTLSCertificate() (tlsCertificateReloadResult, error) {
+	if r == nil || r.tlsCertificate == nil {
+		return tlsCertificateReloadResult{}, errTLSCertificateReloadConfig
+	}
+	return r.tlsCertificate.Reload()
+}
+
 func (r *sessionLoginRuntime) Close() error {
 	if r == nil || r.listener == nil {
 		return nil
@@ -670,7 +683,8 @@ func runIssuedSessionCredentialRuntime(
 	if durableReload {
 		reloadMode = "sighup"
 	}
-	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
+	tlsSnapshot := runtime.TLSCertificateSnapshot()
+	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
 	if runtime.recoveryProvider != nil {
 		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
 		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration)
@@ -707,6 +721,13 @@ func runIssuedSessionCredentialRuntime(
 			continue
 		case <-reloadSignals:
 			stopTrustedCharacterAuthTimer(timer)
+			tlsResult, err := runtime.reloadTLSCertificate()
+			if err != nil {
+				currentTLS := runtime.TLSCertificateSnapshot()
+				logf("session login TLS certificate reload rejected; last-known-good retained: generation=%d err=%v", currentTLS.Generation, err)
+			} else {
+				logf("session login TLS certificate reload applied: previous_generation=%d generation=%d not_after=%s", tlsResult.PreviousGeneration, tlsResult.Generation, tlsResult.NotAfter.UTC().Format(time.RFC3339Nano))
+			}
 			if _, _, ok := runtime.accountAuth.reloadMetadata(); !ok {
 				logf("session login account verifier is restart-only; SIGHUP does not reload schema v1/v2 issuance accounts")
 			} else {

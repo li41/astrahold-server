@@ -7,9 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -24,12 +28,12 @@ var (
 	trustedTLSCertFile = flag.String(
 		"trusted-tls-cert",
 		"",
-		"PEM certificate chain for -trusted-tls-listen",
+		"PEM certificate chain for -trusted-tls-listen; reloaded with its key on SIGHUP",
 	)
 	trustedTLSKeyFile = flag.String(
 		"trusted-tls-key",
 		"",
-		"PEM private key for -trusted-tls-listen",
+		"PEM private key for -trusted-tls-listen; reloaded with its certificate on SIGHUP",
 	)
 )
 
@@ -43,12 +47,14 @@ type trustedTLSIngressConfig struct {
 	ListenAddress   string
 	UpstreamAddress string
 	TLSConfig       *tls.Config
+	Certificate     *reloadableTLSCertificate
 }
 
 type trustedTLSIngress struct {
-	listener  net.Listener
-	upstream  string
-	closeOnce sync.Once
+	listener    net.Listener
+	upstream    string
+	certificate *reloadableTLSCertificate
+	closeOnce   sync.Once
 }
 
 func loadTrustedTLSIngressConfig(listenAddress, certFile, keyFile, upstreamAddress string, trustedAuthEnabled bool) (*trustedTLSIngressConfig, error) {
@@ -70,22 +76,20 @@ func loadTrustedTLSIngressConfig(listenAddress, certFile, keyFile, upstreamAddre
 	if err := validateTrustedCharacterAuthListenAddress(upstreamAddress); err != nil {
 		return nil, fmt.Errorf("%w: upstream must remain loopback: %v", errTrustedTLSIngressConfig, err)
 	}
-	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	certificate, err := newReloadableTLSCertificate(certFile, keyFile, time.Now)
 	if err != nil {
 		return nil, fmt.Errorf("%w: load certificate: %v", errTrustedTLSIngressConfig, err)
 	}
 	return &trustedTLSIngressConfig{
 		ListenAddress:   listenAddress,
 		UpstreamAddress: upstreamAddress,
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{certificate},
-			MinVersion:   tls.VersionTLS13,
-		},
+		TLSConfig:       certificate.TLSConfig(),
+		Certificate:     certificate,
 	}, nil
 }
 
 func openTrustedTLSIngress(config *trustedTLSIngressConfig) (*trustedTLSIngress, error) {
-	if config == nil || config.TLSConfig == nil || strings.TrimSpace(config.ListenAddress) == "" || strings.TrimSpace(config.UpstreamAddress) == "" {
+	if config == nil || config.TLSConfig == nil || config.Certificate == nil || strings.TrimSpace(config.ListenAddress) == "" || strings.TrimSpace(config.UpstreamAddress) == "" {
 		return nil, errTrustedTLSIngressConfig
 	}
 	base, err := net.Listen("tcp", config.ListenAddress)
@@ -93,8 +97,9 @@ func openTrustedTLSIngress(config *trustedTLSIngressConfig) (*trustedTLSIngress,
 		return nil, err
 	}
 	return &trustedTLSIngress{
-		listener: tls.NewListener(base, config.TLSConfig.Clone()),
-		upstream: config.UpstreamAddress,
+		listener:    tls.NewListener(base, config.TLSConfig.Clone()),
+		upstream:    config.UpstreamAddress,
+		certificate: config.Certificate,
 	}, nil
 }
 
@@ -103,6 +108,20 @@ func (i *trustedTLSIngress) Addr() net.Addr {
 		return nil
 	}
 	return i.listener.Addr()
+}
+
+func (i *trustedTLSIngress) TLSCertificateSnapshot() tlsCertificateSnapshot {
+	if i == nil || i.certificate == nil {
+		return tlsCertificateSnapshot{}
+	}
+	return i.certificate.Snapshot()
+}
+
+func (i *trustedTLSIngress) reloadTLSCertificate() (tlsCertificateReloadResult, error) {
+	if i == nil || i.certificate == nil {
+		return tlsCertificateReloadResult{}, errTrustedTLSIngressConfig
+	}
+	return i.certificate.Reload()
 }
 
 func (i *trustedTLSIngress) Close() error {
@@ -125,6 +144,10 @@ func (i *trustedTLSIngress) Serve(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	reloadSignals := make(chan os.Signal, 1)
+	signal.Notify(reloadSignals, syscall.SIGHUP)
+	defer signal.Stop(reloadSignals)
+	go runTrustedTLSCertificateRuntime(ctx, reloadSignals, i, log.Printf)
 	go func() {
 		<-ctx.Done()
 		_ = i.Close()
@@ -138,6 +161,36 @@ func (i *trustedTLSIngress) Serve(ctx context.Context) error {
 			return err
 		}
 		go i.proxy(ctx, connection)
+	}
+}
+
+func runTrustedTLSCertificateRuntime(
+	ctx context.Context,
+	reloadSignals <-chan os.Signal,
+	ingress *trustedTLSIngress,
+	logf func(string, ...any),
+) {
+	if ctx == nil || ingress == nil || ingress.certificate == nil {
+		return
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	initial := ingress.TLSCertificateSnapshot()
+	logf("trusted TLS certificate runtime: reload=sighup generation=%d not_after=%s", initial.Generation, initial.NotAfter.UTC().Format(time.RFC3339Nano))
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-reloadSignals:
+			result, err := ingress.reloadTLSCertificate()
+			if err != nil {
+				current := ingress.TLSCertificateSnapshot()
+				logf("trusted TLS certificate reload rejected; last-known-good retained: generation=%d err=%v", current.Generation, err)
+				continue
+			}
+			logf("trusted TLS certificate reload applied: previous_generation=%d generation=%d not_after=%s", result.PreviousGeneration, result.Generation, result.NotAfter.UTC().Format(time.RFC3339Nano))
+		}
 	}
 }
 
