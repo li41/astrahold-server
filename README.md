@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.16 — TLS Certificate Rotation / Runtime Reload**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.17 — Trusted Reverse-Proxy Source Attribution / Edge Trust Boundary**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -55,6 +55,9 @@ Server runtime 主線已完成到 **S4-F.16 — TLS Certificate Rotation / Runti
 - **F.16 session-login / trusted game-ingress TLS certificate/key `SIGHUP` runtime generation reload**
 - F.16 replacement keypair完整load、key-match、X.509 validity與server-auth EKU驗證後才publish；invalid replacement保留listener各自的last-known-good generation
 - F.16 已建立的TLS connection維持原negotiated state；cutover後新handshake才使用新certificate generation，TLS最低版本仍為1.3
+- **F.17 optional trusted reverse-proxy source attribution for login/recovery abuse control**
+- F.17 direct/untrusted TLS socket peer仍只以實際`RemoteAddr`計數且完全忽略forwarding headers；只有operator allowlist中的proxy peer才可啟用選定的`X-Forwarded-For`或`Forwarded`
+- F.17 對trusted proxy的forwarding field套用1024-byte / 16-hop bounds、IPv4/IPv6 normalization與right-to-left trusted-hop stripping；missing/malformed metadata在password KDF / recovery provider之前generic `400 invalid_request` fail-closed
 
 核心 production contract：
 
@@ -548,6 +551,29 @@ F.16 production E2E以real `worldd`證明login與trusted listener都從certifica
 
 完整 F.16 contract：[`docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md`](docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md)。
 
+### F.17 trusted reverse-proxy source attribution
+
+F.17 只改login/recovery abuse-control的**來源選擇**，不改fixed-window guard本身，也不改HTTP API。預設未配置proxy attribution時，Server行為與F.16以前完全相同：只以TLS socket的實際`RemoteAddr`計數，任意`X-Forwarded-For`/`Forwarded`都不具authority。
+
+Trusted proxy模式必須同時配置：
+
+```text
+-session-login-trusted-proxy-cidrs
+-session-login-forwarded-header=x-forwarded-for|forwarded
+```
+
+最多接受64個normalized trusted IP/CIDR prefixes。Server永遠先檢查實際socket peer；peer不在allowlist時完全不解析forwarding metadata。只有allowlisted peer才要求恰好一個選定header field，且上限1024 bytes / 16 hops。
+
+Multi-hop選擇從nearest advertised hop向左走：trusted intermediary會被剝除，遇到第一個untrusted address即成為attributed source；一旦遇到untrusted boundary，更左側的內容不再有authority。IPv4-mapped IPv6會先normalize成canonical IPv4，避免`::ffff:198.51.100.30`與`198.51.100.30`形成不同bucket。
+
+Trusted peer若提供missing、duplicate、oversized、malformed、obfuscated `Forwarded for=`或超過hop上限的metadata，Server在login password KDF / recovery provider之前回既有generic `400 invalid_request`，不silent fallback到proxy IP。Direct/untrusted peer即使送 malformed header仍只依socket peer行為處理。
+
+Login與recovery guard仍彼此獨立，原本4096 tracked sources、window、`429 login_throttled` / `429 recovery_throttled + Retry-After`語意不變。普通log只輸出`source_attribution` mode、trusted prefix count與hop bound，不輸出client IP或attacker-controlled header value。
+
+F.17 production E2E使用real `worldd`與TLS reverse-proxy harness，讓proxy upstream socket明確bind到allowlisted `127.0.0.2`；同一gate證明direct spoofed header不能換bucket、proxied clients有獨立bucket、multi-hop trust stripping、IPv4-mapped normalization、trusted malformed metadata fail-closed、recovery attribution與secret-safe logs。
+
+完整 F.17 contract：[`docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md`](docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md)。
+
 ### KDF migration
 
 ```bash
@@ -568,7 +594,7 @@ KDF migration publish後，舊 verifier generation所發出的 bearer會沿既�
 
 Schema v3 / v4 account snapshot可在 durable store 更新後對 `worldd` 發 `SIGHUP`；recovery provider啟用時account schema必須維持v4。Schema-v2 delivered recovery provider也可由同一`SIGHUP`建立新的runtime generation；schema-v1 recovery provider維持restart-only。F.16起session-login與trusted game ingress certificate/key也由同一process signal觸發各自獨立的certificate generation reload。
 
-Account reload有效時要求store revision嚴格前進。Recovery provider reload不要求文字revision前進，因為credential/private-CA-only rotation本來就不一定修改該revision。TLS certificate reload只要求candidate完整valid，不要求certificate identity一定改變。這些reload各自validate、各自last-known-good，不形成跨檔案distributed transaction。
+Account reload有效時要求store revision嚴格前進。Recovery provider reload不要求文字revision前進，因為credential/private-CA-only rotation本來就不一定修改該revision。TLS certificate reload只要求candidate完整valid，不要求certificate identity一定改變。這些reload各自validate、各自last-known-good，不形成跨檔案distributed transaction。F.17 trusted-proxy allowlist/header mode目前是process-start deployment policy，不加入這組SIGHUP generation。
 
 Account安全順序：
 
@@ -611,7 +637,7 @@ F.15 outbox啟用時，recovery generation reload不建立第二個worker，而�
 
 Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 account generation已 commit，stale grant就不能再 mint bearer。
 
-F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14加入provider/credential/CA fail-closed runtime generation reload；F.15把delivery/challenge可靠性推進到single-host durable restart recovery；F.16再把login/game TLS certificate/key推進到fail-closed runtime generation。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
+F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14加入provider/credential/CA fail-closed runtime generation reload；F.15把delivery/challenge可靠性推進到single-host durable restart recovery；F.16把login/game TLS certificate/key推進到fail-closed runtime generation；F.17再為reverse-proxy deployment建立不信任public forwarding header的bounded source-attribution boundary。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
 
 ### Login / recovery abuse control
 
@@ -626,7 +652,7 @@ max tracked source entries = 4096
 
 Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds。
 
-來源身份目前只相信 TLS socket 的實際 `RemoteAddr`；**不信任 `X-Forwarded-For`**。F.17預計在明確allowlist trusted reverse proxy的前提下加入proxy-aware attribution；未被信任的socket peer仍必須忽略所有forwarding metadata，而不能讓任意header繞過來源throttle。
+未配置F.17時，來源身份只相信TLS socket實際`RemoteAddr`，完全忽略`X-Forwarded-For`/`Forwarded`。配置F.17時也只有實際socket peer先命中operator trusted-proxy allowlist，才允許指定的一種forwarding header成為source-attribution輸入；direct/untrusted peer無法靠header取得新bucket。Trusted forwarding metadata malformed時fail-closed，不退回proxy IP。
 
 ### Issued-session lifecycle
 
@@ -641,6 +667,7 @@ Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds�
 
 完整身份／登入文件：
 
+- [`docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md`](docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md)
 - [`docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md`](docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md)
 - [`docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`](docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md)
 - [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md)
@@ -692,16 +719,18 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.13 | HTTPS/TLS 1.3 relay；owner-only credential；stable idempotent retry；outcome classification；secret-safe logs；F.11 Main relay-proof reset/fresh-login | ✅ |
 | S4-F.14 | schema-v2 provider/credential/CA SIGHUP generation reload；in-flight cutover fence；old challenge routing；invalid reload LKG；F.11 Main post-rotation reset/fresh-login | ✅ |
 | S4-F.15 | bounded durable HTTPS recovery outbox；0700/0600 atomic storage；503→SIGKILL→restart same-id replay；challenge restore；proof/destination scrub；original request reset；consume delete | ✅ |
-| **S4-F.16** | **login + trusted-ingress TLS certificate/key SIGHUP generation reload；A→B cutover；old TLS connection survives；new handshake uses B；mismatched replacement LKG** | **✅** |
+| S4-F.16 | login + trusted-ingress TLS certificate/key SIGHUP generation reload；A→B cutover；old TLS connection survives；new handshake uses B；mismatched replacement LKG | ✅ |
+| **S4-F.17** | **trusted-proxy source attribution；direct spoofed header ignored；per-client proxied buckets；multi-hop trust stripping；IPv4-mapped normalization；trusted malformed metadata fail-closed；recovery attribution** | **✅** |
 
-Server runtime contract現在是F.16；paired Client runtime仍是F.11。F.16 final exact product head `d90d819f7f3065a449e88cd08a4ef4ef23476bb3`通過8/8 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E、Production Recovery Delivery Reload E2E、Production Recovery Delivery Outbox E2E與Production TLS Certificate Reload E2E；Protocol仍v9，Client product code未為F.16增加任何account/game/certificate authority。
+Server runtime contract現在是F.17；paired Client runtime仍是F.11。F.17 final exact product head `992e9dc786440bc4297f0adf1c4ce3e7052b9ef4`通過9/9 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E、Production Recovery Delivery Reload E2E、Production Recovery Delivery Outbox E2E、Production TLS Certificate Reload E2E與Production Trusted Proxy Attribution E2E；Protocol仍v9，Client product code未為F.17增加任何account/game/source-IP/proxy authority。
 
 ## 文件入口
 
 ### Current production contract
 
-- 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / TLS lifecycle / known limitations
+- 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / TLS lifecycle / edge trust / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md`](docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md) — trusted socket-peer allowlist / XFF-Forwarded parsing / multi-hop / fail-closed source attribution contract
 - [`docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md`](docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md) — login/game TLS certificate generations / validation / established-connection / last-known-good contract
 - [`docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`](docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md) — single-host durable delivery/challenge restart recovery / storage / retry / scrub contract
 - [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md) — recovery provider / credential / CA runtime generations / cutover / last-known-good contract
@@ -785,6 +814,8 @@ Production issued-session deployment：
 -session-credential-ttl
 -session-login-ip-attempt-window
 -session-login-ip-max-attempts
+-session-login-trusted-proxy-cidrs        # optional F.17; pair with next flag
+-session-login-forwarded-header           # optional F.17: x-forwarded-for|forwarded
 -session-recovery-provider-file
 -session-recovery-challenge-ttl
 -session-recovery-challenge-max-attempts
@@ -802,7 +833,7 @@ Production issued-session deployment：
 
 Static trusted mode 與 issued-session mode互斥。Login/recovery control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
 
-Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。F.15 `https-json-v1`可另外啟用single-host durable outbox，outbox root需由部署預先建立為owner-only directory，F.14 cutover會在同一shared worker後方替換validated relay transport。Schema-v1 recovery provider仍restart-only。F.16起session-login與trusted game ingress的certificate/key也支援`SIGHUP` fail-closed runtime generation reload；兩個listener各自保留LKG，既有TLS connection不因certificate rotation被強制斷線。
+Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。F.15 `https-json-v1`可另外啟用single-host durable outbox，outbox root需由部署預先建立為owner-only directory，F.14 cutover會在同一shared worker後方替換validated relay transport。Schema-v1 recovery provider仍restart-only。F.16起session-login與trusted game ingress的certificate/key支援`SIGHUP` fail-closed runtime generation reload。F.17 proxy attribution預設關閉；只有兩個F.17 flags成對啟用且socket peer命中allowlist時，selected forwarding header才具來源歸屬authority。
 
 ## 目前刻意保留的限制
 
@@ -811,10 +842,11 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 - F.15 已提供bounded single-host durable recovery delivery/challenge outbox、restart replay與stable F.13 idempotency identity；這不是distributed broker、multi-host consensus、cross-host recovery ownership或exactly-once vendor delivery。
 - F.15 pending record為了restart replay會短暫以plaintext保存recovery proof與Server-owned destination；application只提供owner-only 0700/0600 permission boundary與terminal scrub，**不提供application-layer disk encryption**。需要media-at-rest confidentiality時應使用encrypted filesystem/volume。
 - F.14 provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good仍適用；F.15只有一個shared outbox worker，pending records會跨transport generation保持原delivery identity。
-- F.16 已有login/game TLS certificate/key runtime generation reload；不包含Client trust-store/CA hot reload、ACME/PKI自動化、OCSP lifecycle、mTLS identity或multi-host certificate atomic cutover。Retired private key的RAM lifetime由Go runtime管理，不宣稱deterministic zeroization。
+- F.16 已有login/game TLS certificate/key runtime generation reload；不包含Client trust-store/CA hot reload、ACME/PKI自動化、OCSP lifecycle或multi-host certificate atomic cutover。Retired private key的RAM lifetime由Go runtime管理，不宣稱deterministic zeroization。
+- F.17 已提供bounded trusted-proxy source attribution，但proxy authority目前只由process-start靜態IP/CIDR allowlist建立；尚未加入TLS client-certificate proxy identity、proxy CA lifecycle/runtime reload、PROXY protocol或multi-host edge policy coordination。
+- Login/recovery仍是單process fixed-window guards；尚未有distributed rate limit、IP reputation、credential-stuffing intelligence、WAF/CDN vendor integration或 CAPTCHA。
 - Core Server刻意不綁特定email/SMS vendor SDK；實際vendor仍應位於F.13 HTTPS relay後方。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
-- Login/recovery都有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
 - F.11 Client刻意不持久化human password、recovery proof或opaque recovery challenge；尚未加入 OS keychain / secure remembered-session storage，因目前沒有refresh token/remember-session contract。
 - NAT-like migration目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
@@ -824,9 +856,9 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.16 已把兩個Server TLS termination point最後的process-start-only憑證限制收斂成fail-closed runtime generation：candidate certificate/key完整validate後才publish，invalid replacement維持各listener LKG；cutover前已建立的TLS state不被強制重建，新handshake才取得新generation。F.9/F.10/F.12/F.13/F.14/F.15 gates與Server Test/Vet/Race也在同一exact head持續全綠。
+S4-F.17 已在不信任public forwarding header的前提下，把reverse-proxy deployment的source-IP throttle歸屬補成明確edge trust contract：socket peer必須先命中operator allowlist，才解析bounded selected header；multi-hop只信right-to-left連續trusted hops，第一個untrusted boundary成為client source；direct peer偽造header無效，trusted malformed metadata則在auth/KDF前fail-closed。F.9/F.10/F.12/F.13/F.14/F.15/F.16 gates與Server Test/Vet/Race也在同一exact head持續全綠。
 
-下一個 bounded stage 建議進入 **S4-F.17 — Trusted Reverse-Proxy Source Attribution / Edge Trust Boundary**：維持public login/recovery API、Client F.11、schema-v4與Protocol v9不變，讓login/recovery source-IP throttling在明確部署為trusted reverse proxy時可安全取得原始client address；只有socket `RemoteAddr`屬於operator allowlist的proxy peer才允許解析bounded forwarding metadata，direct/untrusted peer仍完全忽略`X-Forwarded-For`/`Forwarded`，並明確定義multi-hop選擇、malformed header fail-closed、IPv4/IPv6 normalization與observability。Distributed rate limit、IP reputation、WAF/CDN vendor integration與proxy authentication仍保持獨立decision gate。
+下一個 bounded stage 建議進入 **S4-F.18 — Trusted Proxy Upstream Authentication / mTLS Edge Identity**：維持public login/recovery API、Client F.11、schema-v4、Protocol v9與F.17 source-selection semantics不變，為trusted-proxy mode加入Server驗證的TLS client-certificate identity，使forwarding authority不只依賴source IP/CIDR，而必須同時通過operator proxy CA/identity policy；direct Client仍維持現有server-auth TLS，不取得proxy certificate authority。Proxy CA/client-cert rotation、invalid replacement last-known-good、與F.16 server certificate generation的獨立性需在同一stage明確定義。Distributed rate limit、IP reputation、WAF/CDN vendor integration、PROXY protocol與multi-host edge coordination仍保持獨立decision gate。
 
 Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session、ACME/PKI automation與Protocol v10仍保持獨立 decision gate。
 
