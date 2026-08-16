@@ -147,10 +147,34 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer, now func() time.Time, sleep func(time.Duration)) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: revocationctl <publish|wait|rollout> -plan FILE")
+		fmt.Fprintln(stderr, "usage: revocationctl <publish|wait|rollout|report> [flags]")
 		return 1
 	}
 	command := args[0]
+	encode := func(value any) {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetEscapeHTML(false)
+		_ = encoder.Encode(value)
+	}
+	if command == "report" {
+		flags := flag.NewFlagSet(command, flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		evidenceDir := flags.String("evidence-dir", "", "owner-only F.28 rollout evidence directory")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 1
+		}
+		if flags.NArg() != 0 || strings.TrimSpace(*evidenceDir) == "" {
+			fmt.Fprintln(stderr, "revocationctl: report requires -evidence-dir DIR and no positional arguments")
+			return 1
+		}
+		summary, err := loadRolloutEvidenceSummary(*evidenceDir)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		encode(summary)
+		return 0
+	}
 	if command != "publish" && command != "wait" && command != "rollout" {
 		fmt.Fprintf(stderr, "revocationctl: unsupported command %q\n", command)
 		return 1
@@ -158,11 +182,16 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time, sleep fu
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	planPath := flags.String("plan", "", "strict schema-v1 F.26 rollout plan")
+	evidenceDir := flags.String("evidence-dir", "", "optional owner-only F.28 rollout evidence directory for wait/rollout")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 1
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(*planPath) == "" {
 		fmt.Fprintln(stderr, "revocationctl: -plan FILE is required and no positional arguments are accepted")
+		return 1
+	}
+	if command == "publish" && strings.TrimSpace(*evidenceDir) != "" {
+		fmt.Fprintln(stderr, "revocationctl: -evidence-dir is only valid for wait, rollout, or report")
 		return 1
 	}
 	plan, err := loadRolloutPlan(*planPath)
@@ -175,10 +204,15 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time, sleep fu
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	encode := func(result rolloutResult) {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetEscapeHTML(false)
-		_ = encoder.Encode(result)
+	persistEvidence := func(result rolloutResult) bool {
+		if strings.TrimSpace(*evidenceDir) == "" {
+			return true
+		}
+		if _, err := writeRolloutEvidence(*evidenceDir, command, result); err != nil {
+			fmt.Fprintln(stderr, err)
+			return false
+		}
+		return true
 	}
 	switch command {
 	case "publish":
@@ -196,6 +230,9 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time, sleep fu
 			return 1
 		}
 		encode(result)
+		if !persistEvidence(result) {
+			return 1
+		}
 		if result.Status != "converged" {
 			return 2
 		}
@@ -213,6 +250,9 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time, sleep fu
 			return 1
 		}
 		encode(result)
+		if !persistEvidence(result) {
+			return 1
+		}
 		if result.Status != "converged" {
 			return 2
 		}

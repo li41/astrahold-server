@@ -1,0 +1,138 @@
+name: Production Trusted Proxy Revocation Rollout Evidence Journal E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-proxy-revocation-rollout-evidence-journal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+          go build -o "$GITHUB_WORKSPACE/.tools/revocationctl" ./cmd/revocationctl
+
+      - name: Run durable rollout evidence acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/production-trusted-proxy-revocation-rollout-e2e.yml').read_text()
+          step = source.index('      - name: Run required-ack rollout acceptance')
+          run = source.index('        run: |\n', step) + len('        run: |\n')
+          body = source[run:]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines()) + '\n'
+
+          mkdir_needle = 'mkdir -p "$tls" "$shared" "$a/character-state" "$b/character-state"\n'
+          if mkdir_needle not in script:
+              raise SystemExit('F.28 harness could not locate rollout root creation')
+          script = script.replace(
+              mkdir_needle,
+              mkdir_needle + 'evidence="$root/evidence"\nmkdir -m 700 "$evidence"\n',
+              1,
+          )
+
+          delay_needle = 'test "$(request 39752 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401\n\nkill -HUP "$b_pid"'
+          delay_replacement = 'test "$(request 39752 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401\nsleep 0.35\n\nkill -HUP "$b_pid"'
+          if delay_needle not in script:
+              raise SystemExit('F.28 harness could not locate delayed-member activation point')
+          script = script.replace(delay_needle, delay_replacement, 1)
+
+          wait_needle = '"$REVOCATIONCTL" wait -plan '
+          rollout_needle = '"$REVOCATIONCTL" rollout -plan '
+          if script.count(wait_needle) != 2 or script.count(rollout_needle) != 2:
+              raise SystemExit('F.28 harness expected exactly two waits and two rollouts')
+          script = script.replace(wait_needle, '"$REVOCATIONCTL" wait -evidence-dir "$evidence" -plan ')
+          script = script.replace(rollout_needle, '"$REVOCATIONCTL" rollout -evidence-dir "$evidence" -plan ')
+          Path('/tmp/s4f28-rollout.sh').write_text(script)
+          PY
+
+          bash /tmp/s4f28-rollout.sh
+
+          root="$RUNNER_TEMP/s4f26"
+          evidence="$root/evidence"
+          REVOCATIONCTL="$GITHUB_WORKSPACE/.tools/revocationctl"
+          "$REVOCATIONCTL" report -evidence-dir "$evidence" >"$root/evidence-report.json"
+
+          python3 - "$root/evidence-report.json" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          assert report['schema_version'] == 1
+          assert report['timing_source'] == 'controller'
+          assert report['records'] == 4
+          assert report['converged_records'] == 3
+          assert report['incomplete_records'] == 1
+          assert report['timeout_records'] == 1
+          assert report['lease_expired_records'] == 0
+          assert 1900 <= report['max_elapsed_ms'] <= 3000
+          instances = {row['instance_id']: row for row in report['instances']}
+          assert set(instances) == {'instance-a', 'instance-b'}
+          assert instances['instance-a']['required_records'] == 4
+          assert instances['instance-a']['observed_records'] == 4
+          assert instances['instance-a']['pending_records'] == 0
+          assert instances['instance-b']['required_records'] == 4
+          assert instances['instance-b']['observed_records'] == 3
+          assert instances['instance-b']['pending_records'] == 1
+          assert instances['instance-b']['max_observed_elapsed_ms'] >= 200
+          serialized = json.dumps(report, sort_keys=True)
+          assert 'activation' not in serialized and 'cause' not in serialized
+          PY
+
+          test "$(stat -c '%a' "$evidence")" = 700
+          record_count=0
+          for record in "$evidence"/rollout-evidence-v1-*.json; do
+            test -f "$record"
+            test ! -L "$record"
+            test "$(stat -c '%a' "$record")" = 600
+            record_count=$((record_count + 1))
+          done
+          test "$record_count" -eq 4
+
+          leaf_a_spki="$(openssl x509 -in "$root/tls/edge-a.crt" -pubkey -noout | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | awk '{print $1}')"
+          if grep -R -Fq "$leaf_a_spki" "$evidence"; then
+            echo 'raw revoked SPKI leaked to evidence journal'; exit 1
+          fi
+          if grep -R -Fq 'F26-Correct-Horse-Battery-Staple!' "$evidence"; then
+            echo 'account password leaked to evidence journal'; exit 1
+          fi
+          if grep -R -Fq 'BEGIN PRIVATE KEY' "$evidence"; then
+            echo 'private key material leaked to evidence journal'; exit 1
+          fi
+
+          chmod 750 "$evidence"
+          set +e
+          "$REVOCATIONCTL" report -evidence-dir "$evidence" >"$root/broad-report.json" 2>"$root/broad-report.err"
+          broad_code=$?
+          set -e
+          test "$broad_code" -eq 1
+          grep -Fq 'owner-only' "$root/broad-report.err"
+          chmod 700 "$evidence"
+          "$REVOCATIONCTL" report -evidence-dir "$evidence" >/dev/null
+
+          echo "ASTRAHOLD_F28_ROLLOUT_EVIDENCE_JOURNAL_OK durable_records=true strict_report=true controller_timing=true timeout_preserved=true descriptive_only=true owner_only=true raw_spki_absent=true required_ack_gate=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=9 tls=1.3"
