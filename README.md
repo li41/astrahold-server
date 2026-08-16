@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.26 — Revocation Rollout Orchestration / Required-Ack Gate**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.27 — Rollout Observation Evidence / Convergence Timing**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -85,6 +85,9 @@ Server runtime 主線已完成到 **S4-F.26 — Revocation Rollout Orchestration
 - **F.26 revocation rollout orchestration / required-ack gate**
 - F.26 新增Server/deployment-side `revocationctl publish|wait|rollout`：strict schema-v1 plan明列單一target epoch/lease、F.24 source與explicit required instance set；controller使用與`worldd`完全相同的F.24 semantic digest，先對全部target stage canonical revocation，再以F.25 manifest作per-target commit marker
 - F.26 rollback/same-epoch conflict在任何write前reject；mid-manifest failure採fail-forward且允許identical epoch/digest/lease idempotent retry。Required member只有在durable F.25 ack的`instance_id + epoch + revocation_revision + digest + valid_until`完全命中時才converged；missing/older ack為pending，timeout/lease expiry回`incomplete`/exit 2，direct Client與F.25 authorization fence均不變
+- **F.27 rollout observation evidence / convergence timing**
+- F.27 不新增remote executor或新的authorization fence；`revocationctl wait|rollout`在既有F.26 all-required gate上加入controller-owned `observation` evidence，以單一controller timing domain記錄rollout `started_at/completed_at/elapsed_ms`與每個exact ack第一次被觀察到的`first_observed_at/observed_elapsed_ms`
+- F.27 不把各`worldd`自行寫入的`acknowledged_at`當成跨主機latency truth；production timeout依controller elapsed/monotonic clock，F.25 `valid_until`仍是absolute UTC security boundary。Delayed/missing activation仍只表現為pending/incomplete，不把SIGHUP/restart、service discovery或process-control authority塞進controller或Client
 
 核心 production contract：
 
@@ -810,6 +813,16 @@ Controller會完整validate/canonicalize F.24 source，使用與`worldd`相同�
 
 F.26 final exact product head `9e777aad8bea033acba919e196102d14dcfc1717`通過18/18 workflows；Server CI Test/Vet/Race全部success，新增Production Trusted Proxy Revocation Rollout E2E以兩個real TLS 1.3 `worldd`證明required A+B gate、delayed member阻止convergence、timeout incomplete、後續`wait`可續收斂、rollback fence、healthy Leaf B preservation與direct Client unchanged。Product以squash merge進main，merge SHA為`453e237863e64442a2e68e4efdee39627fb0bacf`。
 
+### F.27 rollout observation evidence / convergence timing
+
+F.27 不改F.25 `worldd` security fence，也不改F.26 explicit required-member / exact durable-ack convergence定義。它只為`revocationctl wait`與`rollout`的`converged`或`incomplete`結果加入controller-owned `observation`：同一controller invocation記錄`started_at`、`completed_at`、總`elapsed_ms`，以及每個已命中exact F.25 ack的`instance_id + first_observed_at + observed_elapsed_ms`。一開始就已存在的exact ack在本次window記為elapsed 0；後續重新執行`wait`會建立新的observation window，F.27不是durable telemetry database。
+
+F.27刻意不使用ack file內由各`worldd`寫入的`acknowledged_at`推導跨host latency，避免不同machine clock被誤當一致時間源。`ack_timeout`改以controller elapsed time判定；production `time.Now`相減在可用時保留Go monotonic clock。F.25 `valid_until`仍是absolute UTC security deadline，因此wait會在controller elapsed timeout或lease expiry兩者先到者停止；非monotonic injected clock若倒退則fail hard，而不是輸出負的或誤導的timing evidence。
+
+F.27 exact product head `7a7d91dae1840768d1a3db0babd3d5a82ea63ee0`通過19/19 workflows。Server CI Test/Vet/Race全部success；新增Production Trusted Proxy Revocation Rollout Observation E2E沿用兩個real TLS 1.3 `worldd`的F.26 acceptance，刻意讓A先activation/ack、約350ms後才讓B activation，證明controller觀察到A早於B且只有B ack後才converged；另一個2秒case只reload A並驗證`incomplete`保留A timing、B pending，之後同target可重新`wait`完成。既有rollback fence、revoked Leaf A、healthy Leaf B與direct Client unchanged也持續成立。Product以squash merge進main，merge SHA為`e67371a47e24c883c9f8b5ead1df6907a6a0ffdc`。
+
+完整 F.27 contract：[`docs/S4F27_ROLLOUT_OBSERVATION_EVIDENCE.md`](docs/S4F27_ROLLOUT_OBSERVATION_EVIDENCE.md)。
+
 完整 F.26 contract：[`docs/S4F26_REVOCATION_ROLLOUT_ORCHESTRATION.md`](docs/S4F26_REVOCATION_ROLLOUT_ORCHESTRATION.md)。
 
 完整 F.25 contract：[`docs/S4F25_TRUSTED_PROXY_REVOCATION_DISTRIBUTION_FENCE.md`](docs/S4F25_TRUSTED_PROXY_REVOCATION_DISTRIBUTION_FENCE.md)。
@@ -996,8 +1009,9 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | **S4-F.24** | **independent trusted-proxy SPKI revocation generation；same exact DNS identity下Leaf A revoked/retired、healthy Leaf B存活；fresh revoked key reject；invalid replacement LKG；semantic no-op retire 0；direct Client server-auth-only unchanged** | **✅** |
 | **S4-F.25** | **multi-instance revocation distribution fence；monotonic epoch + F.24 semantic digest + bounded lease；per-instance durable ack/restart floor；delayed member lease expiry fail-closed；ack convergence與rollback fence；healthy Leaf B/direct Client unchanged** | **✅** |
 | **S4-F.26** | **Server/deployment `revocationctl`；explicit required instance set；exact F.24 semantic digest；all-revocation-stage-before-manifest-commit；rollback/conflict preflight；fail-forward idempotent retry；all-required exact durable-ack gate；incomplete exit 2/resumable wait；worldd/Client contract unchanged** | **✅** |
+| **S4-F.27** | **controller-owned rollout observation evidence；per-required-instance first-observed exact-ack timing；controller elapsed timeout + absolute F.25 lease boundary；staggered/incomplete convergence timing；no remote executor / no new Client or worldd authority** | **✅** |
 
-Server runtime contract現在是F.26；paired Client runtime仍是F.11。F.26 final exact product head `9e777aad8bea033acba919e196102d14dcfc1717`通過18/18 workflows：既有17個exact-head workflows全部success，新增的Production Trusted Proxy Revocation Rollout E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，`worldd` F.25 authorization semantics未改，Client product code未為F.26增加任何edge-policy/network/certificate/revocation/distribution-epoch/lease/ack/required-membership/rollout-control authority。
+Server runtime contract現在是F.27；paired Client runtime仍是F.11。F.27 final exact product head `7a7d91dae1840768d1a3db0babd3d5a82ea63ee0`通過19/19 workflows：既有18個exact-head workflows全部success，新增的Production Trusted Proxy Revocation Rollout Observation E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，`worldd` F.25 authorization semantics與F.26 all-required acknowledgement gate未改，Client product code未為F.27增加任何edge-policy/network/certificate/revocation/distribution-epoch/lease/ack/required-membership/observation-timing/activation-control authority。
 
 ## 文件入口
 
@@ -1129,7 +1143,7 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 - Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
 - F.15 已提供bounded single-host durable recovery delivery/challenge outbox、restart replay與stable F.13 idempotency identity；這不是distributed broker、multi-host consensus、cross-host recovery ownership或exactly-once vendor delivery。
 - F.15 pending record為了restart replay會短暫以plaintext保存recovery proof與Server-owned destination；application只提供owner-only 0700/0600 permission boundary與terminal scrub，**不提供application-layer disk encryption**。需要media-at-rest confidentiality時應使用encrypted filesystem/volume。
-- F.25 已以monotonic epoch、F.24 semantic digest、最長24小時lease與per-instance durable ack/restart floor收斂『某一`worldd`漏掉revocation更新後可無限期繼續信任』的缺口；但Server本身沒有central publisher、required-member registry、quorum或rollout controller。跨instance的ack集合與deployment decision仍由外部operator/orchestrator負責。
+- F.25 已以monotonic epoch、F.24 semantic digest、最長24小時lease與per-instance durable ack/restart floor收斂stale revocation consumption；F.26已提供explicit required-member rollout controller與all-required ack decision，F.27再加入controller-local convergence timing evidence。仍未提供service discovery、dynamic/quorum membership、multi-writer consensus、central online revocation publisher或remote SIGHUP/restart process execution。
 - F.14 provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good仍適用；F.15只有一個shared outbox worker，pending records會跨transport generation保持原delivery identity。
 - F.16 已有login/game TLS certificate/key runtime generation reload；不包含Client trust-store/CA hot reload、ACME/PKI自動化、OCSP lifecycle或multi-host certificate atomic cutover。Retired private key的RAM lifetime由Go runtime管理，不宣稱deterministic zeroization。
 - F.24 已用SHA-256 SPKI做到同CA + 同exact DNS identity下的key-level selective revocation，F.25再把stale multi-instance consumption用lease/ack bounded fail-closed；仍未實作CRL/OCSP ingestion、ACME/PKI自動化、HSM attestation、自動compromise detection或centralized revocation publisher。
@@ -1146,9 +1160,9 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.26 已把F.25提供的per-instance durable convergence evidence收斂成explicit required-membership rollout gate：單一target epoch先安全發布paired F.24/F.25 authority，所有required members都必須ack完全相同的epoch/revision/digest/lease才算`converged`；delayed member會阻止成功，timeout明確回`incomplete`，後續同plan可繼續`wait`收斂。這仍是Server/deployment control plane，`worldd` F.25 runtime fence、Direct Godot Client、Protocol v9與gameplay authority都沒有擴權。
+S4-F.27 已把F.26可觀察的pending/incomplete狀態變成同一controller timing domain的量測 evidence：每個required member第一次出現exact ack的時間與整體convergence elapsed現在可直接記錄，因此可以區分「gate能否發現未收斂」與「實際部署到底多常、多久未收斂」兩個問題。F.25 `worldd` security fence、F.26 all-required gate、Direct Godot Client、Protocol v9與gameplay authority都沒有擴權。
 
-**下一個 bounded focus 先回到 deployment evidence decision gate。** F.26 production evidence顯示目前剩餘的操作依賴是由既有deployment supervisor送出SIGHUP/restart activation；本階段刻意沒有把remote process execution、service discovery或quorum membership塞進controller。是否需要下一個S4-F.27 activation/supervisor handoff contract，應以實際部署中「publish成功但activation遺漏/延遲」的量測證據決定；沒有這類證據前不自動加入remote executor、consensus或更大的PKI control plane。CRL/OCSP、ACME/PKI automation、HSM、自動compromise detection、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
+**下一個 bounded focus 仍是 deployment evidence decision gate，而不是自動進F.28。** F.27 Production E2E中的約350ms stagger與2秒timeout是correctness驗證用的synthetic evidence，不能替代真實部署量測。應先收集實際rollout的`observation`結果；只有當真實資料顯示publish-success後的activation miss或過高activation lag是material operational risk，才考慮 **S4-F.28 — Activation / Supervisor Handoff Contract**。若沒有這類證據，就不加入remote executor、service discovery、consensus或更大的PKI control plane。CRL/OCSP、ACME/PKI automation、HSM、自動compromise detection、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
 
 Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
 
