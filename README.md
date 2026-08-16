@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-目前主線已完成到 **S4-F.9 — Account Recovery / Password Reset / KDF Migration Workflow**。
+目前主線已完成到 **S4-F.10 — Verified Recovery Provider / Public Reset Exchange**。
 
 目前 production vertical slice 已具備：
 
@@ -25,25 +25,29 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 - schema-v1 high-entropy SHA-256 compatibility account map
 - schema-v2 Argon2id human-password reference provider
 - schema-v3 durable account lifecycle compatibility
-- **schema-v4 durable account store + operator recovery grants**
+- **schema-v4 durable account store + recovery generation contract**
 - `accountctl` account create / password rotation / disable / enable lifecycle
 - `accountctl migrate / issue-recovery / reset-password / rehash-password`
 - schema-v3 / v4 `SIGHUP` account reload with live issued-bearer revocation
 - stale pre-reload password proof cannot mint a post-reload bearer
 - bounded source-IP login throttling before password KDF work
 - F.8 normal Godot `Main.tscn` product login / reauthentication integration
-- F.9 production recovery reset → live retirement → product reauthentication E2E
+- F.9 operator recovery reset → live retirement → product reauthentication E2E
+- **F.10 pluggable verified-recovery provider seam + TLS public recovery request/reset exchange**
+- F.10 known/unknown request同 status / field set，沒有 explicit account-existence欄位
+- F.10 successful public reset在同一 account/session mutation fence內立即退休舊 bearer/live peer，**不需要 SIGHUP**
+- F.10 production public-reset → normal `Main.tscn` reauthentication E2E
 
 核心 production contract：
 
 ```text
-Account proof
+Account proof / Recovery proof
     │
     └── HTTPS / TLS 1.3
           ↓
-    Account Auth Provider
+    Account Auth / Recovery Provider
           ↓
-Server-owned CharacterID / takeover grant
+Server-owned account generation / CharacterID / takeover grant
           ↓
 opaque short-lived issued session credential
           ↓
@@ -69,7 +73,7 @@ Astrahold 的 Server authority 不因 Client、Transport、Account UI 或 Presen
 5. **Spawn / Despawn confirm only after `TrySend` success**。
 6. **Self correction authoritative**：Client prediction 必須收斂到 `PositionCorrection`。
 7. **Gameplay Proxy 是真相**：Visual Mesh 不得反過來成為 Navigation / LOS / Gate authority。
-8. **Account proof != gameplay authority**：登入或 recovery 成功不代表 Client 可以指定 CharacterID、takeover、team、HP 或 ownership。
+8. **Account proof / recovery proof != gameplay authority**：登入或 recovery 成功不代表 Client 可以指定 CharacterID、takeover、team、HP 或 ownership。
 9. **Measure → Profile → Optimize**：沒有數據前不拆 world actor、不做激進 quantization / delta compression。
 
 ## Gameplay World
@@ -311,11 +315,11 @@ validate
 → directory fsync
 ```
 
-Store 使用 monotonic revision；mutation 依 expected revision fail-closed。這是 **single-writer durable JSON backend**，不宣稱 multi-host distributed transaction / consensus。
+Store 使用 monotonic revision；mutation 依 expected revision fail-closed。這仍是 **single-writer durable JSON backend**，不宣稱 multi-host distributed transaction / consensus。
 
-### F.9 recovery / password reset
+### F.9 operator recovery / password reset
 
-F.9 recovery proof由 operator / verified out-of-band process發行；**沒有 public forgot-password endpoint**。
+F.9 recovery proof由 operator / verified out-of-band process發行：
 
 ```text
 accountctl issue-recovery
@@ -354,6 +358,65 @@ Password變更與 recovery proof consumption在同一 durable update完成，因
 
 Reset disabled account不會順便 enable；enable/disable仍是獨立 Server lifecycle authority。
 
+### F.10 verified recovery provider / public reset exchange
+
+F.10 在既有 TLS 1.3 login control plane加入：
+
+```text
+POST /v1/account/recovery/request
+POST /v1/account/recovery/reset
+```
+
+`accountrecovery.Provider` 負責 challenge與proof verification。內建 reference provider為：
+
+```text
+sha256-high-entropy-recovery-code
+```
+
+Provider file只保存 high-entropy recovery code的 SHA-256 digest；raw code不由 `worldd`持久化。這不是 email/SMS delivery provider，也不適合 human-memorable低熵 recovery phrase。
+
+對 syntactically valid `login_id`，known/unknown/disabled/provider-unconfigured subject使用相同 public request contract：
+
+```text
+HTTP 202
+{"request_id":"...","expires_at":"..."}
+```
+
+Public response不含 account existence、account_id、credential_version、CharacterID或eligibility。F.10保證**沒有 explicit account-existence欄位／status差異**；不宣稱不同 provider、host load或外部 delivery path具有形式化 constant-time網路行為。
+
+Challenge bounds：
+
+```text
+default TTL                    10 minutes
+default attempts / challenge   5
+max active challenges          4096
+default recovery POST/IP       10 / minute
+exact expires_at               rejected
+```
+
+成功 reset會再次驗證 Server-owned `account_id + credential_version`，用目前 online uniform Argon2id policy產生新 verifier，並在既有 issuance/account mutation lock內：
+
+```text
+require disk revision == live account revision
+→ credential_version++
+→ replace password verifier
+→ remove legacy F.9 recovery grants
+→ durable SaveIfRevision
+→ remove issued bearers from old account generation
+→ publish reduced transport revocation scopes
+→ retire old live peer
+→ publish new account authenticator
+→ consume provider challenge
+```
+
+**這條 public reset成功路徑不需要 SIGHUP。** `Issue` 與 reset共用 mutation lock且會重新驗證 account generation，因此 reset前已完成的舊 password verification不能在 reset commit後偷發 bearer。
+
+若 disk revision已被外部 mutation推進、但 live authenticator尚未 publish該 revision，public reset fail-closed為 unavailable，不覆寫較新的 disk state。Recovery-enabled `worldd`也拒絕 SIGHUP downgrade到 schema v3。
+
+F.9 的 single-writer operational contract仍成立：啟用 public recovery時，running `worldd`應被視為 active account writer；`accountctl` mutation應放在 controlled maintenance/reload procedure，不與 online reset競爭。這不是 multi-writer CAS或distributed DB。
+
+完整 F.10 contract：[`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md)。
+
 ### KDF migration
 
 ```bash
@@ -372,7 +435,7 @@ KDF migration publish後，舊 verifier generation所發出的 bearer會沿既�
 
 ### SIGHUP account reload / live revocation
 
-Schema v3 / v4 可在 durable store 更新後對 `worldd` 發 `SIGHUP`。
+Schema v3 / v4 可在 durable store 更新後對 `worldd` 發 `SIGHUP`；但 recovery provider啟用時必須維持 schema v4。
 
 有效 reload 要求 store revision 嚴格前進。Invalid / stale / unsupported schema / mixed KDF policy reload保留 last-known-good。
 
@@ -392,9 +455,9 @@ load + validate new account snapshot
 
 因此 password rotation、account disable、password reset、KDF verifier generation或其他 proof-generation 變更可讓舊 issued bearer 與 live game session立即失效。
 
-Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload前已完成，只要新的 generation reload已 commit，stale grant就不能再 mint bearer。
+Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 generation已 commit，stale grant就不能再 mint bearer。
 
-F.9 production recovery E2E另外證明：
+F.9 production recovery E2E證明 operator流程：
 
 ```text
 schema v3 → explicit migrate → v4
@@ -407,36 +470,41 @@ schema v3 → explicit migrate → v4
 → old password returns 401
 → existing F.8 normal Main requires reauthentication
 → new password login succeeds
-→ explicit logout succeeds
+```
+
+F.10 production public recovery E2E另外證明：
+
+```text
+normal Main old-password login
+→ known recovery request = 202 request_id + expires_at
+→ unknown recovery request = same status / field set
+→ unknown challenge + otherwise-valid proof = 401 invalid_recovery
+→ known challenge + wrong proof = same 401 body
+→ known challenge + correct proof = 204
+→ NO SIGHUP
+→ old bearer/live peer retired
+→ Main enters ReauthenticationRequired
+→ old password = 401 invalid_credentials
+→ consumed challenge replay = 401 invalid_recovery
+→ durable credential generation advanced
+→ legacy F.9 recovery grants removed
+→ Main reauth with new password succeeds
 ```
 
 Recovery proof、password與issued bearer均有 log-leak fail-fast檢查。
 
-### Login abuse control
+### Login / recovery abuse control
 
 Login listener 在 JSON decode / password KDF 前套用 bounded fixed-window source-IP guard。
 
-預設：
+Login預設：
 
 ```text
 30 login POST attempts / 1 minute / observed source IP
 max tracked source entries = 4096
 ```
 
-可調：
-
-```text
--session-login-ip-attempt-window
--session-login-ip-max-attempts
-```
-
-超限回：
-
-```text
-HTTP 429
-Retry-After: <seconds>
-{"error":"login_throttled"}
-```
+Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds。
 
 來源身份只相信 TLS socket 的實際 `RemoteAddr`；**不信任 `X-Forwarded-For`**。未來若部署 trusted reverse proxy，必須另設計 proxy-aware attribution，而不能直接信任任意 forwarding header。
 
@@ -453,6 +521,7 @@ Retry-After: <seconds>
 
 完整身份／登入文件：
 
+- [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md)
 - [`docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`](docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md)
 - [`docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`](docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md)
 - [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md)
@@ -491,9 +560,10 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.6 | Schema-v2 Argon2id human-password provider + real-Godot login / takeover / logout | ✅ |
 | S4-F.7 | Schema-v3 durable store；password rotation / disable live revocation；enable/relogin；source-IP throttle | ✅ |
 | S4-F.8 | Normal Godot `Main.tscn` login / live-revocation reauth / logout / 401 / 429 UX | ✅ |
-| **S4-F.9** | **Schema-v4 recovery；digest-only proof；issue不踢人；one-time reset後live retirement；normal Main reauth** | **✅** |
+| S4-F.9 | Schema-v4 operator recovery；digest-only proof；issue不踢人；one-time reset後live retirement | ✅ |
+| **S4-F.10** | **Provider seam + public recovery request/reset；same known/unknown response schema；no-SIGHUP immediate retirement；normal Main reauth** | **✅** |
 
-S4-F.9 Server implementation exact final head通過 Test / Vet / Race；production recovery E2E另以 F.8 Client main exact fence跑 normal `Main.tscn`，並驗證 recovery proof issuance與 password reset對 live-session generation的不同效果。
+S4-F.10 final exact head通過 Server Test / Vet / Race、既有 F.9 recovery compatibility E2E與新的 Production Public Recovery E2E；Client runtime沒有為 F.10增加任何 account/game authority。
 
 ## 文件入口
 
@@ -501,7 +571,8 @@ S4-F.9 Server implementation exact final head通過 Test / Vet / Race；producti
 
 - 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
-- [`docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`](docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md) — schema-v4 recovery / one-time reset / KDF migration
+- [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md) — verified recovery provider / public reset / immediate revocation
+- [`docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`](docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md) — schema-v4 operator recovery / one-time reset / KDF migration
 - [`docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`](docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md) — durable schema-v3 lifecycle / SIGHUP / abuse control
 - [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md) — account-auth provider seam / Argon2id reference backend
 - [`docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md`](docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md) — TLS login / opaque issuance / logout / expiry
@@ -577,25 +648,31 @@ Production issued-session deployment：
 -session-credential-ttl
 -session-login-ip-attempt-window
 -session-login-ip-max-attempts
+-session-recovery-provider-file
+-session-recovery-challenge-ttl
+-session-recovery-challenge-max-attempts
+-session-recovery-ip-attempt-window
+-session-recovery-ip-max-attempts
 -trusted-tls-listen
 -trusted-tls-cert
 -trusted-tls-key
 ```
 
-Static trusted mode 與 issued-session mode互斥。Login control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
+Static trusted mode 與 issued-session mode互斥。Login/recovery control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
 
-Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。TLS certificate/key目前仍為 process-start載入。
+Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。TLS certificate/key與 recovery provider file目前仍為 process-start載入。
 
 ## 目前刻意保留的限制
 
 - Realtime UDP尚未加密；目前只有 authenticity / integrity。
-- Schema-v4目前仍是 **single-writer durable JSON account backend**；尚未有 public registration、distributed account DB或 multi-writer recovery CAS。
-- F.9 已有 operator/out-of-band recovery proof與one-time password reset，但尚未有 public self-service forgot-password endpoint、email/SMS ownership verification / delivery、breached-password corpus或完整 recovery UX。
-- 尚未加入 MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
-- Login已有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
+- Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
+- F.10已有 public recovery request/reset exchange與provider seam，但內建provider只驗 high-entropy recovery code；尚未有 verified email/SMS ownership / delivery provider。
+- 尚未有 normal Godot Client forgot-password / recovery proof / new-password UX；目前 F.10 production gate直接用 HTTP exchange驅動既有 F.8 reauthentication state machine。
+- 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
+- Login/recovery都有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
 - F.8 normal產品 Client已有login/reauth state machine，但尚未加入 OS keychain / secure remembered-session storage；human password與issued bearer都不落地持久化。
-- TLS game/login certificate與 key尚未 hot reload。
+- TLS game/login certificate與 key、recovery provider config尚未 hot reload。
 - NAT-like migration目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
 - 尚未做 multi-server distributed ownership / failover。
 - 尚未加入 periodic in-session realtime rekey、DTLS或 QUIC；目前 evidence沒有證明 MVP需要它們。
@@ -603,8 +680,8 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.9 已把 account recovery收斂成安全的 durable primitive：recovery bearer只以 digest保存、綁定 account credential generation、短生命週期且一次性消耗；password reset沿既有 SIGHUP generation fence撤銷舊 bearer/live peer，並已用 normal F.8 Client完成真實 reauthentication acceptance。KDF migration也有明確的 maintenance convergence與 uniform-online-policy邊界。
+S4-F.10 已把 F.9 operator recovery primitive提升成 provider-neutral public exchange：challenge綁定 Server-owned account generation、known/unknown request沒有 explicit existence欄位差異、proof有 TTL/attempt/IP bounds，成功 public reset在 durable commit後立即撤銷舊 bearer/live peer且不需要 SIGHUP；真實 production gate也已用未修改的 F.8 normal `Main.tscn`完成新密碼 reauthentication。
 
-下一個 bounded stage 應進入 **S4-F.10 — Verified Recovery Provider / Public Reset Exchange**：在不把 recovery authority交給 Client、也不改 Protocol v9的前提下，建立可插拔的 verified-recovery provider seam與enumeration-resistant public reset exchange，定義 challenge/attempt/rate-limit/one-time consumption邊界；實際 email/SMS provider、MFA/WebAuthn/OIDC與distributed recovery仍保持獨立 decision gate。
+下一個 bounded stage 應進入 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**：把 F.10 `/v1/account/recovery/request`與`/reset`接入 normal Godot產品 state machine，定義 forgot-password、challenge pending、proof/new-password submit、generic enumeration-safe request feedback、401/429/TLS/network failure與成功後重新登入的 UX；實際 email/SMS delivery provider、MFA/WebAuthn/OIDC與distributed recovery仍保持獨立 decision gate。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
