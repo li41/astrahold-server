@@ -1,0 +1,361 @@
+name: Production Trusted Proxy Edge No-op Reload E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-proxy-edge-noop-reload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run change-aware edge reload acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f21-data"
+          tls_dir="$data_root/tls"
+          accounts_file="$data_root/accounts.json"
+          edge_policy="$data_root/edge-policy.json"
+          edge_ca_live="$tls_dir/edge-ca-live.crt"
+          server_log="$RUNNER_TEMP/s4f21-worldd.log"
+          holder_log="$RUNNER_TEMP/s4f21-holder.log"
+          holder_script="$RUNNER_TEMP/s4f21-holder.py"
+          holder_ready="$RUNNER_TEMP/s4f21-holder.ready"
+          noop_go="$RUNNER_TEMP/s4f21-noop.go"
+          changed_go="$RUNNER_TEMP/s4f21-changed.go"
+          wrong_password="F21-Wrong-Password-Should-Not-Log!"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          rm -f "$holder_ready" "$noop_go" "$changed_go"
+          mkdir -p "$data_root" "$tls_dir" "$data_root/character-state"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' 'F21-Correct-Horse-Battery-Staple!' | "$ACCOUNTCTL" create \
+            -path "$accounts_file" \
+            -login holder \
+            -character f21-character \
+            -password-stdin
+
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server-ca.key" -out "$tls_dir/server-ca.crt" -days 1 -sha256 \
+            -subj "/CN=Astrahold S4-F.21 Server CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          cat >"$tls_dir/server.ext" <<'EOF_SERVER_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_SERVER_EXT
+
+          make_server_cert() {
+            label="$1"
+            openssl req -newkey rsa:2048 -nodes \
+              -keyout "$tls_dir/server-$label.key" -out "$tls_dir/server-$label.csr" \
+              -subj "/CN=localhost" >/dev/null 2>&1
+            openssl x509 -req -in "$tls_dir/server-$label.csr" \
+              -CA "$tls_dir/server-ca.crt" -CAkey "$tls_dir/server-ca.key" -CAcreateserial \
+              -out "$tls_dir/server-$label.crt" -days 1 -sha256 -extfile "$tls_dir/server.ext" >/dev/null 2>&1
+          }
+          make_server_cert a
+          make_server_cert b
+          cp "$tls_dir/server-a.crt" "$tls_dir/server-live.crt"
+          cp "$tls_dir/server-a.key" "$tls_dir/server-live.key"
+
+          make_edge_ca() {
+            label="$1"
+            openssl req -x509 -newkey rsa:2048 -nodes \
+              -keyout "$tls_dir/edge-ca-$label.key" -out "$tls_dir/edge-ca-$label.crt" -days 1 -sha256 \
+              -subj "/CN=Astrahold S4-F.21 Edge CA $label" \
+              -addext "basicConstraints=critical,CA:TRUE" \
+              -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          }
+
+          make_edge_cert() {
+            label="$1"
+            ca_label="$2"
+            dns_name="$3"
+            openssl req -newkey rsa:2048 -nodes \
+              -keyout "$tls_dir/edge-$label.key" -out "$tls_dir/edge-$label.csr" \
+              -subj "/CN=$dns_name" >/dev/null 2>&1
+            cat >"$tls_dir/edge-$label.ext" <<EOF_EDGE_EXT
+          subjectAltName=DNS:$dns_name
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature
+          extendedKeyUsage=clientAuth
+          EOF_EDGE_EXT
+            openssl x509 -req -in "$tls_dir/edge-$label.csr" \
+              -CA "$tls_dir/edge-ca-$ca_label.crt" -CAkey "$tls_dir/edge-ca-$ca_label.key" -CAcreateserial \
+              -out "$tls_dir/edge-$label.crt" -days 1 -sha256 -extfile "$tls_dir/edge-$label.ext" >/dev/null 2>&1
+          }
+
+          make_edge_ca a
+          make_edge_ca b
+          make_edge_cert a a edge-a.astrahold.test
+          make_edge_cert b b edge-b.astrahold.test
+          cp "$tls_dir/edge-ca-a.crt" "$edge_ca_live"
+
+          write_edge_policy() {
+            mode="$1"
+            python3 - "$edge_policy" "$mode" <<'PY'
+          import json, os, sys
+          path, mode = sys.argv[1:]
+          if mode == "1":
+              document = {
+                  "schema_version": 1,
+                  "revision": "edge-001",
+                  "forwarded_header": "x-forwarded-for",
+                  "client_ca_file": "tls/edge-ca-live.crt",
+                  "bindings": [
+                      {"prefixes": ["127.0.0.2/32"], "dns_names": ["edge-a.astrahold.test"]},
+                  ],
+              }
+          elif mode == "noop":
+              document = {
+                  "schema_version": 1,
+                  "revision": "edge-label-only",
+                  "forwarded_header": "X-Forwarded-For",
+                  "client_ca_file": "tls/edge-ca-live.crt",
+                  "bindings": [
+                      {"prefixes": ["127.0.0.2"], "dns_names": ["EDGE-A.ASTRAHOLD.TEST", "edge-a.astrahold.test"]},
+                  ],
+              }
+          else:
+              document = {
+                  "schema_version": 1,
+                  "revision": "edge-002",
+                  "forwarded_header": "forwarded",
+                  "client_ca_file": "tls/edge-ca-live.crt",
+                  "bindings": [
+                      {"prefixes": ["127.0.0.2/32"], "dns_names": ["edge-b.astrahold.test"]},
+                  ],
+              }
+          temp = path + ".tmp"
+          with open(temp, "w", encoding="utf-8") as f:
+              json.dump(document, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          os.replace(temp, path)
+          os.chmod(path, 0o600)
+          PY
+          }
+          write_edge_policy 1
+          chmod 600 "$accounts_file" "$edge_policy" "$tls_dir"/*.key
+
+          cat >"$holder_script" <<'PY'
+          import http.client
+          import os
+          import ssl
+          import sys
+          import time
+
+          server_ca, client_cert, client_key, ready, noop_go, changed_go = sys.argv[1:]
+          context = ssl.create_default_context(cafile=server_ca)
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+          connection = http.client.HTTPSConnection(
+              "127.0.0.1", 39444, context=context,
+              source_address=("127.0.0.2", 0), timeout=5,
+          )
+
+          def request(source):
+              body = b'{"login_id":"holder","login_secret":"F21-holder-wrong"}'
+              connection.request("POST", "/v1/session/login", body=body, headers={
+                  "Content-Type": "application/json",
+                  "X-Forwarded-For": source,
+              })
+              response = connection.getresponse()
+              response.read()
+              return response.status
+
+          assert request("198.51.100.90") == 401
+          with open(ready, "w", encoding="utf-8") as f:
+              f.write("ready\n")
+
+          for path in (noop_go, changed_go):
+              for _ in range(300):
+                  if os.path.exists(path):
+                      break
+                  time.sleep(0.1)
+              else:
+                  raise RuntimeError(f"timed out waiting for {path}")
+
+              if path == noop_go:
+                  assert request("198.51.100.91") == 401
+                  print("ASTRAHOLD_F21_NOOP_CONNECTION_SURVIVES", flush=True)
+              else:
+                  try:
+                      status = request("198.51.100.92")
+                  except Exception:
+                      print("ASTRAHOLD_F21_CHANGED_CONNECTION_RETIRED", flush=True)
+                  else:
+                      raise RuntimeError(f"changed edge connection unexpectedly survived with HTTP {status}")
+          connection.close()
+          PY
+
+          cleanup() {
+            set +e
+            for pid in "${holder_pid:-}" "${server_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            for _ in $(seq 1 300); do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                cat "$server_log" || true
+                return 1
+              fi
+              sleep 0.1
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            cat "$server_log" || true
+            return 1
+          }
+
+          wait_for_file() {
+            path="$1"
+            pid="$2"
+            log="$3"
+            for _ in $(seq 1 300); do
+              if [ -f "$path" ]; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then cat "$log" || true; return 1; fi
+              sleep 0.1
+            done
+            echo "timed out waiting for $path"
+            cat "$log" || true
+            return 1
+          }
+
+          "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:39777 \
+            -udp 127.0.0.1:39778 \
+            -session-login-account-file "$accounts_file" \
+            -session-login-tls-listen 127.0.0.1:39444 \
+            -session-login-tls-cert "$tls_dir/server-live.crt" \
+            -session-login-tls-key "$tls_dir/server-live.key" \
+            -session-login-trusted-proxy-edge-policy-file "$edge_policy" \
+            -session-login-trusted-proxy-edge-retire-old-connections \
+            -session-login-ip-max-attempts 100 \
+            -session-login-ip-attempt-window 1m \
+            -character-state-dir "$data_root/character-state" \
+            -character-state-save-journal "$data_root/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data_root/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
+          server_pid=$!
+
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "edge_policy_generation=1 edge_policy_revision=edge-001 edge_policy_bindings=1 edge_policy_connection_cutover=retire-old" "$server_pid"
+
+          python3 "$holder_script" "$tls_dir/server-ca.crt" "$tls_dir/edge-a.crt" "$tls_dir/edge-a.key" \
+            "$holder_ready" "$noop_go" "$changed_go" >"$holder_log" 2>&1 &
+          holder_pid=$!
+          wait_for_file "$holder_ready" "$holder_pid" "$holder_log"
+
+          # Representation-only edge reload while an independent F.16 server
+          # certificate rotation succeeds. Duplicate CA PEM, revision change,
+          # equivalent bare-IP prefix, and DNS case/duplication are semantic no-op.
+          cat "$tls_dir/edge-ca-a.crt" "$tls_dir/edge-ca-a.crt" >"$edge_ca_live"
+          write_edge_policy noop
+          cp "$tls_dir/server-b.crt" "$tls_dir/server-live.crt"
+          cp "$tls_dir/server-b.key" "$tls_dir/server-live.key"
+          kill -HUP "$server_pid"
+
+          wait_for_marker "$server_log" "session login TLS certificate reload applied: previous_generation=1 generation=2" "$server_pid"
+          wait_for_marker "$server_log" "session trusted proxy edge policy reload applied: previous_generation=1 generation=1 previous_revision=edge-001 revision=edge-001 previous_header=x-forwarded-for header=x-forwarded-for roots=1 bindings=1 prefixes=1 identities=1 connection_cutover=retire-old retired_connections=0" "$server_pid"
+          touch "$noop_go"
+          wait_for_marker "$holder_log" "ASTRAHOLD_F21_NOOP_CONNECTION_SURVIVES" "$holder_pid"
+
+          # Actual authority change: CA, identity, and forwarding mode all move.
+          cp "$tls_dir/edge-ca-b.crt" "$edge_ca_live"
+          write_edge_policy 2
+          kill -HUP "$server_pid"
+          wait_for_marker "$server_log" "session trusted proxy edge policy reload applied: previous_generation=1 generation=2 previous_revision=edge-001 revision=edge-002 previous_header=x-forwarded-for header=forwarded roots=1 bindings=1 prefixes=1 identities=1 connection_cutover=retire-old retired_connections=1" "$server_pid"
+          touch "$changed_go"
+          wait "$holder_pid"
+          holder_pid=""
+          grep -F "ASTRAHOLD_F21_CHANGED_CONNECTION_RETIRED" "$holder_log"
+
+          login_body="$(printf '{"login_id":"holder","login_secret":"%s"}' "$wrong_password")"
+          new_status="$(printf '%s' "$login_body" | curl --silent --show-error \
+            --interface 127.0.0.2 --cacert "$tls_dir/server-ca.crt" \
+            --cert "$tls_dir/edge-b.crt" --key "$tls_dir/edge-b.key" \
+            --output /tmp/f21-new --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'Forwarded: for=198.51.100.93' \
+            --data-binary @- https://localhost:39444/v1/session/login)"
+          test "$new_status" = "401"
+
+          set +e
+          printf '%s' "$login_body" | curl --silent --show-error \
+            --interface 127.0.0.2 --cacert "$tls_dir/server-ca.crt" \
+            --cert "$tls_dir/edge-a.crt" --key "$tls_dir/edge-a.key" \
+            -H 'Content-Type: application/json' -H 'Forwarded: for=198.51.100.94' \
+            --data-binary @- https://localhost:39444/v1/session/login >/tmp/f21-old 2>/tmp/f21-old.err
+          old_rc=$?
+          set -e
+          test "$old_rc" -ne 0
+
+          direct_status="$(printf '%s' "$login_body" | curl --silent --show-error \
+            --cacert "$tls_dir/server-ca.crt" --output /tmp/f21-direct --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'Forwarded: for=forged-direct-value' \
+            --data-binary @- https://localhost:39444/v1/session/login)"
+          test "$direct_status" = "401"
+
+          for forbidden in "$wrong_password" edge-a.astrahold.test edge-b.astrahold.test forged-direct-value 198.51.100.90 198.51.100.93; do
+            if grep -Fq "$forbidden" "$server_log"; then
+              echo "worldd log leaked F.21 secret, identity, or forwarding metadata: $forbidden"
+              cat "$server_log"
+              exit 1
+            fi
+          done
+
+          echo "ASTRAHOLD_F21_E2E_OK noop_generation_stable=true noop_connection_survives=true tls_reload_independent=true authority_change_generation_advances=true changed_connection_retired=true new_handshake_uses_new_authority=true direct_client_unchanged=true protocol=9 tls=1.3"
+
+      - name: Upload F.21 edge no-op reload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f21-edge-noop-reload-logs
+          path: |
+            ${{ runner.temp }}/s4f21-worldd.log
+            ${{ runner.temp }}/s4f21-holder.log
+          if-no-files-found: ignore
