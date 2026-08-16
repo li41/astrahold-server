@@ -197,6 +197,7 @@ type sessionLoginRuntime struct {
 	provider         *reloadableTrustedCharacterCredentialProvider
 	listener         net.Listener
 	tlsCertificate   *reloadableTLSCertificate
+	sourceAttributor *sessionSourceAttributor
 	ttl              time.Duration
 	now              func() time.Time
 	random           io.Reader
@@ -212,7 +213,9 @@ func sessionLoginConfigurationRequested() bool {
 		strings.TrimSpace(*sessionLoginTLSListen) != "" ||
 		strings.TrimSpace(*sessionLoginTLSCertFile) != "" ||
 		strings.TrimSpace(*sessionLoginTLSKeyFile) != "" ||
-		strings.TrimSpace(*sessionRecoveryProviderFile) != ""
+		strings.TrimSpace(*sessionRecoveryProviderFile) != "" ||
+		strings.TrimSpace(*sessionLoginTrustedProxyCIDRs) != "" ||
+		strings.TrimSpace(*sessionLoginForwardedHeader) != ""
 }
 
 func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
@@ -234,6 +237,10 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	}
 	if *sessionLoginIPMaxAttempts < 1 || *sessionLoginIPMaxAttempts > 10000 {
 		return nil, fmt.Errorf("%w: session-login-ip-max-attempts must be between 1 and 10000", errSessionLoginConfig)
+	}
+	sourceAttributor, err := loadSessionSourceAttributor()
+	if err != nil {
+		return nil, err
 	}
 	if err := validateTrustedCharacterAuthListenAddress(tcpAddress); err != nil {
 		return nil, err
@@ -282,6 +289,7 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 		provider:         provider,
 		listener:         tls.NewListener(base, tlsCertificate.TLSConfig()),
 		tlsCertificate:   tlsCertificate,
+		sourceAttributor: sourceAttributor,
 		ttl:              *issuedSessionCredentialTTL,
 		now:              time.Now,
 		random:           rand.Reader,
@@ -527,11 +535,21 @@ type sessionLoginResponse struct {
 
 func (r *sessionLoginRuntime) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/session/login", r.handleSessionLogin)
+	loginHandler := http.Handler(http.HandlerFunc(r.handleSessionLogin))
+	if r.sourceAttributor != nil {
+		loginHandler = r.sourceAttributor.wrap(loginHandler)
+	}
+	mux.Handle("/v1/session/login", loginHandler)
 	mux.HandleFunc("/v1/session/logout", r.handleSessionLogout)
 	if r.recoveryProvider != nil {
-		mux.HandleFunc("/v1/account/recovery/request", r.handleRecoveryRequest)
-		mux.HandleFunc("/v1/account/recovery/reset", r.handleRecoveryReset)
+		recoveryRequestHandler := http.Handler(http.HandlerFunc(r.handleRecoveryRequest))
+		recoveryResetHandler := http.Handler(http.HandlerFunc(r.handleRecoveryReset))
+		if r.sourceAttributor != nil {
+			recoveryRequestHandler = r.sourceAttributor.wrap(recoveryRequestHandler)
+			recoveryResetHandler = r.sourceAttributor.wrap(recoveryResetHandler)
+		}
+		mux.Handle("/v1/account/recovery/request", recoveryRequestHandler)
+		mux.Handle("/v1/account/recovery/reset", recoveryResetHandler)
 	}
 	return mux
 }
@@ -684,10 +702,11 @@ func runIssuedSessionCredentialRuntime(
 		reloadMode = "sighup"
 	}
 	tlsSnapshot := runtime.TLSCertificateSnapshot()
-	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
+	sourceAttribution, trustedProxyPrefixes := sessionSourceAttributionMetadata(runtime.sourceAttributor)
+	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s source_attribution=%s trusted_proxy_prefixes=%d forwarded_max_hops=%d login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), sourceAttribution, trustedProxyPrefixes, sessionSourceAttributionMaxHops, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
 	if runtime.recoveryProvider != nil {
 		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
-		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration)
+		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d source_attribution=%s", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration, sourceAttribution)
 	}
 
 	for {
