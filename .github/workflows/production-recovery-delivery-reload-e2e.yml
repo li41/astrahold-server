@@ -1,0 +1,552 @@
+name: Production Recovery Delivery Reload E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-delivery-runtime-reload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - name: Checkout paired S4-F.11 client
+        uses: actions/checkout@v4
+        with:
+          repository: li41/astrahold-client
+          ref: e384cfae4ebb30df6150421b0f88cf3d092e44a1
+          path: .e2e-client
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools and client
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .e2e-client rev-parse HEAD)" = "e384cfae4ebb30df6150421b0f88cf3d092e44a1"
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+          dotnet restore .e2e-client/Astrahold.Client.csproj
+          dotnet build .e2e-client/Astrahold.Client.csproj --configuration Debug --no-restore
+
+      - name: Download official Godot 4.7.1 .NET
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools/godot
+          curl --fail --location --retry 3 \
+            --output /tmp/godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_mono_linux_x86_64.zip
+          echo "6ca7ff0459f1b806900be683c1b0837c607a9c16834c530dc68c81b9fc3ae1f6  /tmp/godot.zip" | sha256sum --check --strict
+          unzip -q /tmp/godot.zip -d .tools/godot
+          GODOT="$(find .tools/godot -type f -name 'Godot_v4.7.1-stable_mono_linux*' ! -path '*/GodotSharp/*' | head -n 1)"
+          test -n "$GODOT"
+          chmod +x "$GODOT"
+          echo "GODOT=$GODOT" >> "$GITHUB_ENV"
+          "$GODOT" --version
+
+      - name: Run recovery delivery credential and CA runtime rotation acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f14-data"
+          login_tls="$data_root/login-tls"
+          relay_a_tls="$data_root/relay-a-tls"
+          relay_b_tls="$data_root/relay-b-tls"
+          accounts_file="$data_root/accounts.json"
+          provider_file="$data_root/recovery-provider.json"
+          relay_credential_file="$data_root/recovery-relay.token"
+          relay_script="$data_root/fake-relay.py"
+          relay_a_proof="$data_root/relay-a.proof"
+          relay_b_proof="$data_root/relay-b.proof"
+          relay_a_state="$data_root/relay-a-state.json"
+          relay_b_state="$data_root/relay-b-state.json"
+          relay_a_log="$RUNNER_TEMP/s4f14-relay-a.log"
+          relay_b_log="$RUNNER_TEMP/s4f14-relay-b.log"
+          server_log="$RUNNER_TEMP/s4f14-worldd.log"
+          client_log="$RUNNER_TEMP/s4f14-product-main.log"
+          first_body="$RUNNER_TEMP/s4f14-first.json"
+          second_body="$RUNNER_TEMP/s4f14-second.json"
+          lkg_body="$RUNNER_TEMP/s4f14-lkg.json"
+          stale_body="$RUNNER_TEMP/s4f14-stale.json"
+          old_login_body="$RUNNER_TEMP/s4f14-old-login.json"
+          mid_login_body="$RUNNER_TEMP/s4f14-mid-login.json"
+          old_password="F14-Old-Correct-Horse-Battery-Staple!"
+          mid_password="F14-Mid-Correct-Horse-Battery-Staple!"
+          final_password="F14-Final-Correct-Horse-Battery-Staple!"
+          throwaway_password="F14-Throwaway-New-Password-Only!"
+          credential_a="F14-Relay-A-Credential-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+          credential_b="F14-Relay-B-Credential-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+          holder_destination="holder-f14@example.invalid"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          mkdir -p "$data_root" "$login_tls" "$relay_a_tls" "$relay_b_tls" "$data_root/character-state"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' "$old_password" | "$ACCOUNTCTL" create \
+            -path "$accounts_file" -login holder -character f14-holder-character -password-stdin
+
+          make_tls_pair() {
+            dir="$1"
+            label="$2"
+            openssl req -x509 -newkey rsa:2048 -nodes \
+              -keyout "$dir/ca.key" -out "$dir/ca.crt" -days 1 -sha256 \
+              -subj "/CN=$label CA" \
+              -addext "basicConstraints=critical,CA:TRUE" \
+              -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+            openssl req -newkey rsa:2048 -nodes \
+              -keyout "$dir/server.key" -out "$dir/server.csr" \
+              -subj "/CN=localhost" >/dev/null 2>&1
+            cat >"$dir/server.ext" <<'EOF_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_EXT
+            openssl x509 -req -in "$dir/server.csr" \
+              -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
+              -out "$dir/server.crt" -days 1 -sha256 -extfile "$dir/server.ext" >/dev/null 2>&1
+            chmod 600 "$dir/ca.key" "$dir/server.key"
+          }
+
+          make_tls_pair "$login_tls" "Astrahold S4-F.14 Login"
+          make_tls_pair "$relay_a_tls" "Astrahold S4-F.14 Relay A"
+          make_tls_pair "$relay_b_tls" "Astrahold S4-F.14 Relay B"
+
+          printf '%s\n' "$credential_a" > "$relay_credential_file"
+          chmod 600 "$relay_credential_file"
+
+          write_provider() {
+            endpoint="$1"
+            ca_file="$2"
+            proof_key_label="$3"
+            python3 - "$provider_file" "$relay_credential_file" "$ca_file" "$endpoint" "$proof_key_label" <<'PY'
+          import base64, hashlib, json, os, sys
+          path, credential_path, ca_path, endpoint, key_label = sys.argv[1:]
+          key = hashlib.sha256(key_label.encode("utf-8")).digest()
+          definition = {
+              "schema_version": 2,
+              "revision": "s4f14-provider-stable",
+              "proof_key_base64url": base64.urlsafe_b64encode(key).rstrip(b"=").decode("ascii"),
+              "delivery": {
+                  "adapter": "https-json-v1",
+                  "revision": "s4f14-relay-stable",
+                  "endpoint": endpoint,
+                  "credential_file": credential_path,
+                  "ca_file": ca_path,
+                  "request_timeout": "1s",
+                  "max_attempts": 2,
+                  "retry_backoff": "25ms",
+              },
+              "subjects": [
+                  {"login_id": "holder", "destination": "holder-f14@example.invalid"},
+              ],
+          }
+          tmp = path + ".tmp"
+          fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          with os.fdopen(fd, "w", encoding="utf-8") as f:
+              json.dump(definition, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          os.replace(tmp, path)
+          os.chmod(path, 0o600)
+          PY
+          }
+
+          write_provider "https://localhost:42445/deliver" "$relay_a_tls/ca.crt" "Astrahold S4-F.14 proof key A"
+          if grep -Fq "$credential_a" "$provider_file"; then
+            echo "provider config embedded relay credential"
+            exit 1
+          fi
+
+          cat > "$relay_script" <<'PY'
+          import http.server
+          import json
+          import os
+          import ssl
+          import sys
+
+          host, port, cert, key, expected_credential, tag, proof_file, state_file = sys.argv[1:]
+          port = int(port)
+          accepted = 0
+
+          def save_state():
+              tmp = state_file + ".tmp"
+              with open(tmp, "w", encoding="utf-8") as f:
+                  json.dump({"accepted": accepted}, f)
+                  f.write("\n")
+                  f.flush()
+                  os.fsync(f.fileno())
+              os.replace(tmp, state_file)
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+              def log_message(self, fmt, *args):
+                  return
+              def respond(self, status):
+                  self.send_response(status)
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+              def do_POST(self):
+                  global accepted
+                  if self.path != "/deliver":
+                      self.respond(404)
+                      return
+                  if self.headers.get("Authorization") != "Bearer " + expected_credential:
+                      print(tag + "_AUTH_REJECTED", flush=True)
+                      self.respond(401)
+                      return
+                  length = int(self.headers.get("Content-Length", "0"))
+                  if length <= 0 or length > 4096:
+                      self.respond(400)
+                      return
+                  raw = self.rfile.read(length)
+                  try:
+                      body = json.loads(raw)
+                  except Exception:
+                      self.respond(400)
+                      return
+                  if set(body) != {"schema_version", "delivery_id", "destination", "proof", "expires_at"}:
+                      self.respond(400)
+                      return
+                  delivery_id = body.get("delivery_id")
+                  proof = body.get("proof")
+                  if body.get("schema_version") != 1 or not isinstance(delivery_id, str) or not delivery_id or not isinstance(proof, str) or not proof:
+                      self.respond(400)
+                      return
+                  if self.headers.get("Idempotency-Key") != delivery_id or self.headers.get("X-Astrahold-Delivery-ID") != delivery_id:
+                      self.respond(400)
+                      return
+                  if b"request_id" in raw or expected_credential.encode() in raw:
+                      self.respond(400)
+                      return
+                  fd = os.open(proof_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                  with os.fdopen(fd, "w", encoding="utf-8") as f:
+                      f.write(proof + "\n")
+                      f.flush()
+                      os.fsync(f.fileno())
+                  accepted += 1
+                  save_state()
+                  print(tag + "_ACCEPTED count=" + str(accepted) + " tls=1.3", flush=True)
+                  self.respond(202)
+
+          server = http.server.ThreadingHTTPServer((host, port), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.load_cert_chain(cert, key)
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          print(tag + "_READY tls=1.3", flush=True)
+          server.serve_forever()
+          PY
+
+          cleanup() {
+            set +e
+            for pid in "${client_pid:-}" "${server_pid:-}" "${relay_a_pid:-}" "${relay_b_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            attempts="$4"
+            i=0
+            while [ "$i" -lt "$attempts" ]; do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                cat "$server_log" || true
+                cat "$relay_a_log" || true
+                cat "$relay_b_log" || true
+                return 1
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            cat "$server_log" || true
+            cat "$relay_a_log" || true
+            cat "$relay_b_log" || true
+            return 1
+          }
+
+          wait_success() {
+            pid="$1"
+            label="$2"
+            log_file="$3"
+            set +e
+            wait "$pid"
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
+              echo "$label failed with status $status"
+              cat "$log_file" || true
+              cat "$server_log" || true
+              exit 1
+            fi
+          }
+
+          python3 "$relay_script" 127.0.0.1 42445 "$relay_a_tls/server.crt" "$relay_a_tls/server.key" \
+            "$credential_a" F14_RELAY_A "$relay_a_proof" "$relay_a_state" >"$relay_a_log" 2>&1 &
+          relay_a_pid=$!
+          python3 "$relay_script" 127.0.0.1 42446 "$relay_b_tls/server.crt" "$relay_b_tls/server.key" \
+            "$credential_b" F14_RELAY_B "$relay_b_proof" "$relay_b_state" >"$relay_b_log" 2>&1 &
+          relay_b_pid=$!
+          wait_for_marker "$relay_a_log" "F14_RELAY_A_READY tls=1.3" "$relay_a_pid" 200
+          wait_for_marker "$relay_b_log" "F14_RELAY_B_READY tls=1.3" "$relay_b_pid" 200
+
+          "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:42777 \
+            -udp 127.0.0.1:42778 \
+            -session-login-account-file "$accounts_file" \
+            -session-login-tls-listen 127.0.0.1:42444 \
+            -session-login-tls-cert "$login_tls/server.crt" \
+            -session-login-tls-key "$login_tls/server.key" \
+            -session-login-ip-max-attempts 100 \
+            -session-login-ip-attempt-window 1m \
+            -session-credential-ttl 5m \
+            -session-recovery-provider-file "$provider_file" \
+            -session-recovery-challenge-ttl 5m \
+            -session-recovery-challenge-max-attempts 5 \
+            -session-recovery-ip-max-attempts 100 \
+            -session-recovery-ip-attempt-window 1m \
+            -trusted-tls-listen 127.0.0.1:42443 \
+            -trusted-tls-cert "$login_tls/server.crt" \
+            -trusted-tls-key "$login_tls/server.key" \
+            -character-state-dir "$data_root/character-state" \
+            -character-state-save-journal "$data_root/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data_root/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
+          server_pid=$!
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+          wait_for_marker "$server_log" "session login issuance: enabled=true" "$server_pid" 300
+          wait_for_marker "$server_log" "session recovery: enabled=true provider=hmac-sha256-generation-delivery revision=s4f14-provider-stable" "$server_pid" 300
+          grep -F "recovery_reload=sighup generation=1" "$server_log"
+
+          first_status="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$first_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/account/recovery/request)"
+          test "$first_status" = "202"
+          wait_for_marker "$relay_a_log" "F14_RELAY_A_ACCEPTED count=1 tls=1.3" "$relay_a_pid" 200
+          test -f "$relay_a_proof"
+          first_proof="$(tr -d '\n' < "$relay_a_proof")"
+          first_request_id="$(python3 - "$first_body" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              body = json.load(f)
+          assert set(body) == {"request_id", "expires_at"}
+          print(body["request_id"])
+          PY
+          )"
+          test -n "$first_proof"
+          test -n "$first_request_id"
+
+          printf '%s\n' "$credential_b" > "$relay_credential_file"
+          chmod 600 "$relay_credential_file"
+          write_provider "https://localhost:42446/deliver" "$relay_b_tls/ca.crt" "Astrahold S4-F.14 proof key B"
+          kill -HUP "$server_pid"
+          wait_for_marker "$server_log" "session recovery reload applied: previous_generation=1 generation=2" "$server_pid" 300
+          grep -F "previous_revision=s4f14-provider-stable revision=s4f14-provider-stable" "$server_log"
+          grep -F "retained_challenges=1" "$server_log"
+
+          old_reset_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$first_request_id" "$first_proof" "$mid_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output /dev/null --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/account/recovery/reset)"
+          test "$old_reset_status" = "204"
+
+          rm -f "$relay_b_proof"
+          second_status="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$second_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/account/recovery/request)"
+          test "$second_status" = "202"
+          wait_for_marker "$relay_b_log" "F14_RELAY_B_ACCEPTED count=1 tls=1.3" "$relay_b_pid" 200
+          test -f "$relay_b_proof"
+          second_proof="$(tr -d '\n' < "$relay_b_proof")"
+          second_request_id="$(python3 - "$second_body" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              body = json.load(f)
+          assert set(body) == {"request_id", "expires_at"}
+          print(body["request_id"])
+          PY
+          )"
+          test -n "$second_proof"
+          test "$second_proof" != "$first_proof"
+          test -n "$second_request_id"
+
+          chmod 644 "$relay_credential_file"
+          kill -HUP "$server_pid"
+          wait_for_marker "$server_log" "session recovery reload rejected; last-known-good retained: generation=2 revision=s4f14-provider-stable" "$server_pid" 300
+
+          before_lkg_count="$(python3 - "$relay_b_state" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              print(json.load(f)["accepted"])
+          PY
+          )"
+          lkg_status="$(printf '{"login_id":"holder"}' | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$lkg_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/account/recovery/request)"
+          test "$lkg_status" = "202"
+          i=0
+          while [ "$i" -lt 200 ]; do
+            after_lkg_count="$(python3 - "$relay_b_state" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              print(json.load(f)["accepted"])
+          PY
+          )"
+            if [ "$after_lkg_count" -gt "$before_lkg_count" ]; then break; fi
+            sleep 0.05
+            i=$((i + 1))
+          done
+          test "$after_lkg_count" -gt "$before_lkg_count"
+          chmod 600 "$relay_credential_file"
+
+          ASTRAHOLD_SESSION_LOGIN_URL="https://localhost:42444" \
+          ASTRAHOLD_SESSION_LOGIN_ID=holder \
+          ASTRAHOLD_SERVER_HOST=127.0.0.1 \
+          ASTRAHOLD_SERVER_PORT=42443 \
+          ASTRAHOLD_TLS_SERVER_NAME=localhost \
+          ASTRAHOLD_TLS_CA="$login_tls/ca.crt" \
+          ASTRAHOLD_F11_AUTOMATION_MODE=recovery \
+          ASTRAHOLD_F11_AUTOMATION_RECOVERY_PROOF="$second_proof" \
+          ASTRAHOLD_F11_AUTOMATION_NEW_SECRET="$final_password" \
+          ASTRAHOLD_F11_AUTOMATION_LOGIN_SECRET="$final_password" \
+          "$GODOT" --headless --path "$GITHUB_WORKSPACE/.e2e-client" res://scenes/Main.tscn >"$client_log" 2>&1 &
+          client_pid=$!
+          wait_for_marker "$client_log" "ASTRAHOLD_F11_UNKNOWN_REQUEST_UI_OK" "$client_pid" 600
+          wait_for_marker "$client_log" "ASTRAHOLD_F11_INVALID_RECOVERY_UI_OK" "$client_pid" 600
+          wait_for_marker "$client_log" "ASTRAHOLD_F11_RESET_UI_OK" "$client_pid" 600
+          wait_for_marker "$client_log" "ASTRAHOLD_F11_RECOVERY_LOGIN_OK" "$client_pid" 600
+          wait_for_marker "$client_log" "ASTRAHOLD_F11_CLIENT_RECOVERY_UX_OK" "$client_pid" 600
+          wait_success "$client_pid" "F.14 unchanged F.11 recovery UX" "$client_log"
+          client_pid=""
+
+          old_status="$(printf '{"login_id":"holder","login_secret":"%s"}' "$old_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$old_login_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/session/login)"
+          mid_status="$(printf '{"login_id":"holder","login_secret":"%s"}' "$mid_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$mid_login_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/session/login)"
+          test "$old_status" = "401"
+          test "$mid_status" = "401"
+          grep -F '"error":"invalid_credentials"' "$old_login_body"
+          grep -F '"error":"invalid_credentials"' "$mid_login_body"
+
+          stale_status="$(printf '{"request_id":"%s","recovery_proof":"%s","new_password":"%s"}' \
+            "$second_request_id" "$second_proof" "$throwaway_password" | curl --silent --show-error \
+            --cacert "$login_tls/ca.crt" --output "$stale_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:42444/v1/account/recovery/reset)"
+          test "$stale_status" = "401"
+          grep -F '"error":"invalid_recovery"' "$stale_body"
+
+          python3 - "$accounts_file" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              store = json.load(f)
+          assert store["schema_version"] == 4
+          account = next(item for item in store["accounts"] if item["login_id"] == "holder")
+          assert account["credential_version"] == 3, account
+          assert not store.get("recovery_grants")
+          print("ASTRAHOLD_F14_STORE_OK schema=4 credential_version=3")
+          PY
+
+          relay_a_count="$(python3 - "$relay_a_state" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              print(json.load(f)["accepted"])
+          PY
+          )"
+          relay_b_count="$(python3 - "$relay_b_state" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              print(json.load(f)["accepted"])
+          PY
+          )"
+          test "$relay_a_count" = "1"
+          test "$relay_b_count" -ge 3
+          if grep -Fq "F14_RELAY_A_AUTH_REJECTED" "$relay_a_log" || grep -Fq "F14_RELAY_B_AUTH_REJECTED" "$relay_b_log"; then
+            echo "F.14 relay authentication rejected an expected delivery"
+            exit 1
+          fi
+
+          first_delivery_id="$(python3 - "$first_request_id" <<'PY'
+          import base64, hashlib, sys
+          digest = hashlib.sha256(b"astrahold-recovery-delivery-id-v1\x00" + sys.argv[1].encode()).digest()
+          print(base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode())
+          PY
+          )"
+          second_delivery_id="$(python3 - "$second_request_id" <<'PY'
+          import base64, hashlib, sys
+          digest = hashlib.sha256(b"astrahold-recovery-delivery-id-v1\x00" + sys.argv[1].encode()).digest()
+          print(base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode())
+          PY
+          )"
+
+          for secret in "$old_password" "$mid_password" "$final_password" "$throwaway_password" \
+                        "$credential_a" "$credential_b" "$first_proof" "$second_proof" \
+                        "$holder_destination" "$first_request_id" "$second_request_id" \
+                        "$first_delivery_id" "$second_delivery_id"; do
+            if grep -Fq "$secret" "$server_log" || grep -Fq "$secret" "$client_log" || \
+               grep -Fq "$secret" "$relay_a_log" || grep -Fq "$secret" "$relay_b_log"; then
+              echo "F.14 captured logs leaked secret or opaque recovery metadata"
+              exit 1
+            fi
+          done
+          if grep -Fq "session_credential" "$server_log" || grep -Fq "session_credential" "$client_log"; then
+            echo "F.14 captured logs exposed an issued bearer field"
+            exit 1
+          fi
+
+          grep -F "session recovery reload applied: previous_generation=1 generation=2" "$server_log"
+          grep -F "session recovery reload rejected; last-known-good retained: generation=2" "$server_log"
+          echo "ASTRAHOLD_F14_E2E_OK reload_generation=2 old_challenge_survives=true credential_rotated=true ca_rotated=true invalid_reload_lkg=true post_cutover_new_only=true f11_main=true stale_generation_rejected=true secrets_not_logged=true protocol=9 tls=1.3"
+
+      - name: Upload F.14 recovery reload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f14-production-recovery-reload-logs
+          path: |
+            ${{ runner.temp }}/s4f14-worldd.log
+            ${{ runner.temp }}/s4f14-product-main.log
+            ${{ runner.temp }}/s4f14-relay-a.log
+            ${{ runner.temp }}/s4f14-relay-b.log
+          if-no-files-found: warn
