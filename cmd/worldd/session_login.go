@@ -252,6 +252,12 @@ func loadSessionLoginRuntime(tcpAddress string) (*sessionLoginRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	if staticRecovery, ok := recoveryProvider.(*staticSessionRecoveryProvider); ok {
+		recoveryProvider, err = wrapSessionRecoveryProviderForRuntime(staticRecovery)
+		if err != nil {
+			return nil, err
+		}
+	}
 	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("%w: load session login certificate: %v", errSessionLoginConfig, err)
@@ -666,7 +672,8 @@ func runIssuedSessionCredentialRuntime(
 	}
 	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
 	if runtime.recoveryProvider != nil {
-		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion)
+		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
+		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration)
 	}
 
 	for {
@@ -702,14 +709,27 @@ func runIssuedSessionCredentialRuntime(
 			stopTrustedCharacterAuthTimer(timer)
 			if _, _, ok := runtime.accountAuth.reloadMetadata(); !ok {
 				logf("session login account verifier is restart-only; SIGHUP does not reload schema v1/v2 issuance accounts")
-				continue
+			} else {
+				accountResult, err := runtime.reloadDurableAccounts(time.Now().UTC())
+				if err != nil {
+					logf("session login durable account reload rejected; last-known-good retained: err=%v", err)
+				} else {
+					logf("session login durable account reload applied: previous_revision=%s revision=%s removed_bearers=%d retired_peers=%d", accountResult.PreviousRevision, accountResult.Revision, accountResult.RemovedBearers, accountResult.RetiredPeers)
+				}
 			}
-			result, err := runtime.reloadDurableAccounts(time.Now().UTC())
-			if err != nil {
-				logf("session login durable account reload rejected; last-known-good retained: err=%v", err)
-				continue
+			if runtime.recoveryProvider != nil {
+				if _, ok := runtime.recoveryProvider.(*reloadableSessionRecoveryProvider); ok {
+					recoveryResult, err := runtime.reloadRecoveryProvider()
+					if err != nil {
+						_, generation := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
+						logf("session recovery reload rejected; last-known-good retained: generation=%d revision=%s err=%v", generation, runtime.recoveryProvider.Revision(), err)
+					} else {
+						logf("session recovery reload applied: previous_generation=%d generation=%d previous_revision=%s revision=%s previous_provider=%s provider=%s retained_challenges=%d retired_challenges=%d", recoveryResult.PreviousGeneration, recoveryResult.Generation, recoveryResult.PreviousRevision, recoveryResult.Revision, recoveryResult.PreviousMethod, recoveryResult.Method, recoveryResult.RetainedChallenges, recoveryResult.RetiredChallenges)
+					}
+				} else {
+					logf("session recovery provider is restart-only; SIGHUP does not reload schema-v1 recovery provider")
+				}
 			}
-			logf("session login durable account reload applied: previous_revision=%s revision=%s removed_bearers=%d retired_peers=%d", result.PreviousRevision, result.Revision, result.RemovedBearers, result.RetiredPeers)
 		case <-timerC:
 			retired := runtime.expireAt(time.Now().UTC())
 			if retired > 0 {

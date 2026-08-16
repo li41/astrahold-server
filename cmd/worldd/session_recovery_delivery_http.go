@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/li41/astrahold-server/internal/accountrecovery"
@@ -38,6 +39,7 @@ const (
 type httpRecoveryDeliveryAdapter struct {
 	endpoint       *url.URL
 	revision       string
+	credentialMu   sync.RWMutex
 	credential     []byte
 	client         *http.Client
 	requestTimeout time.Duration
@@ -184,10 +186,40 @@ func (a *httpRecoveryDeliveryAdapter) Revision() string {
 	return a.revision
 }
 
+func (a *httpRecoveryDeliveryAdapter) credentialSnapshot() []byte {
+	if a == nil {
+		return nil
+	}
+	a.credentialMu.RLock()
+	defer a.credentialMu.RUnlock()
+	return append([]byte(nil), a.credential...)
+}
+
+// Retire clears the in-memory bearer credential after the runtime generation
+// barrier has allowed already-started deliveries to finish. A delivery that
+// started before Retire uses its private snapshot; later calls fail closed.
+func (a *httpRecoveryDeliveryAdapter) Retire() {
+	if a == nil {
+		return
+	}
+	a.credentialMu.Lock()
+	clear(a.credential)
+	a.credential = nil
+	a.credentialMu.Unlock()
+	if a.client != nil {
+		a.client.CloseIdleConnections()
+	}
+}
+
 func (a *httpRecoveryDeliveryAdapter) Deliver(ctx context.Context, delivery accountrecovery.Delivery) error {
-	if a == nil || a.endpoint == nil || a.client == nil || len(a.credential) == 0 || !delivery.Valid() || len(delivery.Proof) == 0 {
+	if a == nil || a.endpoint == nil || a.client == nil || !delivery.Valid() || len(delivery.Proof) == 0 {
 		return accountrecovery.ErrDeliveryPermanent
 	}
+	credential := a.credentialSnapshot()
+	if len(credential) == 0 {
+		return accountrecovery.ErrDeliveryPermanent
+	}
+	defer clear(credential)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -211,7 +243,7 @@ func (a *httpRecoveryDeliveryAdapter) Deliver(ctx context.Context, delivery acco
 
 	lastStatus := 0
 	for attempt := 1; attempt <= a.maxAttempts; attempt++ {
-		status, transient, err := a.deliverAttempt(ctx, deliveryID, payload)
+		status, transient, err := a.deliverAttempt(ctx, deliveryID, payload, credential)
 		lastStatus = status
 		if err == nil && !transient {
 			a.logOutcome("success", attempt, status)
@@ -252,7 +284,7 @@ func (a *httpRecoveryDeliveryAdapter) Deliver(ctx context.Context, delivery acco
 	return accountrecovery.ErrDeliveryTransient
 }
 
-func (a *httpRecoveryDeliveryAdapter) deliverAttempt(parent context.Context, deliveryID string, payload []byte) (int, bool, error) {
+func (a *httpRecoveryDeliveryAdapter) deliverAttempt(parent context.Context, deliveryID string, payload, credential []byte) (int, bool, error) {
 	attemptCtx, cancel := context.WithTimeout(parent, a.requestTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, a.endpoint.String(), bytes.NewReader(payload))
@@ -261,7 +293,7 @@ func (a *httpRecoveryDeliveryAdapter) deliverAttempt(parent context.Context, del
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+string(a.credential))
+	request.Header.Set("Authorization", "Bearer "+string(credential))
 	request.Header.Set("Idempotency-Key", deliveryID)
 	request.Header.Set("X-Astrahold-Delivery-ID", deliveryID)
 	request.Header.Set("User-Agent", "Astrahold-Recovery-Delivery/1")
@@ -318,3 +350,4 @@ func recoveryDeliveryID(requestID string) string {
 }
 
 var _ accountrecovery.DeliveryAdapter = (*httpRecoveryDeliveryAdapter)(nil)
+var _ sessionRecoveryDeliveryRetirer = (*httpRecoveryDeliveryAdapter)(nil)
