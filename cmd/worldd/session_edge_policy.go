@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	sessionEdgePolicySchemaVersion        uint16 = 1
-	sessionEdgePolicyMaxDefinitionBytes         = 64 * 1024
-	sessionEdgePolicyMaxBindings                = 32
-	sessionEdgePolicyMaxIdentities              = 64
+	sessionEdgePolicySchemaVersion      uint16 = 1
+	sessionEdgePolicyMaxDefinitionBytes        = 64 * 1024
+	sessionEdgePolicyMaxBindings               = 32
+	sessionEdgePolicyMaxIdentities             = 64
 )
 
 var sessionLoginTrustedProxyEdgePolicyFile = flag.String(
@@ -35,10 +35,10 @@ var sessionLoginTrustedProxyEdgePolicyFile = flag.String(
 var errSessionEdgePolicyConfig = errors.New("worldd: invalid trusted proxy edge policy config")
 
 type sessionEdgePolicyDefinition struct {
-	SchemaVersion   uint16                                `json:"schema_version"`
-	Revision        string                                `json:"revision"`
-	ForwardedHeader string                                `json:"forwarded_header"`
-	ClientCAFile    string                                `json:"client_ca_file"`
+	SchemaVersion   uint16                               `json:"schema_version"`
+	Revision        string                               `json:"revision"`
+	ForwardedHeader string                               `json:"forwarded_header"`
+	ClientCAFile    string                               `json:"client_ca_file"`
 	Bindings        []sessionEdgePolicyBindingDefinition `json:"bindings"`
 }
 
@@ -94,6 +94,7 @@ type sessionEdgePolicyConnection struct {
 	snapshot     *sessionEdgePolicySnapshot
 	generation   uint64
 	bindingIndex int
+	matchedDNS   []string
 }
 
 // reloadableSessionEdgePolicy publishes immutable network+identity generations.
@@ -410,6 +411,34 @@ func sessionEdgePolicySnapshotsCompatibleForPeer(previous, current *sessionEdgeP
 	return sessionEdgePolicyIdentitySetDigest(previous.bindings[previousBinding].allowedDNS) == sessionEdgePolicyIdentitySetDigest(current.bindings[currentBinding].allowedDNS)
 }
 
+// sessionEdgePolicyConnectionCompatibleForPeer is the F.23 retirement
+// boundary. F.22 global compatibility remains mandatory, but an identity-only
+// change inside one binding preserves an established connection when at least
+// one exact DNS identity that was actually authorized at the original TLS
+// handshake is still authorized for the same socket peer. Certificate SANs
+// that were not in the original matched set cannot gain authority later.
+func sessionEdgePolicyConnectionCompatibleForPeer(connection sessionEdgePolicyConnection, current *sessionEdgePolicySnapshot, peer netip.Addr) bool {
+	previous := connection.snapshot
+	if previous == nil || current == nil || !peer.IsValid() || len(connection.matchedDNS) == 0 {
+		return false
+	}
+	if previous.mode != current.mode || previous.rootSetDigest != current.rootSetDigest || previous.prefixSetDigest != current.prefixSetDigest {
+		return false
+	}
+	previousBinding, previousOK := previous.bindingForPeer(peer)
+	currentBinding, currentOK := current.bindingForPeer(peer)
+	if !previousOK || !currentOK || previousBinding != connection.bindingIndex || previousBinding < 0 || previousBinding >= len(previous.bindings) || currentBinding < 0 || currentBinding >= len(current.bindings) {
+		return false
+	}
+	allowedDNS := current.bindings[currentBinding].allowedDNS
+	for _, identity := range connection.matchedDNS {
+		if _, allowed := allowedDNS[identity]; allowed {
+			return true
+		}
+	}
+	return false
+}
+
 func parseSessionEdgePolicyHeaderMode(value string) (sessionSourceHeaderMode, string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
@@ -461,25 +490,38 @@ func (s *sessionEdgePolicySnapshot) bindingForPeer(address netip.Addr) (int, boo
 	return 0, false
 }
 
-func (s *sessionEdgePolicySnapshot) verifyConnection(state tls.ConnectionState, bindingIndex int) error {
+func (s *sessionEdgePolicySnapshot) verifiedConnectionIdentities(state tls.ConnectionState, bindingIndex int) ([]string, error) {
 	if s == nil || s.roots == nil || bindingIndex < 0 || bindingIndex >= len(s.bindings) || len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
-		return fmt.Errorf("%w: trusted proxy client certificate was not verified", errSessionEdgePolicyConfig)
+		return nil, fmt.Errorf("%w: trusted proxy client certificate was not verified", errSessionEdgePolicyConfig)
 	}
 	leaf := state.PeerCertificates[0]
 	if leaf == nil || leaf.IsCA {
-		return fmt.Errorf("%w: trusted proxy leaf certificate is invalid", errSessionEdgePolicyConfig)
+		return nil, fmt.Errorf("%w: trusted proxy leaf certificate is invalid", errSessionEdgePolicyConfig)
 	}
 	allowedDNS := s.bindings[bindingIndex].allowedDNS
+	matched := make(map[string]struct{})
 	for _, candidate := range leaf.DNSNames {
 		normalized, err := normalizeSessionProxyDNSIdentity(candidate)
 		if err != nil {
 			continue
 		}
 		if _, allowed := allowedDNS[normalized]; allowed {
-			return nil
+			matched[normalized] = struct{}{}
 		}
 	}
-	return fmt.Errorf("%w: trusted proxy certificate DNS identity does not match the socket binding", errSessionEdgePolicyConfig)
+	if len(matched) == 0 {
+		return nil, fmt.Errorf("%w: trusted proxy certificate DNS identity does not match the socket binding", errSessionEdgePolicyConfig)
+	}
+	identities := sessionEdgePolicySortedIdentities(matched)
+	if len(identities) > sessionEdgePolicyMaxIdentities {
+		return nil, fmt.Errorf("%w: trusted proxy matched identity set exceeds %d", errSessionEdgePolicyConfig, sessionEdgePolicyMaxIdentities)
+	}
+	return identities, nil
+}
+
+func (s *sessionEdgePolicySnapshot) verifyConnection(state tls.ConnectionState, bindingIndex int) error {
+	_, err := s.verifiedConnectionIdentities(state, bindingIndex)
+	return err
 }
 
 func (r *reloadableSessionEdgePolicy) currentSnapshot() (*sessionEdgePolicySnapshot, uint64) {
@@ -510,10 +552,11 @@ func (r *reloadableSessionEdgePolicy) TLSConfigForPeer(certificate *reloadableTL
 	config.ClientAuth = tls.RequireAndVerifyClientCert
 	config.ClientCAs = snapshot.roots
 	config.VerifyConnection = func(state tls.ConnectionState) error {
-		if err := snapshot.verifyConnection(state, bindingIndex); err != nil {
+		matchedDNS, err := snapshot.verifiedConnectionIdentities(state, bindingIndex)
+		if err != nil {
 			return err
 		}
-		r.bindConnection(remote, snapshot, generation, bindingIndex)
+		r.bindVerifiedConnection(remote, snapshot, generation, bindingIndex, matchedDNS)
 		return nil
 	}
 	config.GetConfigForClient = nil
@@ -521,11 +564,39 @@ func (r *reloadableSessionEdgePolicy) TLSConfigForPeer(certificate *reloadableTL
 }
 
 func (r *reloadableSessionEdgePolicy) bindConnection(remote string, snapshot *sessionEdgePolicySnapshot, generation uint64, bindingIndex int) {
+	if snapshot == nil || bindingIndex < 0 || bindingIndex >= len(snapshot.bindings) {
+		return
+	}
+	r.bindVerifiedConnection(remote, snapshot, generation, bindingIndex, sessionEdgePolicySortedIdentities(snapshot.bindings[bindingIndex].allowedDNS))
+}
+
+func (r *reloadableSessionEdgePolicy) bindVerifiedConnection(remote string, snapshot *sessionEdgePolicySnapshot, generation uint64, bindingIndex int, matchedDNS []string) {
 	if r == nil || strings.TrimSpace(remote) == "" || snapshot == nil || generation == 0 || bindingIndex < 0 || bindingIndex >= len(snapshot.bindings) {
 		return
 	}
+	allowedDNS := snapshot.bindings[bindingIndex].allowedDNS
+	pinned := make(map[string]struct{}, len(matchedDNS))
+	for _, candidate := range matchedDNS {
+		normalized, err := normalizeSessionProxyDNSIdentity(candidate)
+		if err != nil {
+			continue
+		}
+		if _, allowed := allowedDNS[normalized]; !allowed {
+			continue
+		}
+		pinned[normalized] = struct{}{}
+	}
+	identities := sessionEdgePolicySortedIdentities(pinned)
+	if len(identities) == 0 || len(identities) > sessionEdgePolicyMaxIdentities {
+		return
+	}
 	r.connectionsMu.Lock()
-	r.connections[remote] = sessionEdgePolicyConnection{snapshot: snapshot, generation: generation, bindingIndex: bindingIndex}
+	r.connections[remote] = sessionEdgePolicyConnection{
+		snapshot:     snapshot,
+		generation:   generation,
+		bindingIndex: bindingIndex,
+		matchedDNS:   append([]string(nil), identities...),
+	}
 	r.connectionsMu.Unlock()
 }
 
@@ -564,7 +635,7 @@ func (r *reloadableSessionEdgePolicy) connectionRequiresRetirement(remote string
 	if err != nil {
 		return true
 	}
-	return !sessionEdgePolicySnapshotsCompatibleForPeer(binding.snapshot, current, peer.Unmap())
+	return !sessionEdgePolicyConnectionCompatibleForPeer(binding, current, peer.Unmap())
 }
 
 func (r *reloadableSessionEdgePolicy) Snapshot() sessionEdgePolicyMetadata {
