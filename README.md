@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.24 — Trusted Proxy Leaf Credential Revocation / Certificate Instance Fence**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.25 — Multi-Instance Trusted Proxy Revocation Distribution Fence**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -79,6 +79,9 @@ Server runtime 主線已完成到 **S4-F.24 — Trusted Proxy Leaf Credential Re
 - **F.24 trusted proxy leaf credential revocation / certificate instance fence**
 - F.24 維持F.19 schema v1不變，新增獨立Server-owned revocation generation；唯一credential identifier為leaf `RawSubjectPublicKeyInfo`的SHA-256，設定檔使用64字元lowercase hex，因此同一DNS identity下可只撤銷被compromise的key，健康的另一把key仍可存活
 - F.24 fresh trusted-proxy handshake會查current revocation generation並把SPKI identifier連同F.23 matched identity一起pin；F.20啟用時successful revocation publication只退休currently-revoked credential的既有connection，request-time attribution另做current revocation fence以封住publication→socket-close race；direct/untrusted Client TLS仍是server-auth-only
+- **F.25 multi-instance trusted-proxy revocation distribution fence**
+- F.25 在F.24 revocation authority上加入strict schema-v1 distribution manifest：monotonic epoch + F.24 semantic authority SHA-256 + 最長24小時`valid_until` lease；revocation candidate與manifest digest不一致、epoch rollback或same-epoch conflicting reuse一律fail-closed並保留LKG
+- F.25 每個`worldd`使用stable operator-owned instance ID與local durable 0600 ack作restart epoch floor與convergence evidence；漏掉新distribution的instance最晚在lease到期時失去全部trusted-proxy forwarding authority，ack寫入失敗則維持新revocation但fence proxy authority直到same-epoch ack重試成功；direct/untrusted Client不受影響
 
 核心 production contract：
 
@@ -782,6 +785,20 @@ SIGHUP ordering固定為Server TLS certificate → F.19 edge-policy → F.24 lea
 
 F.24 final exact product head `7fa0cd77bef86ebf2185c0c69749c4ace3ca24a2`通過16/16 workflows；Server CI的Test、Vet、Race detector及新的Production Trusted Proxy Leaf Credential Revocation E2E全部success。Product以squash merge進main，merge SHA為`a1c2b098c4a23421bcb811bface1c20b4710a07e`。
 
+### F.25 multi-instance trusted proxy revocation distribution fence
+
+F.25 不把F.24改造成distributed PKI，而是用bounded lease把『某個`worldd`漏掉revocation更新後可以無限期繼續信任舊set』收斂成可證明的上限。Opt-in distribution manifest使用strict schema v1，包含monotonic `epoch`、對F.24 effective revoked-SPKI set計算的semantic `revocation_authority_sha256`，以及canonical UTC RFC3339 `valid_until`；lease最多可向前24小時。
+
+Revocation file與distribution manifest是paired candidate：manifest digest必須精確對上F.24 candidate semantic digest。Lower epoch、same epoch但digest/lease不同、expired lease或超過24小時上限都reject，且不修改current LKG。Higher epoch可同時發布新revocation authority，也可只renew lease而不製造新的F.24 generation。
+
+每個instance另外配置stable `instance-id`與獨立local ack file。成功startup/reload後Server以0600 atomic write記錄`instance_id + epoch + revocation_revision + semantic digest + valid_until + acknowledged_at`；既有ack同時是restart epoch floor，避免process重啟時silent rollback到已acknowledge epoch之前。若新authority已安全publish但ack write失敗，Server不rollback revocation，而是將該instance的trusted-proxy credential authority整體fail-closed；same epoch且digest/lease完全相同時可重試ack並恢復authority。
+
+Fresh proxy handshake與existing keep-alive request-time attribution都要求current F.24 credential state加上F.25 matching digest、healthy ack與unexpired lease。漏掉新distribution的member只可沿既有lease存活，lease一過即拒絕所有trusted-proxy authority；direct/untrusted Client仍維持TLS server-auth-only。
+
+F.25 final exact product head `d0896c73442e13ac8f2e8af58998bc0fbcaa6ee4`通過17/17 workflows；Server CI的Test、Vet、Race detector及新的Production Trusted Proxy Revocation Distribution Fence E2E全部success。Production gate以兩個real `worldd`證明delayed member lease expiry fail-closed、healthy Leaf B preservation、epoch/digest/lease ack convergence、rollback fence與direct Client unchanged。Product以squash merge進main，merge SHA為`a87dfbe93f5e19989b6466183b8cbb0a0d86da4c`。
+
+完整 F.25 contract：[`docs/S4F25_TRUSTED_PROXY_REVOCATION_DISTRIBUTION_FENCE.md`](docs/S4F25_TRUSTED_PROXY_REVOCATION_DISTRIBUTION_FENCE.md)。
+
 完整 F.24 contract：[`docs/S4F24_TRUSTED_PROXY_LEAF_CREDENTIAL_REVOCATION.md`](docs/S4F24_TRUSTED_PROXY_LEAF_CREDENTIAL_REVOCATION.md)。
 
 ### KDF migration
@@ -962,8 +979,9 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.22 | binding-aware selective retirement；identity-only `.2` rotation只退休changed binding、unaffected `.3` old keep-alive存活；late handshake同peer-specific規則；global header cutover仍fail-closed退休remaining old connection；invalid replacement LKG；direct Client unchanged | ✅ |
 | **S4-F.23** | **authenticated identity-aware partial binding rotation；同一binding中still-authorized `edge-a` keep-alive保留、removed `edge-canary`退休；multi-SAN原未授權`edge-future`不得retroactive續命；fresh handshake可依new generation授權；invalid replacement LKG；direct Client unchanged** | **✅** |
 | **S4-F.24** | **independent trusted-proxy SPKI revocation generation；same exact DNS identity下Leaf A revoked/retired、healthy Leaf B存活；fresh revoked key reject；invalid replacement LKG；semantic no-op retire 0；direct Client server-auth-only unchanged** | **✅** |
+| **S4-F.25** | **multi-instance revocation distribution fence；monotonic epoch + F.24 semantic digest + bounded lease；per-instance durable ack/restart floor；delayed member lease expiry fail-closed；ack convergence與rollback fence；healthy Leaf B/direct Client unchanged** | **✅** |
 
-Server runtime contract現在是F.24；paired Client runtime仍是F.11。F.24 final exact product head `7fa0cd77bef86ebf2185c0c69749c4ace3ca24a2`通過16/16 workflows：既有15個exact-head workflows全部success，新增的Production Trusted Proxy Leaf Credential Revocation E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，Client product code未為F.24增加任何edge-policy/network/certificate/connection-retirement/revocation/fingerprint authority。
+Server runtime contract現在是F.25；paired Client runtime仍是F.11。F.25 final exact product head `d0896c73442e13ac8f2e8af58998bc0fbcaa6ee4`通過17/17 workflows：原有16個exact-head workflows全部success，新增的Production Trusted Proxy Revocation Distribution Fence E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，Client product code未為F.25增加任何edge-policy/network/certificate/connection-retirement/revocation/distribution-epoch/lease/ack/fingerprint authority。
 
 ## 文件入口
 
@@ -1064,9 +1082,12 @@ Production issued-session deployment：
 -session-login-trusted-proxy-cidrs                         # optional legacy F.17; pair with next flag
 -session-login-forwarded-header                            # optional legacy F.17: x-forwarded-for|forwarded
 -session-login-trusted-proxy-mtls-file                     # optional legacy F.18; requires F.17 pair
--session-login-trusted-proxy-edge-policy-file              # optional F.19/F.21/F.22/F.23/F.24; mutually exclusive with all three legacy flags
--session-login-trusted-proxy-edge-retire-old-connections   # optional F.20/F.22/F.23/F.24; requires F.19 edge-policy mode
--session-login-trusted-proxy-leaf-revocation-file           # optional F.24; requires F.19 edge-policy mode; SHA-256 SPKI revocation generation
+-session-login-trusted-proxy-edge-policy-file              # optional F.19/F.21/F.22/F.23/F.24/F.25; mutually exclusive with all three legacy flags
+-session-login-trusted-proxy-edge-retire-old-connections   # optional F.20/F.22/F.23/F.24/F.25; requires F.19 edge-policy mode
+-session-login-trusted-proxy-leaf-revocation-file          # optional F.24/F.25; requires F.19 edge-policy mode; SHA-256 SPKI revocation generation
+-session-login-trusted-proxy-leaf-revocation-distribution-file # optional F.25; strict epoch/digest/lease manifest
+-session-login-trusted-proxy-leaf-revocation-instance-id   # optional F.25; stable per-worldd acknowledgement identity
+-session-login-trusted-proxy-leaf-revocation-ack-file      # optional F.25; local durable 0600 ack + restart epoch floor
 -session-recovery-provider-file
 -session-recovery-challenge-ttl
 -session-recovery-challenge-max-attempts
@@ -1092,12 +1113,12 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 - Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
 - F.15 已提供bounded single-host durable recovery delivery/challenge outbox、restart replay與stable F.13 idempotency identity；這不是distributed broker、multi-host consensus、cross-host recovery ownership或exactly-once vendor delivery。
 - F.15 pending record為了restart replay會短暫以plaintext保存recovery proof與Server-owned destination；application只提供owner-only 0700/0600 permission boundary與terminal scrub，**不提供application-layer disk encryption**。需要media-at-rest confidentiality時應使用encrypted filesystem/volume。
-- F.24 revocation authority目前是單一`worldd`讀取的operator-owned local file/LKG generation；尚未提供跨多個Server instance的一致revocation distribution/acknowledgement。**下一個bounded focus：multi-instance revocation distribution fence**，只解決同一revocation revision在多個`worldd`間的bounded publish/ack consistency，不擴張成完整OCSP/CRL、HSM或自動compromise detection。
+- F.25 已以monotonic epoch、F.24 semantic digest、最長24小時lease與per-instance durable ack/restart floor收斂『某一`worldd`漏掉revocation更新後可無限期繼續信任』的缺口；但Server本身沒有central publisher、required-member registry、quorum或rollout controller。跨instance的ack集合與deployment decision仍由外部operator/orchestrator負責。
 - F.14 provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good仍適用；F.15只有一個shared outbox worker，pending records會跨transport generation保持原delivery identity。
 - F.16 已有login/game TLS certificate/key runtime generation reload；不包含Client trust-store/CA hot reload、ACME/PKI自動化、OCSP lifecycle或multi-host certificate atomic cutover。Retired private key的RAM lifetime由Go runtime管理，不宣稱deterministic zeroization。
-- F.23 已把identity-only cutover細化到握手當下真正被原generation允許的normalized matched DNS identity set，並防止multi-SAN retroactive promotion；但若某一張proxy leaf certificate本身外洩，只要它仍chain到同一trusted CA且同一exact DNS identity仍在allowlist，Server目前無法只撤銷該certificate instance/SPKI而保留同identity的其他健康leaf。現階段只能移除整個identity或輪替CA，leaf-level credential revocation仍未實作。
+- F.24 已用SHA-256 SPKI做到同CA + 同exact DNS identity下的key-level selective revocation，F.25再把stale multi-instance consumption用lease/ack bounded fail-closed；仍未實作CRL/OCSP ingestion、ACME/PKI自動化、HSM attestation、自動compromise detection或centralized revocation publisher。
 - Login/recovery仍是單process fixed-window guards；尚未有distributed rate limit、IP reputation、credential-stuffing intelligence、WAF/CDN vendor integration或 CAPTCHA。
-- 尚未支援PROXY protocol；F.17–F.23的HTTP forwarding boundary不應被視為PROXY protocol parser或L4 load-balancer identity contract。
+- 尚未支援PROXY protocol；F.17–F.25的HTTP forwarding boundary不應被視為PROXY protocol parser或L4 load-balancer identity contract。
 - Core Server刻意不綁特定email/SMS vendor SDK；實際vendor仍應位於F.13 HTTPS relay後方。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
@@ -1109,9 +1130,9 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.23 已把F.22的binding identity-set相容性細化到每條TLS connection握手時真正被原generation授權的normalized matched DNS identity set。Global forwarding mode / actual CA root set / trusted-prefix topology仍維持全域fail-closed；identity-only rotation則只在該connection所有原授權identity都被current binding移除時退休。Multi-SAN certificate不會因reload後新加入一個原本未授權的SAN而retroactive取得存活authority，fresh handshake則依new generation重新驗證。
+S4-F.25 已把F.24的single-process SPKI revocation authority延伸成bounded multi-instance consumption fence：每個`worldd`只在manifest semantic digest對上current revoked set、local durable ack健康且lease未過期時保有trusted-proxy authority。某member漏掉新distribution不會永久stale，最晚在既有lease到期時fail-closed；收到新epoch後則可用`instance_id + epoch + digest + valid_until`形成可聚合的convergence evidence。Direct Godot Client、Protocol v9與gameplay authority都沒有參與這個deployment control plane。
 
-下一個 bounded stage 建議進入 **S4-F.24 — Trusted Proxy Leaf Credential Revocation / Certificate Instance Fence**：維持Client F.11、schema-v4、Protocol v9、F.17 parser、F.20 opt-in、F.21 no-op、F.22 global cutover與F.23 matched-identity semantics不變，只處理「同一CA + 同一exact DNS identity下，某一張已外洩proxy leaf仍無法被單獨撤銷」的credential-instance gap。目標是讓Server能以bounded、fail-closed的certificate/SPKI instance authority拒絕新handshake，並在immediate-retirement模式下只退休命中revocation的既有proxy connections，而同identity的其他健康leaf不需整體重連。是否採strict schema-v2 edge policy或相容的獨立revocation authority，應先以atomicity、rollback與LKG需求決定；CRL/OCSP、ACME/PKI automation、distributed edge coordination、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
+下一個 bounded stage 建議進入 **S4-F.26 — Revocation Rollout Orchestration / Required-Ack Gate**：維持F.25 `worldd` authorization fence不變，將operator流程收斂成一個Server/deployment-side bounded controller：以單一target epoch發布paired F.24/F.25 authority、定義本次rollout必須acknowledge的explicit instance set、收集各instance durable ack並在timeout前給出converged / incomplete的明確結果。F.26不把quorum或deployment membership塞進Godot Client、gameplay protocol或F.19 edge schema，也不宣稱multi-writer consensus；CRL/OCSP、ACME/PKI automation、HSM、自動compromise detection、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
 
 Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
 
