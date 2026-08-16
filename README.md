@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.20 — Trusted Proxy Connection Revocation / Immediate Edge Cutover Fence**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.21 — Edge Policy No-op Reload Detection / Change-Aware Connection Retirement**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -65,8 +65,11 @@ Server runtime 主線已完成到 **S4-F.20 — Trusted Proxy Connection Revocat
 - F.19 新的strict schema-v1 edge-policy file把selected forwarding mode、client CA、trusted prefixes與per-binding exact DNS SAN identity一次validate後原子publish；legacy F.17/F.18 flags仍相容但與F.19 authority file互斥
 - F.19 trusted proxy TLS connection綁定握手時完整edge generation，因此SIGHUP後existing connection不會混用new header/prefix rules；new handshake完整使用new network/CA/identity/header generation，invalid replacement保留整個edge-policy LKG
 - **F.20 optional immediate retirement of old F.19 trusted-proxy TLS generations**
-- F.20 啟用`-session-login-trusted-proxy-edge-retire-old-connections`後，只有successful F.19 publication才會同步close舊edge generation的trusted proxy connections；invalid candidate不觸發retirement，direct/untrusted Client connections也不受edge fence影響
-- F.20 保留未啟用flag時的F.19 graceful pinned-generation行為；old-generation handshake若在cutover後才完成，也會在ConnState觀察到stale generation後立即close，不silent promote到new policy
+- F.20 啟用`-session-login-trusted-proxy-edge-retire-old-connections`後，只有successful edge publication才會同步close舊edge generation的trusted proxy connections；invalid candidate不觸發retirement，direct/untrusted Client connections也不受edge fence影響
+- F.20 保留未啟用flag時的F.19 graceful pinned-generation行為；old-generation handshake若在cutover後才完成，也會在ConnState觀察到stale authority後fail-closed
+- **F.21 effective edge-authority no-op detection / change-aware retirement**
+- F.21 仍完整load/validate F.19 candidate，但只在forwarding mode、實際CA certificate DER set或normalized prefix→exact DNS identity mapping真的改變時才publish新generation；revision、JSON/binding order、等價prefix spelling、DNS case/duplicates與同一CA的PEM重排/重複都不會製造新authority
+- F.21 semantic no-op保留current snapshot、revision與generation，因此F.20會retire 0條proxy connections；real authority change仍沿F.19 publish + F.20 immediate cutover，F.16 Server certificate等其他SIGHUP domain可獨立成功而不再造成無謂edge reconnect
 
 核心 production contract：
 
@@ -639,7 +642,7 @@ old proxy connection established under generation A
 
 這避免「TLS identity是舊generation、HTTP attribution卻突然讀新generation」的混代trust state。HTTP connection close/hijack會清除binding；若current policy視某peer為trusted但request沒有已驗證的connection binding，則fail-closed，不silent fallback成socket-only attribution。
 
-SIGHUP會先完整validate forwarding mode、CA、所有prefix、non-overlap、exact identities與bounds，只有整份candidate合法才publish下一edge generation；任何invalid replacement保留整個edge-policy LKG。F.19與F.16 Server certificate、account reload、F.14 recovery reload仍各自獨立validate與publish，不形成跨檔案transaction。
+SIGHUP會先完整validate forwarding mode、CA、所有prefix、non-overlap、exact identities與bounds；F.21再比較effective authority，只有真正變更才publish下一edge generation。任何invalid replacement保留整個edge-policy LKG。F.19/F.21與F.16 Server certificate、account reload、F.14 recovery reload仍各自獨立validate與publish，不形成跨檔案transaction。
 
 F.19 production gate把generation 1的XFF + CA A + `.2/.3/10/8` bindings一次切成generation 2的`Forwarded` + CA B + `.2/.4/172.16/12` bindings，同時保留一條generation-1 keep-alive connection，證明old connection仍完整使用A；new handshake只接受B。Gate也驗證cross-binding cert reject、removed prefix回direct/socket attribution、new/removed trusted-hop behavior、recovery同一source contract、invalid overlap LKG，以及F.16 intentionally-invalid certificate replacement不會阻止F.19 valid publication。
 
@@ -654,25 +657,60 @@ F.20 保留F.19 edge-policy schema與graceful compatibility behavior，另外提
 -session-login-trusted-proxy-edge-retire-old-connections
 ```
 
-第二個flag只允許搭配F.19 mode。未啟用時，F.19 established trusted proxy connection仍保留其握手generation直到自然close；啟用後，每次**成功**publish新的F.19 generation都會在`reload applied` log前同步退休已驗證且generation較舊的trusted-proxy TLS connections。
+第二個flag只允許搭配F.19 mode。未啟用時，F.19 established trusted proxy connection仍保留其握手generation直到自然close；啟用後，每次**真正publish**新的edge generation都會在`reload applied` log前同步退休已驗證且generation較舊的trusted-proxy TLS connections。
 
 Server透過`http.Server.ConnState`追蹤F.20模式下的live listener connections，並從F.19已驗證connection binding取得握手generation。Direct/untrusted connection沒有F.19 authenticated generation，因此不會被F.20 edge fence關閉。若old-generation TLS handshake在new generation已publish後才完成，ConnState看到其authenticated generation落後current generation時會立即close，不會把old handshake升格成new policy。
 
-F.20的安全順序是：
+F.20/F.21的安全順序是：
 
 ```text
 load + fully validate F.19 candidate
 → invalid: keep complete edge-policy LKG; retire 0 connections
-→ valid: publish edge generation N+1
-→ close tracked trusted-proxy connections with authenticated generation < N+1
+→ valid + effective authority unchanged: keep generation N; retire 0 connections
+→ valid + authority changed: publish generation N+1
+→ F.20 enabled: close tracked trusted-proxy connections with authenticated generation < N+1
 → report reload applied + retired_connections metadata
 ```
 
-這個fence是transport authority revocation，不是跨handler transaction rollback。已經通過source attribution並進入password KDF、recovery provider或account mutation boundary的in-flight request可能完成Server-side work；F.20只保證cutover後舊keep-alive connection不能再發下一個trusted forwarding request。既有account-generation / recovery mutation fence仍是最終資料一致性authority。
+這個fence是transport authority revocation，不是跨handler transaction rollback。已經通過source attribution並進入password KDF、recovery provider或account mutation boundary的in-flight request可能完成Server-side work；F.20只保證真實cutover後舊keep-alive connection不能再發下一個trusted forwarding request。既有account-generation / recovery mutation fence仍是最終資料一致性authority。
 
-F.16 Server certificate與F.20 edge retirement仍為獨立domains。Production gate故意讓F.16 replacement cert/key mismatch，同時成功publishF.19 generation 2並退休generation-1 proxy connection；之後invalid edge replacement保持generation-2 LKG connection不被誤踢。未修改的F.19 historical gate同時保持全綠，證明graceful mode沒有被F.20偷偷改寫。
+F.16 Server certificate與F.20/F.21 edge lifecycle仍為獨立domains。F.21 production gate讓F.16 Server certificate A→B成功reload，同時以revision、等價prefix spelling、DNS case/duplicates與重複同一CA PEM製造representation-only edge candidate；edge generation維持1且現有proxy keep-alive繼續可用。之後真正切換CA/identity/header才publishgeneration 2並觸發F.20 retirement。
 
 完整 F.20 contract：[`docs/S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md`](docs/S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md)。
+
+### F.21 edge-policy no-op reload detection / change-aware retirement
+
+F.21 不改F.19 schema，也不新增deployment flag。每次SIGHUP仍先完整讀取並validate candidate，但比較的是**effective edge authority**，而不是source-file bytes或operator label。
+
+Authority fingerprint只包含：
+
+```text
+selected forwarding mode
+actual client CA certificate DER set
+normalized trusted prefix -> exact allowed DNS identity set mapping
+```
+
+因此以下representation-only變更不會前進generation：
+
+```text
+revision-only edit
+JSON / binding order
+等價的binding grouping
+127.0.0.2 與 127.0.0.2/32 這類normalize後相同的prefix spelling
+DNS identity大小寫、順序或重複項
+client_ca_file文字path本身
+相同CA certificates的PEM順序、格式或重複block
+```
+
+CA authority用parsed X.509 certificate的raw DER做SHA-256後排序/去重比較；不同certificate即使path、subject、serial與root count相同，仍會被判定為real authority change。Digest只作process內比較，不對Client公開，也不寫ordinary log。
+
+Semantic no-op會保留current immutable snapshot，因此running revision metadata也維持目前已publish的revision；candidate revision只有在伴隨真實authority change並publish時才成為current metadata。這避免單純operator label變更間接成為connection revocation command。
+
+F.21 compare/publish在既有edge-policy mutex內完成，因此concurrent reload不會先對generation N比較、再錯誤相對於另一個generation publish。Invalid candidate仍在comparison前fail-closed並保留完整LKG。
+
+Production F.21 gate使用real `worldd` + TLS 1.3 + F.19 mTLS + F.20 retirement，證明：representation-only reload保持generation 1、retired_connections=0、existing proxy connection可繼續送XFF；同一SIGHUP的F.16 Server certificate reload可獨立成功；真正CA/identity/header變更才publishgeneration 2、退休old keep-alive，new proxy cert + `Forwarded`成功，而old cert的新handshake失敗，direct Client仍維持server-auth-only路徑。
+
+完整 F.21 contract：[`docs/S4F21_EDGE_POLICY_NOOP_RELOAD.md`](docs/S4F21_EDGE_POLICY_NOOP_RELOAD.md)。
 
 ### KDF migration
 
@@ -692,9 +730,9 @@ KDF migration publish後，舊 verifier generation所發出的 bearer會沿既�
 
 ### SIGHUP account / recovery / TLS / edge-policy reload
 
-Schema v3 / v4 account snapshot可在 durable store 更新後對 `worldd` 發 `SIGHUP`；recovery provider啟用時account schema必須維持v4。Schema-v2 delivered recovery provider也可由同一`SIGHUP`建立新的runtime generation；schema-v1 recovery provider維持restart-only。F.16起session-login與trusted game ingress certificate/key也由同一process signal觸發各自獨立的certificate generation reload。Legacy F.18 mode的proxy CA/exact identity policy可獨立reload；F.19 mode則由單一edge-policy generation一起reload network/header/CA/identity binding，F.20可選擇在successful edge publication後退休old proxy generations。
+Schema v3 / v4 account snapshot可在 durable store 更新後對 `worldd` 發 `SIGHUP`；recovery provider啟用時account schema必須維持v4。Schema-v2 delivered recovery provider也可由同一`SIGHUP`建立新的runtime generation；schema-v1 recovery provider維持restart-only。F.16起session-login與trusted game ingress certificate/key也由同一process signal觸發各自獨立的certificate generation reload。Legacy F.18 mode的proxy CA/exact identity policy可獨立reload；F.19 mode由單一edge-policy generation一起管理network/header/CA/identity binding，F.21先做effective-authority no-op detection，F.20可選擇在真實publication後退休old proxy generations。
 
-Account reload有效時要求store revision嚴格前進。Recovery provider reload不要求文字revision前進，因為credential/private-CA-only rotation本來就不一定修改該revision。TLS certificate、legacy F.18 proxy trust與F.19 edge-policy reload只要求candidate完整valid，不要求文字revision一定改變。這些reload各自validate、各自last-known-good，不形成跨檔案distributed transaction。
+Account reload有效時要求store revision嚴格前進。Recovery provider reload不要求文字revision前進，因為credential/private-CA-only rotation本來就不一定修改該revision。TLS certificate與legacy F.18 proxy trust仍依各自既有規則reload；F.21只為F.19 edge-policy mode加入semantic no-op detection。這些reload各自validate、各自last-known-good，不形成跨檔案distributed transaction。
 
 Account安全順序：
 
@@ -731,13 +769,15 @@ load candidate certificate + private key
 → new handshakes resolve new generation
 ```
 
-F.19/F.20 edge-policy安全順序：
+F.19/F.20/F.21 edge-policy安全順序：
 
 ```text
 load strict edge policy + client CA bundle
 → validate forwarding mode + all prefixes + non-overlap + exact DNS identities
 → failure: keep complete edge-policy LKG; do not retire connections
-→ success: atomically publish network/header/CA/identity generation
+→ build effective authority fingerprint
+→ unchanged: keep current snapshot/generation/revision; retire 0
+→ changed: atomically publish network/header/CA/identity generation
 → F.20 disabled: existing authenticated proxy connection keeps pinned generation
 → F.20 enabled: retire authenticated proxy connections older than new generation
 → new handshakes resolve the new generation
@@ -745,13 +785,9 @@ load strict edge policy + client CA bundle
 
 F.15 outbox啟用時，recovery generation reload不建立第二個worker，而是把同一process-global outbox背後的HTTPS transport/provider target在F.14 barrier內替換；pending records仍保留原delivery identity。Cold restart恢復的challenge先seed進generation-1 routes，再參與後續F.14 cutover。
 
-因此 password rotation、account disable、password reset、KDF verifier generation或其他 account proof-generation 變更可讓舊 issued bearer 與 live game session立即失效；recovery credential/CA rotation與Server TLS certificate rotation不會把已建立且仍合法的game/login session無條件作廢。F.19 edge-policy可維持graceful existing-proxy semantics；若operator需要立即撤銷舊edge authority，則可啟用F.20 retirement fence。
+因此 password rotation、account disable、password reset、KDF verifier generation或其他 account proof-generation 變更可讓舊 issued bearer 與 live game session立即失效；recovery credential/CA rotation與Server TLS certificate rotation不會把已建立且仍合法的game/login session無條件作廢。F.19 edge-policy可維持graceful existing-proxy semantics；若operator需要立即撤銷舊edge authority，則可啟用F.20 retirement fence；F.21則避免unchanged edge authority因shared SIGHUP產生新generation。
 
-目前F.19每次successful candidate reload都會前進edge generation，即使effective network/header/CA/identity authority與current generation相同。由於process-wide `SIGHUP`同時觸發account/recovery/TLS/edge reload，F.20啟用時一個原本只為其他domain發出的SIGHUP也可能因edge policy被再次成功publish而造成不必要的proxy reconnect。這是F.21要收斂的change-awareness gap，不代表F.20的revocation correctness失效。
-
-Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 account generation已 commit，stale grant就不能再 mint bearer。
-
-F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14加入provider/credential/CA fail-closed runtime generation reload；F.15把delivery/challenge可靠性推進到single-host durable restart recovery；F.16把login/game TLS certificate/key推進到fail-closed runtime generation；F.17為reverse-proxy deployment建立不信任public forwarding header的bounded source-attribution boundary；F.18加入proxy client-certificate chain + exact DNS SAN identity；F.19把network/header/CA/per-binding identity收斂成同一atomic edge-policy generation；F.20再提供explicit old-generation connection retirement fence。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
+F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14加入provider/credential/CA fail-closed runtime generation reload；F.15把delivery/challenge可靠性推進到single-host durable restart recovery；F.16把login/game TLS certificate/key推進到fail-closed runtime generation；F.17為reverse-proxy deployment建立不信任public forwarding header的bounded source-attribution boundary；F.18加入proxy client-certificate chain + exact DNS SAN identity；F.19把network/header/CA/per-binding identity收斂成同一atomic edge-policy generation；F.20提供explicit old-generation connection retirement fence；F.21再加入effective-authority no-op detection。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
 
 ### Login / recovery abuse control
 
@@ -766,9 +802,9 @@ max tracked source entries = 4096
 
 Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds。
 
-未配置proxy attribution時，來源身份只相信TLS socket實際`RemoteAddr`，完全忽略`X-Forwarded-For`/`Forwarded`。Legacy F.17/F.18 mode仍先以process-start allowlist判定socket peer，並可再要求F.18 mTLS identity。F.19 mode則由current edge generation決定哪些socket prefixes需mTLS、可使用哪一種forwarding field，以及各network binding允許哪些exact DNS identity。
+未配置proxy attribution時，來源身份只相信TLS socket實際`RemoteAddr`，完全忽略`X-Forwarded-For`/`Forwarded`。Legacy F.17/F.18 mode仍先以process-start allowlist判定socket peer，並可再要求F.18 mTLS identity。F.19/F.21 mode則由current effective edge generation決定哪些socket prefixes需mTLS、可使用哪一種forwarding field，以及各network binding允許哪些exact DNS identity。
 
-F.19 trusted connection的forwarding parser仍維持F.17 1024-byte / 16-hop / normalization / right-to-left stripping語意。Direct/untrusted connection永遠不取得forwarding authority；trusted connection malformed/missing selected metadata仍在password KDF / recovery provider之前fail-closed。F.20只改successful edge cutover後old proxy connection是否立刻被close，不改source parsing與throttle bucket contract。
+F.19 trusted connection的forwarding parser仍維持F.17 1024-byte / 16-hop / normalization / right-to-left stripping語意。Direct/untrusted connection永遠不取得forwarding authority；trusted connection malformed/missing selected metadata仍在password KDF / recovery provider之前fail-closed。F.20只改real edge cutover後old proxy connection是否立刻被close；F.21只決定candidate是否真的需要新generation，兩者都不改source parsing與throttle bucket contract。
 
 ### Issued-session lifecycle
 
@@ -783,6 +819,7 @@ F.19 trusted connection的forwarding parser仍維持F.17 1024-byte / 16-hop / no
 
 完整身份／登入文件：
 
+- [`docs/S4F21_EDGE_POLICY_NOOP_RELOAD.md`](docs/S4F21_EDGE_POLICY_NOOP_RELOAD.md)
 - [`docs/S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md`](docs/S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md)
 - [`docs/S4F19_TRUSTED_PROXY_EDGE_POLICY_RUNTIME_RELOAD.md`](docs/S4F19_TRUSTED_PROXY_EDGE_POLICY_RUNTIME_RELOAD.md)
 - [`docs/S4F18_TRUSTED_PROXY_MTLS_EDGE_IDENTITY.md`](docs/S4F18_TRUSTED_PROXY_MTLS_EDGE_IDENTITY.md)
@@ -842,9 +879,10 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.17 | trusted-proxy source attribution；direct spoofed header ignored；per-client proxied buckets；multi-hop trust stripping；IPv4-mapped normalization；trusted malformed metadata fail-closed；recovery attribution | ✅ |
 | S4-F.18 | trusted proxy upstream mTLS；direct Client unchanged；no-cert/wrong-SAN/future-CA reject；CA A→B runtime generation；old proxy connection survives；new A reject/new B accept；invalid CA LKG；F.16 reload independence | ✅ |
 | S4-F.19 | atomic edge-policy generation；network↔exact identity binding；XFF→Forwarded + CA/prefix/identity cutover；old connection generation pinning；new-handshake cutover；removed/new trusted-hop behavior；invalid overlap LKG；F.16 independence | ✅ |
-| **S4-F.20** | **optional immediate old-edge-connection retirement；old keep-alive revoked after successful policy publication；late old handshake fail-closed；fresh generation-2 handshake succeeds；invalid replacement keeps LKG connection；direct Client/recovery unchanged；F.19 graceful gate remains green** | **✅** |
+| S4-F.20 | optional immediate old-edge-connection retirement；old keep-alive revoked after successful real policy publication；late old handshake fail-closed；fresh generation handshake succeeds；invalid replacement keeps LKG connection；direct Client/recovery unchanged；F.19 graceful gate remains green | ✅ |
+| **S4-F.21** | **effective edge-authority no-op detection；revision/order/prefix/DNS/duplicate-CA representation changes保持generation；existing proxy survives；F.16 TLS rotation independent；real CA/identity/header change才generation++並觸發F.20 retirement；old cert reject/new cert accept；direct Client unchanged** | **✅** |
 
-Server runtime contract現在是F.20；paired Client runtime仍是F.11。F.20 final exact product head `235c47ed11ae0d2f9e484c0eed2357b0c974374d`通過12/12 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E、Production Recovery Delivery Reload E2E、Production Recovery Delivery Outbox E2E、Production TLS Certificate Reload E2E、Production Trusted Proxy Attribution E2E、Production Trusted Proxy mTLS E2E、Production Trusted Proxy Edge Policy Reload E2E與Production Trusted Proxy Edge Connection Revocation E2E；Protocol仍v9，Client product code未為F.20增加任何edge-policy/network/certificate/connection-retirement authority。
+Server runtime contract現在是F.21；paired Client runtime仍是F.11。F.21 final exact product head `30d9c83afedfe70613221ae6c8192a89a03134c0`通過13/13 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E、Production Recovery Delivery Reload E2E、Production Recovery Delivery Outbox E2E、Production TLS Certificate Reload E2E、Production Trusted Proxy Attribution E2E、Production Trusted Proxy mTLS E2E、Production Trusted Proxy Edge Policy Reload E2E、Production Trusted Proxy Edge Connection Revocation E2E與Production Trusted Proxy Edge No-op Reload E2E；Protocol仍v9，Client product code未為F.21增加任何edge-policy/network/certificate/connection-retirement authority。
 
 ## 文件入口
 
@@ -852,10 +890,11 @@ Server runtime contract現在是F.20；paired Client runtime仍是F.11。F.20 fi
 
 - 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / TLS lifecycle / edge trust / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4F21_EDGE_POLICY_NOOP_RELOAD.md`](docs/S4F21_EDGE_POLICY_NOOP_RELOAD.md) — effective authority fingerprint / semantic no-op / change-aware F.20 retirement / F.16 independence contract
 - [`docs/S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md`](docs/S4F20_TRUSTED_PROXY_CONNECTION_REVOCATION.md) — immediate old-proxy connection retirement / handshake race / invalid-LKG / F.16 independence contract
 - [`docs/S4F19_TRUSTED_PROXY_EDGE_POLICY_RUNTIME_RELOAD.md`](docs/S4F19_TRUSTED_PROXY_EDGE_POLICY_RUNTIME_RELOAD.md) — atomic edge-policy generation / network↔identity binding / per-connection generation pinning / LKG contract
 - [`docs/S4F18_TRUSTED_PROXY_MTLS_EDGE_IDENTITY.md`](docs/S4F18_TRUSTED_PROXY_MTLS_EDGE_IDENTITY.md) — proxy client CA / exact DNS identity / per-peer mTLS / SIGHUP generation / LKG contract
-- [`docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md`](docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md) — trusted socket-peer allowlist / XFF-Forwarded parsing / multi-hop / fail-closed source attribution contract
+- [`docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md`](docs/S4F17_TRUSTED_PROXY_SOURCE_ATTRIBUTION.md) — trusted socket-peer allowlist / XFF-Forwarded parsing / multi-hop / fail-closed source-attribution contract
 - [`docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md`](docs/S4F16_TLS_CERTIFICATE_RUNTIME_RELOAD.md) — login/game TLS certificate generations / validation / established-connection / last-known-good contract
 - [`docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`](docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md) — single-host durable delivery/challenge restart recovery / storage / retry / scrub contract
 - [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md) — recovery provider / credential / CA runtime generations / cutover / last-known-good contract
@@ -942,8 +981,8 @@ Production issued-session deployment：
 -session-login-trusted-proxy-cidrs                         # optional legacy F.17; pair with next flag
 -session-login-forwarded-header                            # optional legacy F.17: x-forwarded-for|forwarded
 -session-login-trusted-proxy-mtls-file                     # optional legacy F.18; requires F.17 pair
--session-login-trusted-proxy-edge-policy-file              # optional F.19; mutually exclusive with all three legacy flags
--session-login-trusted-proxy-edge-retire-old-connections   # optional F.20; requires F.19 edge-policy mode
+-session-login-trusted-proxy-edge-policy-file              # optional F.19/F.21; mutually exclusive with all three legacy flags
+-session-login-trusted-proxy-edge-retire-old-connections   # optional F.20; requires F.19/F.21 edge-policy mode
 -session-recovery-provider-file
 -session-recovery-challenge-ttl
 -session-recovery-challenge-max-attempts
@@ -961,7 +1000,7 @@ Production issued-session deployment：
 
 Static trusted mode 與 issued-session mode互斥。Login/recovery control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
 
-Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。F.15 `https-json-v1`可另外啟用single-host durable outbox。F.16起session-login與trusted game ingress的certificate/key支援`SIGHUP` fail-closed runtime generation reload。Legacy F.17/F.18 proxy mode仍保留；F.19另提供單一authoritative edge-policy file，把network/header/CA/exact identity binding一起做SIGHUP generation reload，且與legacy flags互斥。F.20 retirement flag只在F.19 mode有效；未設定時仍保留F.19 graceful existing-connection semantics。
+Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。F.15 `https-json-v1`可另外啟用single-host durable outbox。F.16起session-login與trusted game ingress的certificate/key支援`SIGHUP` fail-closed runtime generation reload。Legacy F.17/F.18 proxy mode仍保留；F.19另提供單一authoritative edge-policy file，把network/header/CA/exact identity binding一起做SIGHUP generation reload，且與legacy flags互斥。F.20 retirement flag只在F.19/F.21 mode有效；F.21自動對validated F.19 candidate做semantic no-op detection，未設定retirement flag時仍保留F.19 graceful existing-connection semantics。
 
 ## 目前刻意保留的限制
 
@@ -971,9 +1010,9 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 - F.15 pending record為了restart replay會短暫以plaintext保存recovery proof與Server-owned destination；application只提供owner-only 0700/0600 permission boundary與terminal scrub，**不提供application-layer disk encryption**。需要media-at-rest confidentiality時應使用encrypted filesystem/volume。
 - F.14 provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good仍適用；F.15只有一個shared outbox worker，pending records會跨transport generation保持原delivery identity。
 - F.16 已有login/game TLS certificate/key runtime generation reload；不包含Client trust-store/CA hot reload、ACME/PKI自動化、OCSP lifecycle或multi-host certificate atomic cutover。Retired private key的RAM lifetime由Go runtime管理，不宣稱deterministic zeroization。
-- F.20 已能在successful F.19 publication後選擇立即close舊edge generation的trusted proxy TLS connections，且invalid replacement不誤踢LKG；但F.19目前每次successful reload都前進generation，即使effective network/header/CA/identity authority未改變，因此F.20啟用時，為account/recovery/TLS等其他domain發出的shared SIGHUP仍可能造成不必要的proxy reconnect，尚未有effective-policy no-op detection / change-aware retirement。
+- F.21 已避免effective edge authority未變時因shared SIGHUP前進generation或觸發F.20 reconnect；但只要有任何**真實** edge generation change，F.20目前仍以generation為單位退休所有old-generation trusted proxy connections。即使只是某一個network binding的exact DNS identity set改變、global forwarding mode / client CA / trusted-prefix union與其他bindings都未變，未受影響的proxy connections仍會一起重連，尚未有binding-aware selective retirement。
 - Login/recovery仍是單process fixed-window guards；尚未有distributed rate limit、IP reputation、credential-stuffing intelligence、WAF/CDN vendor integration或 CAPTCHA。
-- 尚未支援PROXY protocol；F.17–F.20的HTTP forwarding boundary不應被視為PROXY protocol parser或L4 load-balancer identity contract。
+- 尚未支援PROXY protocol；F.17–F.21的HTTP forwarding boundary不應被視為PROXY protocol parser或L4 load-balancer identity contract。
 - Core Server刻意不綁特定email/SMS vendor SDK；實際vendor仍應位於F.13 HTTPS relay後方。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
@@ -985,9 +1024,9 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.20 已在F.19 atomic edge-policy generation之上加入明確opt-in的old-generation connection retirement。Successful publication後，F.20會同步close舊trusted-proxy TLS connections；invalid replacement保持LKG connection、direct Godot Client不受影響，late old-generation handshake也不能跨cutover保留forwarding authority。同時未啟用flag的F.19 graceful gate仍保持全綠，因此兩種operator semantics都有明確contract。
+S4-F.21 已在F.19/F.20 lifecycle上加入effective-authority equality：candidate仍先完整validate，但revision、representation順序、等價prefix spelling、DNS case/duplicates與相同CA PEM的重排/重複不再製造新generation；只有forwarding mode、實際CA DER set或normalized prefix→identity mapping真的改變時才publish。這讓shared SIGHUP可以只輪替F.16 Server certificate等其他domain，而健康proxy keep-alive不再無故被F.20退休。
 
-下一個 bounded stage 建議進入 **S4-F.21 — Edge Policy No-op Reload Detection / Change-Aware Connection Retirement**：維持Client F.11、public login/recovery API、schema-v4、Protocol v9、F.17 parser、F.19 edge-policy schema與F.20 retirement semantics不變，為validated edge-policy snapshot建立effective authority fingerprint / equality。若SIGHUP讀到的network prefixes、forwarding mode、CA roots與per-binding exact identities與current generation完全相同，應回報no-op、保持edge generation不變並退休0條proxy connections；只有effective authority真正改變時才publish新generation並觸發F.20 cutover。這可避免shared process SIGHUP只為account/recovery/TLS rotation時無謂中斷健康proxy connections，同時保留真實CA/identity/network/header rotation的立即revocation能力。Distributed rate limit、IP reputation、WAF/CDN vendor integration、PROXY protocol與multi-host edge coordination仍保持獨立decision gate。
+下一個 bounded stage 建議進入 **S4-F.22 — Binding-Aware Trusted Proxy Retirement / Selective Edge Cutover**：維持Client F.11、schema-v4、Protocol v9、F.17 parser、F.19 schema、F.20 opt-in semantics與F.21 effective-authority comparison不變，收斂「任何real generation change都全域踢old proxy」的粒度。若global forwarding mode、client CA set或trusted-prefix union改變，因source-attribution/TLS trust語意可能影響所有proxy，仍應全域fail-closed retirement；但若network topology與global trust完全未變，只是某個existing binding的exact DNS identity set被輪替，則只退休該binding的authenticated connections，其他effective authority未變的bindings可保留既有TLS connection。Late-handshake判斷也應改以connection所屬binding的effective authority是否仍current為準，而不是只看global generation。Distributed rate limit、IP reputation、WAF/CDN、PROXY protocol與multi-host edge coordination仍保持獨立decision gate。
 
 Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session、ACME/PKI automation與Protocol v10仍保持獨立 decision gate。
 
