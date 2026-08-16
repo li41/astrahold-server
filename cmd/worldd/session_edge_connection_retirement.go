@@ -10,7 +10,7 @@ import (
 var sessionLoginTrustedProxyEdgeRetireOldConnections = flag.Bool(
 	"session-login-trusted-proxy-edge-retire-old-connections",
 	false,
-	"F.20/F.22 edge-policy cutover fence: retire stale trusted-proxy TLS authority after a successful edge-policy reload, preserving unaffected bindings when only their exact DNS identity mapping remains compatible",
+	"F.20/F.22/F.23 edge-policy cutover fence: retire stale trusted-proxy TLS authority after a successful edge-policy reload, preserving connections whose handshake-authorized exact DNS identity remains compatible",
 )
 
 type sessionEdgeTrackedConnection struct {
@@ -95,12 +95,13 @@ func (a *sessionSourceAttributor) observeEdgeConnectionState(connection net.Conn
 	}
 }
 
-// retireOldEdgeConnections applies the F.22 peer-specific compatibility fence
-// to every currently tracked authenticated proxy connection older than the
-// current generation. Global forwarding-mode, CA-root-set, or trusted-prefix
-// topology changes retire all older proxy connections. Identity-only changes
-// retire only peers whose own prefix->exact-DNS mapping changed. Invalid reloads
-// never enter this fence, and F.21 no-ops keep the generation unchanged.
+// retireOldEdgeConnections applies the F.23 authenticated-identity fence to
+// every currently tracked proxy connection older than the current generation.
+// Global forwarding-mode, CA-root-set, or trusted-prefix topology changes still
+// retire all older proxy connections. For identity-only changes, each connection
+// survives only when at least one exact DNS identity authorized at its original
+// handshake remains allowed for its current peer binding. Invalid reloads never
+// enter this fence, and F.21 no-ops keep the generation unchanged.
 func (a *sessionSourceAttributor) retireOldEdgeConnections(currentGeneration uint64) int {
 	if !a.edgeConnectionRetirementEnabled() || currentGeneration == 0 {
 		return 0
