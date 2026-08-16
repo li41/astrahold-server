@@ -10,7 +10,7 @@ import (
 var sessionLoginTrustedProxyEdgeRetireOldConnections = flag.Bool(
 	"session-login-trusted-proxy-edge-retire-old-connections",
 	false,
-	"F.20/F.22/F.23 edge-policy cutover fence: retire stale trusted-proxy TLS authority after a successful edge-policy reload, preserving connections whose handshake-authorized exact DNS identity remains compatible",
+	"F.20/F.22/F.23/F.24 edge authority cutover fence: retire stale or revoked trusted-proxy TLS authority after successful policy/revocation reloads while preserving compatible healthy credentials",
 )
 
 type sessionEdgeTrackedConnection struct {
@@ -84,14 +84,16 @@ func (a *sessionSourceAttributor) observeEdgeConnectionState(connection net.Conn
 	tracker.connections[connection] = generation
 	tracker.mu.Unlock()
 
+	if authenticated && a.edgePolicy.connectionRequiresRetirement(remote, binding) {
+		_ = connection.Close()
+		return
+	}
 	if generation == 0 {
 		return
 	}
 	current := a.edgePolicy.Snapshot().Generation
-	if current != 0 && generation < current {
-		if !authenticated || a.edgePolicy.connectionRequiresRetirement(remote, binding) {
-			_ = connection.Close()
-		}
+	if current != 0 && generation < current && !authenticated {
+		_ = connection.Close()
 	}
 }
 
@@ -103,7 +105,7 @@ func (a *sessionSourceAttributor) observeEdgeConnectionState(connection net.Conn
 // handshake remains allowed for its current peer binding. Invalid reloads never
 // enter this fence, and F.21 no-ops keep the generation unchanged.
 func (a *sessionSourceAttributor) retireOldEdgeConnections(currentGeneration uint64) int {
-	if !a.edgeConnectionRetirementEnabled() || currentGeneration == 0 {
+	if !a.edgeConnectionRetirementEnabled() {
 		return 0
 	}
 	tracker := a.edgeConnectionTracker()
@@ -123,10 +125,11 @@ func (a *sessionSourceAttributor) retireOldEdgeConnections(currentGeneration uin
 			generation = binding.generation
 			tracker.connections[connection] = generation
 		}
-		if generation == 0 || generation >= currentGeneration {
-			continue
-		}
-		if authenticated && !a.edgePolicy.connectionRequiresRetirement(remote, binding) {
+		if authenticated {
+			if !a.edgePolicy.connectionRequiresRetirement(remote, binding) {
+				continue
+			}
+		} else if generation == 0 || currentGeneration == 0 || generation >= currentGeneration {
 			continue
 		}
 		retire = append(retire, sessionEdgeTrackedConnection{connection: connection, generation: generation})

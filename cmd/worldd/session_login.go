@@ -27,14 +27,14 @@ import (
 )
 
 const (
-	sessionLoginSchemaVersion       uint16 = 1
-	sessionLoginMaxIDBytes                 = 128
-	sessionLoginMaxSecretBytes             = 256
-	sessionLoginMaxRequestBytes            = 4096
-	issuedSessionCredentialRandomBytes     = 32
-	issuedSessionCredentialMaxTTL          = 24 * time.Hour
-	issuedSessionCredentialMinTTL          = time.Minute
-	issuedSessionScopePrefix                = "issued-v1:"
+	sessionLoginSchemaVersion          uint16 = 1
+	sessionLoginMaxIDBytes                    = 128
+	sessionLoginMaxSecretBytes                = 256
+	sessionLoginMaxRequestBytes               = 4096
+	issuedSessionCredentialRandomBytes        = 32
+	issuedSessionCredentialMaxTTL             = 24 * time.Hour
+	issuedSessionCredentialMinTTL             = time.Minute
+	issuedSessionScopePrefix                  = "issued-v1:"
 )
 
 var (
@@ -723,6 +723,10 @@ func runIssuedSessionCredentialRuntime(
 	edgePolicy := sessionEdgePolicyMetadataForAttributor(runtime.sourceAttributor)
 	edgeConnectionCutover := runtime.sourceAttributor.edgeConnectionCutoverMode()
 	logf("session login issuance: enabled=true revision=%s listen=%s min_tls=1.3 session_ttl=%s account_auth=%s account_reload=%s tls_reload=sighup tls_generation=%d tls_not_after=%s source_attribution=%s trusted_proxy_prefixes=%d forwarded_max_hops=%d proxy_auth=%s proxy_trust_generation=%d proxy_trust_revision=%s proxy_identity_count=%d edge_policy_generation=%d edge_policy_revision=%s edge_policy_bindings=%d edge_policy_connection_cutover=%s login_ip_limit=%d/%s restart_persistence=false", runtime.accountAuth.Revision(), runtime.Addr(), runtime.ttl, runtime.accountAuth.Method(), reloadMode, tlsSnapshot.Generation, tlsSnapshot.NotAfter.UTC().Format(time.RFC3339Nano), sourceAttribution, trustedProxyPrefixes, sessionSourceAttributionMaxHops, proxyAuth, proxyTrust.Generation, proxyTrust.Revision, proxyTrust.IdentityCount, edgePolicy.Generation, edgePolicy.Revision, edgePolicy.BindingCount, edgeConnectionCutover, runtime.abuseGuard.maxAttempts, runtime.abuseGuard.window)
+	leafRevocation := sessionLeafRevocationMetadataForAttributor(runtime.sourceAttributor)
+	if leafRevocation.Generation != 0 {
+		logf("session trusted proxy leaf revocation: enabled=true generation=%d revision=%s revoked_credentials=%d identifier=spki-sha256", leafRevocation.Generation, leafRevocation.Revision, leafRevocation.RevokedCredentialCount)
+	}
 	if runtime.recoveryProvider != nil {
 		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
 		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d source_attribution=%s proxy_auth=%s edge_policy_generation=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration, sourceAttribution, proxyAuth, edgePolicy.Generation)
@@ -774,6 +778,21 @@ func runIssuedSessionCredentialRuntime(
 				} else {
 					retiredConnections := runtime.sourceAttributor.retireOldEdgeConnections(edgeResult.Generation)
 					logf("session trusted proxy edge policy reload applied: previous_generation=%d generation=%d previous_revision=%s revision=%s previous_header=%s header=%s roots=%d bindings=%d prefixes=%d identities=%d connection_cutover=%s retired_connections=%d", edgeResult.PreviousGeneration, edgeResult.Generation, edgeResult.PreviousRevision, edgeResult.Revision, edgeResult.PreviousHeaderMode, edgeResult.HeaderMode, edgeResult.RootCount, edgeResult.BindingCount, edgeResult.PrefixCount, edgeResult.IdentityCount, runtime.sourceAttributor.edgeConnectionCutoverMode(), retiredConnections)
+				}
+
+				if runtime.sourceAttributor.edgePolicy.leafRevocation != nil {
+					leafResult, leafErr := runtime.sourceAttributor.edgePolicy.ReloadLeafRevocation()
+					if leafErr != nil {
+						currentLeaf := runtime.sourceAttributor.edgePolicy.LeafRevocationSnapshot()
+						logf("session trusted proxy leaf revocation reload rejected; last-known-good retained: generation=%d revision=%s revoked_credentials=%d err=%v", currentLeaf.Generation, currentLeaf.Revision, currentLeaf.RevokedCredentialCount, leafErr)
+					} else {
+						retiredConnections := runtime.sourceAttributor.retireOldEdgeConnections(runtime.sourceAttributor.edgePolicy.Snapshot().Generation)
+						state := "no-op"
+						if leafResult.AuthorityChanged {
+							state = "applied"
+						}
+						logf("session trusted proxy leaf revocation reload %s: previous_generation=%d generation=%d previous_revision=%s revision=%s revoked_credentials=%d connection_cutover=%s retired_connections=%d", state, leafResult.PreviousGeneration, leafResult.Generation, leafResult.PreviousRevision, leafResult.Revision, leafResult.RevokedCredentialCount, runtime.sourceAttributor.edgeConnectionCutoverMode(), retiredConnections)
+					}
 				}
 			} else if runtime.sourceAttributor != nil && runtime.sourceAttributor.proxyMTLS != nil {
 				proxyResult, err := runtime.sourceAttributor.proxyMTLS.Reload()
