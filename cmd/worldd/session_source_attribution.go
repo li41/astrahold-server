@@ -50,6 +50,7 @@ type sessionSourceAttributor struct {
 
 func loadSessionSourceAttributor() (*sessionSourceAttributor, error) {
 	edgePolicyFile := strings.TrimSpace(*sessionLoginTrustedProxyEdgePolicyFile)
+	leafRevocationFile := strings.TrimSpace(*sessionLoginTrustedProxyLeafRevocationFile)
 	legacyHeader := strings.TrimSpace(*sessionLoginForwardedHeader)
 	legacyCIDRs := strings.TrimSpace(*sessionLoginTrustedProxyCIDRs)
 	legacyMTLS := strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile)
@@ -62,6 +63,9 @@ func loadSessionSourceAttributor() (*sessionSourceAttributor, error) {
 			return nil, err
 		}
 		return &sessionSourceAttributor{edgePolicy: edgePolicy}, nil
+	}
+	if leafRevocationFile != "" {
+		return nil, fmt.Errorf("%w: session-login-trusted-proxy-leaf-revocation-file requires session-login-trusted-proxy-edge-policy-file", errSessionSourceAttribution)
 	}
 
 	attributor, err := newSessionSourceAttributor(legacyHeader, legacyCIDRs)
@@ -259,6 +263,9 @@ func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error
 		}
 		if err := connection.snapshot.verifyConnection(*request.TLS, connection.bindingIndex); err != nil {
 			return "", fmt.Errorf("%w: trusted proxy edge-policy identity mismatch", errSessionSourceAttribution)
+		}
+		if a.edgePolicy.connectionCredentialRevoked(connection) {
+			return "", fmt.Errorf("%w: trusted proxy leaf credential is revoked", errSessionSourceAttribution)
 		}
 		return sessionSourceIPFromForwarding(request, connection.snapshot.mode, connection.snapshot.headerName, connection.snapshot.trusted)
 	}

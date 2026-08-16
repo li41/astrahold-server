@@ -91,10 +91,12 @@ type sessionEdgePolicyReloadResult struct {
 }
 
 type sessionEdgePolicyConnection struct {
-	snapshot     *sessionEdgePolicySnapshot
-	generation   uint64
-	bindingIndex int
-	matchedDNS   []string
+	snapshot         *sessionEdgePolicySnapshot
+	generation       uint64
+	bindingIndex     int
+	matchedDNS       []string
+	credentialID     [sha256.Size]byte
+	credentialPinned bool
 }
 
 // reloadableSessionEdgePolicy publishes immutable network+identity generations.
@@ -107,6 +109,7 @@ type reloadableSessionEdgePolicy struct {
 	current        *sessionEdgePolicySnapshot
 	generation     uint64
 	now            func() time.Time
+	leafRevocation *reloadableSessionLeafRevocation
 
 	connectionsMu sync.RWMutex
 	connections   map[string]sessionEdgePolicyConnection
@@ -124,11 +127,19 @@ func newReloadableSessionEdgePolicy(definitionFile string, now func() time.Time)
 	if err != nil {
 		return nil, err
 	}
+	var leafRevocation *reloadableSessionLeafRevocation
+	if sessionLeafRevocationRequested() {
+		leafRevocation, err = newReloadableSessionLeafRevocation(strings.TrimSpace(*sessionLoginTrustedProxyLeafRevocationFile))
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &reloadableSessionEdgePolicy{
 		definitionFile: definitionFile,
 		current:        snapshot,
 		generation:     1,
 		now:            now,
+		leafRevocation: leafRevocation,
 		connections:    make(map[string]sessionEdgePolicyConnection),
 	}, nil
 }
@@ -556,8 +567,11 @@ func (r *reloadableSessionEdgePolicy) TLSConfigForPeer(certificate *reloadableTL
 		if err != nil {
 			return err
 		}
-		r.bindVerifiedConnection(remote, snapshot, generation, bindingIndex, matchedDNS)
-		return nil
+		credentialID, credentialPinned, err := r.verifiedLeafCredential(state)
+		if err != nil {
+			return err
+		}
+		return r.bindVerifiedConnectionCredential(remote, snapshot, generation, bindingIndex, matchedDNS, credentialID, credentialPinned)
 	}
 	config.GetConfigForClient = nil
 	return config, true, nil
@@ -571,33 +585,7 @@ func (r *reloadableSessionEdgePolicy) bindConnection(remote string, snapshot *se
 }
 
 func (r *reloadableSessionEdgePolicy) bindVerifiedConnection(remote string, snapshot *sessionEdgePolicySnapshot, generation uint64, bindingIndex int, matchedDNS []string) {
-	if r == nil || strings.TrimSpace(remote) == "" || snapshot == nil || generation == 0 || bindingIndex < 0 || bindingIndex >= len(snapshot.bindings) {
-		return
-	}
-	allowedDNS := snapshot.bindings[bindingIndex].allowedDNS
-	pinned := make(map[string]struct{}, len(matchedDNS))
-	for _, candidate := range matchedDNS {
-		normalized, err := normalizeSessionProxyDNSIdentity(candidate)
-		if err != nil {
-			continue
-		}
-		if _, allowed := allowedDNS[normalized]; !allowed {
-			continue
-		}
-		pinned[normalized] = struct{}{}
-	}
-	identities := sessionEdgePolicySortedIdentities(pinned)
-	if len(identities) == 0 || len(identities) > sessionEdgePolicyMaxIdentities {
-		return
-	}
-	r.connectionsMu.Lock()
-	r.connections[remote] = sessionEdgePolicyConnection{
-		snapshot:     snapshot,
-		generation:   generation,
-		bindingIndex: bindingIndex,
-		matchedDNS:   append([]string(nil), identities...),
-	}
-	r.connectionsMu.Unlock()
+	_ = r.bindVerifiedConnectionCredential(remote, snapshot, generation, bindingIndex, matchedDNS, [sha256.Size]byte{}, false)
 }
 
 func (r *reloadableSessionEdgePolicy) connection(remote string) (sessionEdgePolicyConnection, bool) {
@@ -620,7 +608,13 @@ func (r *reloadableSessionEdgePolicy) releaseConnection(remote string) {
 }
 
 func (r *reloadableSessionEdgePolicy) connectionRequiresRetirement(remote string, binding sessionEdgePolicyConnection) bool {
-	if r == nil || binding.generation == 0 || binding.snapshot == nil {
+	if r == nil {
+		return false
+	}
+	if r.connectionCredentialRevoked(binding) {
+		return true
+	}
+	if binding.generation == 0 || binding.snapshot == nil {
 		return false
 	}
 	current, currentGeneration := r.currentSnapshot()
