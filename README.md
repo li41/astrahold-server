@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.14 — Recovery Delivery Credential Rotation / Runtime Reload**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.15 — Durable Recovery Delivery Outbox / Restart Reliability**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -49,6 +49,9 @@ Server runtime 主線已完成到 **S4-F.14 — Recovery Delivery Credential Rot
 - **F.14 schema-v2 recovery provider / relay credential / private CA `SIGHUP` runtime generation reload**
 - F.14 reload完整等待old-generation in-flight `Begin`/delivery完成後再cutover；pre-cutover challenge仍路由回原verifier，new `Begin`只使用新generation
 - F.14 invalid replacement保留last-known-good；retired provider立即清除proof key與HTTPS Bearer credential，最多保留4個仍有challenge的retired generations
+- **F.15 optional bounded durable recovery delivery outbox + challenge restart recovery**
+- F.15 pending HTTPS delivery先以0700 outbox root / 0600 atomic record落盤，再由單一worker以F.13 stable delivery/idempotency identity送出；transient delivery可跨`worldd` restart重播
+- F.15 successful/terminal delivery會將raw proof與destination從durable record原子scrub；unexpired verifier/account-generation/attempt state可跨restart恢復，successful reset consume後durable record刪除並directory fsync
 
 核心 production contract：
 
@@ -492,6 +495,34 @@ F.14 production E2E以兩個不同TLS 1.3 fake relays、credential與CA證明rel
 
 完整 F.14 contract：[`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md)。
 
+### F.15 durable recovery delivery outbox / restart reliability
+
+F.15 在不改 `accountrecovery.Provider` public authority boundary的前提下，為schema-v2 `https-json-v1`加入optional bounded durable outbox。Durable record同時承擔pending delivery retry state與challenge restart ledger，因為只重播relay payload、卻沒有原challenge verifier，restart後proof仍無法兌換。
+
+Durable enqueue順序是：
+
+```text
+reserve process-local challenge
+→ durable write pending record
+→ activate challenge
+→ register F.14 opaque request route
+→ publish record to the single outbox worker
+```
+
+Worker只有在route已註冊後才送，避免fast permanent delivery outcome與`Begin` activation競態。F.13 adapter仍負責單一transport cycle的bounded attempts；F.15另外對跨時間／跨restart delivery cycles做bounded exponential retry，並沿用同一F.13 `delivery_id` / `Idempotency-Key`。
+
+Outbox storage要求預先存在的owner-only directory，live record為exact `0600` regular file；create/rewrite採temp→file fsync→atomic rename→directory fsync，delete也會directory fsync。Strict JSON、filename/delivery-id、proof/verifier一致性、size、symlink與permission都在startup fail-closed；expired record cold start直接drop。Backpressure或enqueue persist failure仍沿F.12 generic accepted public shape，但reserved challenge維持non-authorizing。
+
+Pending record為了restart replay會暫時保存raw recovery proof與Server-owned destination。成功delivery會原子改寫成不含proof/destination的`delivered` challenge-only record；permanent/exhausted failure則改寫成non-authorizing `failed` record並同樣scrub secret material。這是0700/0600 application permission boundary，**不是application-layer disk encryption**；需要media-at-rest confidentiality的部署應使用encrypted filesystem/volume。
+
+Restart會恢復unexpired verifier、`account_id + credential_version` binding、active state與verification attempt count；pending record由worker用相同idempotency identity replay，delivered record不重送。Restored challenge會seed進F.14 generation-1 route，因此restart後再`SIGHUP`也不會把原request orphan。F.14 reload期間只有一個process-global outbox worker，cutover只交換validated HTTPS transport/provider target並退休old credential；pending record本身保持原proof/destination/expiry/idempotency identity。
+
+Successful public reset仍走既有durable schema-v4 CAS與old-generation bearer/live-peer retirement，最後`Consume`會刪除outbox challenge record並directory fsync，因此proof不會因另一個restart重新出現。
+
+F.15 production E2E證明503 transient→durable pending→`SIGKILL worldd`→same outbox restart→same delivery identity replay→202 delivery→proof/destination scrub→使用restart前原`request_id`完成reset→consume delete→old password 401 / new password 200；schema仍v4，Protocol仍v9。Unit/race coverage另外鎖定backpressure、permanent failure、attempt persistence、expiry/drop、exact 0600、corrupt storage、F.14 transport swap與restart後再reload的old-challenge routing。
+
+完整 F.15 contract：[`docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`](docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md)。
+
 ### KDF migration
 
 ```bash
@@ -539,11 +570,13 @@ load + fully validate replacement schema-v2 provider / credential / CA
 → keep bounded old verifier routes until consume / expiry / generation cap
 ```
 
+F.15 outbox啟用時，recovery generation reload不建立第二個worker，而是把同一process-global outbox背後的HTTPS transport/provider target在F.14 barrier內替換；pending records仍保留原delivery identity。Cold restart恢復的challenge先seed成generation-1 routes，再參與後續F.14 cutover。
+
 因此 password rotation、account disable、password reset、KDF verifier generation或其他 account proof-generation 變更可讓舊 issued bearer 與 live game session立即失效；recovery credential/CA rotation則不會把已送達且仍有效的challenge無條件作廢。
 
 Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 account generation已 commit，stale grant就不能再 mint bearer。
 
-F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14再加入provider/credential/CA fail-closed runtime generation reload。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
+F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14加入provider/credential/CA fail-closed runtime generation reload；F.15再把delivery/challenge可靠性推進到single-host durable restart recovery。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
 
 ### Login / recovery abuse control
 
@@ -573,6 +606,7 @@ Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds�
 
 完整身份／登入文件：
 
+- [`docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`](docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md)
 - [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md)
 - [`docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md`](docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md)
 - [`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md)
@@ -620,9 +654,10 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.11 | Normal Godot Client recovery UX；generic unknown/wrong-proof；reset→fresh login；recovery throttle；secret/challenge no-persistence | ✅ |
 | S4-F.12 | DeliveryAdapter seam；Server-owned destination；filesystem reference delivery；enumeration-safe failure；F.11 Main delivered-proof reset/fresh-login | ✅ |
 | S4-F.13 | HTTPS/TLS 1.3 relay；owner-only credential；stable idempotent retry；outcome classification；secret-safe logs；F.11 Main relay-proof reset/fresh-login | ✅ |
-| **S4-F.14** | **schema-v2 provider/credential/CA SIGHUP generation reload；in-flight cutover fence；old challenge routing；invalid reload LKG；F.11 Main post-rotation reset/fresh-login** | **✅** |
+| S4-F.14 | schema-v2 provider/credential/CA SIGHUP generation reload；in-flight cutover fence；old challenge routing；invalid reload LKG；F.11 Main post-rotation reset/fresh-login | ✅ |
+| **S4-F.15** | **bounded durable HTTPS recovery outbox；0700/0600 atomic storage；503→SIGKILL→restart same-id replay；challenge restore；proof/destination scrub；original request reset；consume delete** | **✅** |
 
-Server runtime contract現在是F.14；paired Client runtime仍是F.11。F.14 final exact product head `6d3856a204a6188adbf50f6e7760a0d94cbb6bc7`通過6/6 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E與Production Recovery Delivery Reload E2E；Protocol仍v9，Client product code未為F.14增加任何account/game authority。
+Server runtime contract現在是F.15；paired Client runtime仍是F.11。F.15 final exact product head `da9586627bef12c4109294013e3f98f626a0cda1`通過7/7 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E、Production Recovery Delivery Reload E2E與Production Recovery Delivery Outbox E2E；Protocol仍v9，Client product code未為F.15增加任何account/game/delivery authority。
 
 ## 文件入口
 
@@ -630,6 +665,7 @@ Server runtime contract現在是F.14；paired Client runtime仍是F.11。F.14 fi
 
 - 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md`](docs/S4F15_DURABLE_RECOVERY_DELIVERY_OUTBOX.md) — single-host durable delivery/challenge restart recovery / storage / retry / scrub contract
 - [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md) — recovery provider / credential / CA runtime generations / cutover / last-known-good contract
 - [`docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md`](docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md) — vendor-isolated HTTPS relay / credential / retry / idempotency / observability contract
 - [`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md) — provider-neutral verified delivery adapter / reference transport / failure mapping
@@ -716,6 +752,11 @@ Production issued-session deployment：
 -session-recovery-challenge-max-attempts
 -session-recovery-ip-attempt-window
 -session-recovery-ip-max-attempts
+-session-recovery-outbox-dir
+-session-recovery-outbox-max-records
+-session-recovery-outbox-max-delivery-attempts
+-session-recovery-outbox-retry-min
+-session-recovery-outbox-retry-max
 -trusted-tls-listen
 -trusted-tls-cert
 -trusted-tls-key
@@ -723,14 +764,15 @@ Production issued-session deployment：
 
 Static trusted mode 與 issued-session mode互斥。Login/recovery control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
 
-Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。Schema-v1 recovery provider仍restart-only。TLS game/login certificate/key仍為process-start載入。
+Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。F.15 `https-json-v1`可另外啟用single-host durable outbox，outbox root需由部署預先建立為owner-only directory，F.14 cutover會在同一shared worker後方替換validated relay transport。Schema-v1 recovery provider仍restart-only。TLS game/login certificate/key仍為process-start載入。
 
 ## 目前刻意保留的限制
 
 - Realtime UDP尚未加密；目前只有 authenticity / integrity。
 - Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
-- F.14 已有provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good保留；最多保留4個仍有未到期challenge的retired generations，超出上限會安全退休最舊challenge。
-- Recovery delivery仍在public request控制路徑同步執行；尚未有durable delivery outbox、process-crash後send recovery、跨process idempotency state或bounded asynchronous backpressure contract。
+- F.15 已提供bounded single-host durable recovery delivery/challenge outbox、restart replay與stable F.13 idempotency identity；這不是distributed broker、multi-host consensus、cross-host recovery ownership或exactly-once vendor delivery。
+- F.15 pending record為了restart replay會短暫以plaintext保存recovery proof與Server-owned destination；application只提供owner-only 0700/0600 permission boundary與terminal scrub，**不提供application-layer disk encryption**。需要media-at-rest confidentiality時應使用encrypted filesystem/volume。
+- F.14 provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good仍適用；F.15只有一個shared outbox worker，pending records會跨transport generation保持原delivery identity。
 - Core Server刻意不綁特定email/SMS vendor SDK；實際vendor仍應位於F.13 HTTPS relay後方。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
 - Login/recovery都有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
@@ -744,10 +786,10 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.14 已把F.13 restart-only relay config推進成fail-closed runtime generation model：proof key、relay endpoint、Bearer credential、private CA與destination map都可在`SIGHUP`上完整validate後cutover；old-generation in-flight delivery先完成再publish，新request只用新generation，舊challenge則保留原verifier route；invalid replacement維持last-known-good。F.9/F.10/F.12/F.13 gates與未修改F.11 normal `Main.tscn`也在同一exact head持續全綠。
+S4-F.15 已把F.14之後仍屬process-local的recovery delivery/challenge可靠性缺口收斂成single-host durable contract：eligible request先durable enqueue，再由bounded worker送出；F.13 delivery identity跨retry/restart不變；pending challenge可在`SIGKILL`後恢復並用原`request_id`兌換；success/terminal outcome原子scrub proof/destination，consume/expiry durable delete。F.9/F.10/F.12/F.13/F.14 gates與Server Test/Vet/Race也在同一exact head持續全綠。
 
-下一個 bounded stage 建議進入 **S4-F.15 — Durable Recovery Delivery Outbox / Restart Reliability**：維持public recovery API、Client F.11、schema-v4與Protocol v9不變，把目前同步delivery的process-local可靠性缺口收斂成bounded durable outbox / idempotent resend contract，明確定義enqueue durability、restart replay、expiry/drop、backpressure、duplicate suppression與secret-at-rest邊界；不把vendor SDK、distributed broker或多主機consensus引入core Server。
+下一個 bounded stage 建議進入 **S4-F.16 — TLS Certificate Rotation / Runtime Reload**：維持public login/recovery API、Client F.11、schema-v4與Protocol v9不變，為session-login control plane與trusted game ingress的TLS certificate/key建立fail-closed last-known-good runtime generation reload；replacement keypair必須完整load/validate後原子publish，已完成／進行中的connection維持既有TLS state，新handshake只使用新certificate generation。Client CA/trust policy、ACME/PKI automation、distributed certificate coordination與Protocol v10仍保持獨立decision gate。
 
-Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session、TLS certificate hot reload與Protocol v10仍保持獨立 decision gate。
+Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
