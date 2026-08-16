@@ -37,9 +37,15 @@ type sessionRecoveryProviderDefinition struct {
 }
 
 type sessionRecoveryDeliveryDefinition struct {
-	Adapter  string `json:"adapter"`
-	Revision string `json:"revision"`
-	InboxDir string `json:"inbox_dir"`
+	Adapter        string `json:"adapter"`
+	Revision       string `json:"revision"`
+	InboxDir       string `json:"inbox_dir,omitempty"`
+	Endpoint       string `json:"endpoint,omitempty"`
+	CredentialFile string `json:"credential_file,omitempty"`
+	CAFile         string `json:"ca_file,omitempty"`
+	RequestTimeout string `json:"request_timeout,omitempty"`
+	MaxAttempts    int    `json:"max_attempts,omitempty"`
+	RetryBackoff   string `json:"retry_backoff,omitempty"`
 }
 
 type sessionRecoveryProviderSubject struct {
@@ -102,22 +108,60 @@ func loadStaticSessionRecoveryProvider(
 	case sessionRecoveryProviderSchemaVersion:
 		return newStaticSessionRecoveryProvider(definition, ttl, maxAttempts, now, random)
 	case sessionRecoveryDeliveredProviderSchemaVersion:
-		if definition.Delivery == nil || definition.Delivery.Adapter != sessionRecoveryFilesystemAdapterMethod {
-			return nil, fmt.Errorf("%w: schema-v2 recovery delivery adapter must be %q", errSessionLoginConfig, sessionRecoveryFilesystemAdapterMethod)
+		if definition.Delivery == nil {
+			return nil, fmt.Errorf("%w: schema-v2 recovery delivery config is required", errSessionLoginConfig)
 		}
-		adapter, err := newFilesystemRecoveryDeliveryAdapter(definition.Delivery.InboxDir, definition.Delivery.Revision)
+		adapter, err := buildSessionRecoveryDeliveryAdapter(*definition.Delivery)
 		if err != nil {
 			return nil, err
 		}
-		for index, item := range definition.Subjects {
-			if !validFilesystemRecoveryDestination(item.Destination) {
-				return nil, fmt.Errorf("%w: schema-v2 recovery subject[%d] invalid filesystem destination", errSessionLoginConfig, index)
+		if definition.Delivery.Adapter == sessionRecoveryFilesystemAdapterMethod {
+			for index, item := range definition.Subjects {
+				if !validFilesystemRecoveryDestination(item.Destination) {
+					return nil, fmt.Errorf("%w: schema-v2 recovery subject[%d] invalid filesystem destination", errSessionLoginConfig, index)
+				}
 			}
 		}
 		return newDeliveredSessionRecoveryProvider(definition, adapter, ttl, maxAttempts, now, random)
 	default:
 		return nil, fmt.Errorf("%w: unsupported recovery provider schema_version %d", errSessionLoginConfig, definition.SchemaVersion)
 	}
+}
+
+func buildSessionRecoveryDeliveryAdapter(definition sessionRecoveryDeliveryDefinition) (accountrecovery.DeliveryAdapter, error) {
+	switch definition.Adapter {
+	case sessionRecoveryFilesystemAdapterMethod:
+		if definition.Endpoint != "" || definition.CredentialFile != "" || definition.CAFile != "" || definition.RequestTimeout != "" || definition.MaxAttempts != 0 || definition.RetryBackoff != "" {
+			return nil, fmt.Errorf("%w: filesystem recovery delivery cannot set https adapter fields", errSessionLoginConfig)
+		}
+		return newFilesystemRecoveryDeliveryAdapter(definition.InboxDir, definition.Revision)
+	case sessionRecoveryHTTPAdapterMethod:
+		if definition.InboxDir != "" {
+			return nil, fmt.Errorf("%w: https recovery delivery cannot set inbox_dir", errSessionLoginConfig)
+		}
+		requestTimeout, err := parseRecoveryDeliveryDuration(definition.RequestTimeout, sessionRecoveryHTTPDefaultTimeout, "request_timeout")
+		if err != nil {
+			return nil, err
+		}
+		retryBackoff, err := parseRecoveryDeliveryDuration(definition.RetryBackoff, sessionRecoveryHTTPDefaultRetryBackoff, "retry_backoff")
+		if err != nil {
+			return nil, err
+		}
+		return newHTTPRecoveryDeliveryAdapter(definition.Endpoint, definition.CredentialFile, definition.CAFile, definition.Revision, requestTimeout, definition.MaxAttempts, retryBackoff)
+	default:
+		return nil, fmt.Errorf("%w: unsupported schema-v2 recovery delivery adapter %q", errSessionLoginConfig, definition.Adapter)
+	}
+}
+
+func parseRecoveryDeliveryDuration(value string, fallback time.Duration, field string) (time.Duration, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%w: https recovery delivery %s: %v", errSessionLoginConfig, field, err)
+	}
+	return parsed, nil
 }
 
 func newStaticSessionRecoveryProvider(
