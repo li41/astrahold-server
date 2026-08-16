@@ -1,0 +1,313 @@
+name: Production TLS Certificate Reload E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  tls-certificate-runtime-reload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run TLS certificate runtime rotation acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f16-data"
+          tls_root="$data_root/tls"
+          accounts_file="$data_root/accounts.json"
+          server_log="$RUNNER_TEMP/s4f16-worldd.log"
+          holder_log="$RUNNER_TEMP/s4f16-held-connections.log"
+          holder_script="$data_root/hold-tls.py"
+          holder_ready="$data_root/holder.ready"
+          holder_release="$data_root/holder.release"
+          login_body="$RUNNER_TEMP/s4f16-login.json"
+          old_password="F16-Correct-Horse-Battery-Staple!"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          mkdir -p "$data_root" "$tls_root" "$data_root/character-state"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' "$old_password" | "$ACCOUNTCTL" create \
+            -path "$accounts_file" -login holder -character f16-holder-character -password-stdin
+
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_root/ca.key" -out "$tls_root/ca.crt" -days 1 -sha256 \
+            -subj "/CN=Astrahold S4-F.16 Test CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          chmod 600 "$tls_root/ca.key"
+
+          make_leaf() {
+            label="$1"
+            serial="$2"
+            openssl req -newkey rsa:2048 -nodes \
+              -keyout "$tls_root/$label.key" -out "$tls_root/$label.csr" \
+              -subj "/CN=localhost" >/dev/null 2>&1
+            cat >"$tls_root/$label.ext" <<'EOF_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_EXT
+            openssl x509 -req -in "$tls_root/$label.csr" \
+              -CA "$tls_root/ca.crt" -CAkey "$tls_root/ca.key" \
+              -set_serial "$serial" -out "$tls_root/$label.crt" \
+              -days 1 -sha256 -extfile "$tls_root/$label.ext" >/dev/null 2>&1
+            chmod 600 "$tls_root/$label.key"
+          }
+
+          make_leaf login-a 1001
+          make_leaf login-b 1002
+          make_leaf login-c 1003
+          make_leaf trusted-a 2001
+          make_leaf trusted-b 2002
+          make_leaf trusted-c 2003
+
+          cp "$tls_root/login-a.crt" "$tls_root/login-live.crt"
+          cp "$tls_root/login-a.key" "$tls_root/login-live.key"
+          cp "$tls_root/trusted-a.crt" "$tls_root/trusted-live.crt"
+          cp "$tls_root/trusted-a.key" "$tls_root/trusted-live.key"
+          chmod 600 "$tls_root/login-live.key" "$tls_root/trusted-live.key"
+
+          cert_serial() {
+            port="$1"
+            openssl s_client -connect "localhost:$port" -servername localhost \
+              -CAfile "$tls_root/ca.crt" </dev/null 2>/dev/null \
+              | openssl x509 -noout -serial | cut -d= -f2
+          }
+
+          expected_login_a="$(openssl x509 -in "$tls_root/login-a.crt" -noout -serial | cut -d= -f2)"
+          expected_login_b="$(openssl x509 -in "$tls_root/login-b.crt" -noout -serial | cut -d= -f2)"
+          expected_trusted_a="$(openssl x509 -in "$tls_root/trusted-a.crt" -noout -serial | cut -d= -f2)"
+          expected_trusted_b="$(openssl x509 -in "$tls_root/trusted-b.crt" -noout -serial | cut -d= -f2)"
+
+          cleanup() {
+            set +e
+            for pid in "${holder_pid:-}" "${server_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            attempts="$4"
+            i=0
+            while [ "$i" -lt "$attempts" ]; do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                cat "$server_log" || true
+                return 1
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            cat "$server_log" || true
+            return 1
+          }
+
+          wait_success() {
+            pid="$1"
+            label="$2"
+            log_file="$3"
+            set +e
+            wait "$pid"
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
+              echo "$label failed with status $status"
+              cat "$log_file" || true
+              cat "$server_log" || true
+              exit 1
+            fi
+          }
+
+          "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:43777 \
+            -udp 127.0.0.1:43778 \
+            -session-login-account-file "$accounts_file" \
+            -session-login-tls-listen 127.0.0.1:43444 \
+            -session-login-tls-cert "$tls_root/login-live.crt" \
+            -session-login-tls-key "$tls_root/login-live.key" \
+            -session-login-ip-max-attempts 100 \
+            -session-login-ip-attempt-window 1m \
+            -session-credential-ttl 5m \
+            -trusted-tls-listen 127.0.0.1:43443 \
+            -trusted-tls-cert "$tls_root/trusted-live.crt" \
+            -trusted-tls-key "$tls_root/trusted-live.key" \
+            -character-state-dir "$data_root/character-state" \
+            -character-state-save-journal "$data_root/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data_root/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
+          server_pid=$!
+
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+          wait_for_marker "$server_log" "session login issuance: enabled=true" "$server_pid" 300
+          wait_for_marker "$server_log" "tls_reload=sighup tls_generation=1" "$server_pid" 300
+          wait_for_marker "$server_log" "trusted TLS certificate runtime: reload=sighup generation=1" "$server_pid" 300
+
+          test "$(cert_serial 43444)" = "$expected_login_a"
+          test "$(cert_serial 43443)" = "$expected_trusted_a"
+
+          cat > "$holder_script" <<'PY'
+          import os
+          import socket
+          import ssl
+          import sys
+          import time
+
+          ca, ready, release = sys.argv[1:4]
+
+          def connect(port):
+              context = ssl.create_default_context(cafile=ca)
+              context.minimum_version = ssl.TLSVersion.TLSv1_3
+              raw = socket.create_connection(("127.0.0.1", port), timeout=2)
+              tls = context.wrap_socket(raw, server_hostname="localhost")
+              assert tls.version() == "TLSv1.3", tls.version()
+              return tls, tls.getpeercert().get("serialNumber", "")
+
+          login, login_serial = connect(43444)
+          trusted, trusted_serial = connect(43443)
+          with open(ready, "w", encoding="utf-8") as f:
+              f.write(login_serial + " " + trusted_serial + "\n")
+              f.flush()
+              os.fsync(f.fileno())
+
+          deadline = time.time() + 10
+          while not os.path.exists(release):
+              if time.time() >= deadline:
+                  raise RuntimeError("release marker timeout")
+              time.sleep(0.02)
+
+          login.sendall(b"GET /v1/session/login HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+          response = login.recv(512)
+          assert response.startswith(b"HTTP/1.1 405"), response
+
+          trusted.settimeout(0.4)
+          trusted.sendall(b"X")
+          try:
+              data = trusted.recv(1)
+              if data == b"":
+                  raise RuntimeError("trusted TLS connection closed at certificate cutover")
+          except socket.timeout:
+              pass
+
+          login.close()
+          trusted.close()
+          print("ASTRAHOLD_F16_OLD_TLS_CONNECTIONS_OK login_tls=1.3 trusted_tls=1.3", flush=True)
+          PY
+
+          python3 "$holder_script" "$tls_root/ca.crt" "$holder_ready" "$holder_release" >"$holder_log" 2>&1 &
+          holder_pid=$!
+          i=0
+          while [ "$i" -lt 200 ] && [ ! -f "$holder_ready" ]; do
+            if ! kill -0 "$holder_pid" 2>/dev/null; then
+              cat "$holder_log" || true
+              exit 1
+            fi
+            sleep 0.05
+            i=$((i + 1))
+          done
+          test -f "$holder_ready"
+
+          cp "$tls_root/login-b.crt" "$tls_root/login-live.crt"
+          cp "$tls_root/login-b.key" "$tls_root/login-live.key"
+          cp "$tls_root/trusted-b.crt" "$tls_root/trusted-live.crt"
+          cp "$tls_root/trusted-b.key" "$tls_root/trusted-live.key"
+          chmod 600 "$tls_root/login-live.key" "$tls_root/trusted-live.key"
+          kill -HUP "$server_pid"
+
+          wait_for_marker "$server_log" "session login TLS certificate reload applied: previous_generation=1 generation=2" "$server_pid" 300
+          wait_for_marker "$server_log" "trusted TLS certificate reload applied: previous_generation=1 generation=2" "$server_pid" 300
+          touch "$holder_release"
+          wait_success "$holder_pid" "pre-cutover TLS connections" "$holder_log"
+          holder_pid=""
+          grep -F "ASTRAHOLD_F16_OLD_TLS_CONNECTIONS_OK" "$holder_log"
+
+          test "$(cert_serial 43444)" = "$expected_login_b"
+          test "$(cert_serial 43443)" = "$expected_trusted_b"
+
+          login_status="$(printf '{"login_id":"holder","login_secret":"%s"}' "$old_password" | curl --silent --show-error \
+            --cacert "$tls_root/ca.crt" --output "$login_body" --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            https://localhost:43444/v1/session/login)"
+          test "$login_status" = "200"
+          python3 - "$login_body" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              body = json.load(f)
+          assert set(body) == {"session_credential", "expires_at"}, body
+          assert isinstance(body["session_credential"], str) and body["session_credential"]
+          print("ASTRAHOLD_F16_LOGIN_AFTER_ROTATION_OK public_api_unchanged=true")
+          PY
+
+          # Publish mismatched certificate/key pairs for both listeners. Each
+          # reload must reject independently and keep generation 2 live.
+          cp "$tls_root/login-c.crt" "$tls_root/login-live.crt"
+          cp "$tls_root/trusted-c.crt" "$tls_root/trusted-live.crt"
+          kill -HUP "$server_pid"
+          wait_for_marker "$server_log" "session login TLS certificate reload rejected; last-known-good retained: generation=2" "$server_pid" 300
+          wait_for_marker "$server_log" "trusted TLS certificate reload rejected; last-known-good retained: generation=2" "$server_pid" 300
+
+          test "$(cert_serial 43444)" = "$expected_login_b"
+          test "$(cert_serial 43443)" = "$expected_trusted_b"
+
+          # Restore coherent B files on disk without a further reload. The live
+          # generation remains 2 and must still serve B.
+          cp "$tls_root/login-b.crt" "$tls_root/login-live.crt"
+          cp "$tls_root/trusted-b.crt" "$tls_root/trusted-live.crt"
+          test "$(cert_serial 43444)" = "$expected_login_b"
+          test "$(cert_serial 43443)" = "$expected_trusted_b"
+
+          if grep -Eq 'BEGIN (RSA )?PRIVATE KEY|BEGIN PRIVATE KEY' "$server_log"; then
+            echo "private key material leaked to server log"
+            exit 1
+          fi
+
+          echo "ASTRAHOLD_F16_E2E_OK login_generation=2 trusted_generation=2 old_connection_survives=true new_handshake_rotated=true invalid_reload_lkg=true public_api_unchanged=true protocol=9 tls=1.3"
+
+      - name: Upload F.16 TLS reload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f16-tls-certificate-reload-logs
+          path: |
+            ${{ runner.temp }}/s4f16-worldd.log
+            ${{ runner.temp }}/s4f16-held-connections.log
+          if-no-files-found: ignore
