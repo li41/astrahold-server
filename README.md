@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.13 — Production Recovery Delivery Provider / Operational Hardening**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server runtime 主線已完成到 **S4-F.14 — Recovery Delivery Credential Rotation / Runtime Reload**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -46,6 +46,9 @@ Server runtime 主線已完成到 **S4-F.13 — Production Recovery Delivery Pro
 - **F.13 vendor-isolated `https-json-v1` recovery delivery adapter + operational hardening**
 - F.13 relay要求HTTPS/TLS 1.3、禁止redirect，Bearer credential由獨立owner-only file載入；raw public `request_id`不送relay
 - F.13同一delivery以derived idempotency key做bounded transient retry，分類2xx / transient / permanent outcome並只輸出secret-safe observability metadata
+- **F.14 schema-v2 recovery provider / relay credential / private CA `SIGHUP` runtime generation reload**
+- F.14 reload完整等待old-generation in-flight `Begin`/delivery完成後再cutover；pre-cutover challenge仍路由回原verifier，new `Begin`只使用新generation
+- F.14 invalid replacement保留last-known-good；retired provider立即清除proof key與HTTPS Bearer credential，最多保留4個仍有challenge的retired generations
 
 核心 production contract：
 
@@ -475,6 +478,20 @@ Transport error / attempt timeout、HTTP 408/425/429與5xx分類為transient；�
 
 完整 F.13 contract：[`docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md`](docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md)。
 
+### F.14 recovery delivery runtime generation reload
+
+F.14 將schema-v2 delivered provider包成runtime generation router。每次成功`SIGHUP`都發布新的monotonic recovery generation，即使provider文字`revision`不變也可只輪替proof key、relay credential、endpoint或private CA；schema-v1 digest-only compatibility provider仍維持restart-only。
+
+Cutover以generation read/write barrier序列化完整`Begin`：已在舊generation開始的delivery會先完成並註冊opaque challenge route，才允許新generation publish。Cutover後所有新`Begin`只使用新provider；舊challenge仍可在TTL內路由到原challenge verifier，所以不會出現「proof已送達但request_id突然失效」的窗口。
+
+Retired provider不再需要delivery secrets來驗證既有challenge，因此publish新generation時會清除舊HMAC proof key；`https-json-v1`同時清除舊in-memory Bearer credential並關閉idle HTTP connections。Invalid config、credential permissions、CA或schema downgrade一律fail-closed並保留last-known-good。Router最多保留4個仍有challenge的retired provider generations；超過上限時最舊challenge安全失效並沿既有generic `invalid_recovery` path。
+
+Durable account reload與recovery-provider reload在同一`SIGHUP`上獨立驗證／報告；recovery-only credential/CA rotation不要求account file revision前進，而任何account generation變更仍由durable reset writer做最後`account_id + credential_version` re-check。
+
+F.14 production E2E以兩個不同TLS 1.3 fake relays、credential與CA證明relay A→B無restart cutover、old challenge跨reload可兌換、new request只使用B、invalid credential replacement保留generation-2 LKG，並由未修改F.11 normal `Main.tscn`使用generation-2 proof完成reset/fresh-login。Protocol仍v9，schema仍v4。
+
+完整 F.14 contract：[`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md)。
+
 ### KDF migration
 
 ```bash
@@ -491,13 +508,13 @@ printf '%s\n' 'current password' | accountctl rehash-password \
 
 KDF migration publish後，舊 verifier generation所發出的 bearer會沿既有 account-generation fence退休。
 
-### SIGHUP account reload / live revocation
+### SIGHUP account / recovery reload
 
-Schema v3 / v4 可在 durable store 更新後對 `worldd` 發 `SIGHUP`；但 recovery provider啟用時必須維持 schema v4。
+Schema v3 / v4 account snapshot可在 durable store 更新後對 `worldd` 發 `SIGHUP`；recovery provider啟用時account schema必須維持v4。Schema-v2 delivered recovery provider也可由同一`SIGHUP`建立新的runtime generation；schema-v1 recovery provider維持restart-only。
 
-有效 reload 要求 store revision 嚴格前進。Invalid / stale / unsupported schema / mixed KDF policy reload保留 last-known-good。
+Account reload有效時要求store revision嚴格前進。Recovery provider reload則不要求文字revision前進，因為credential/private-CA-only rotation本來就不一定修改該revision。兩條reload各自validate、各自last-known-good，不形成跨檔案distributed transaction。
 
-安全順序：
+Account安全順序：
 
 ```text
 load + validate new account snapshot
@@ -511,11 +528,22 @@ load + validate new account snapshot
 → publish replacement account authenticator
 ```
 
-因此 password rotation、account disable、password reset、KDF verifier generation或其他 proof-generation 變更可讓舊 issued bearer 與 live game session立即失效。
+Recovery provider安全順序：
 
-Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 generation已 commit，stale grant就不能再 mint bearer。
+```text
+load + fully validate replacement schema-v2 provider / credential / CA
+→ wait for old-generation Begin + delivery completion
+→ register old challenge route
+→ publish new generation
+→ clear old proof key / relay credential
+→ keep bounded old verifier routes until consume / expiry / generation cap
+```
 
-F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13再把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
+因此 password rotation、account disable、password reset、KDF verifier generation或其他 account proof-generation 變更可讓舊 issued bearer 與 live game session立即失效；recovery credential/CA rotation則不會把已送達且仍有效的challenge無條件作廢。
+
+Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 account generation已 commit，stale grant就不能再 mint bearer。
+
+F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle；F.12把proof取得路徑接到Server-owned delivery adapter；F.13把delivery transport收斂成可部署HTTPS relay、bounded retry/idempotency與secret-safe observability；F.14再加入provider/credential/CA fail-closed runtime generation reload。Recovery proof、password、opaque request metadata、delivery credential與issued bearer持續有log-leak fail-fast檢查。
 
 ### Login / recovery abuse control
 
@@ -545,6 +573,7 @@ Recovery另有獨立 source-IP attempt guard與per-challenge attempt/TTL bounds�
 
 完整身份／登入文件：
 
+- [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md)
 - [`docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md`](docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md)
 - [`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md)
 - [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md)
@@ -590,9 +619,10 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.10 | Provider seam + public recovery request/reset；same known/unknown response schema；no-SIGHUP immediate retirement；normal Main reauth | ✅ |
 | S4-F.11 | Normal Godot Client recovery UX；generic unknown/wrong-proof；reset→fresh login；recovery throttle；secret/challenge no-persistence | ✅ |
 | S4-F.12 | DeliveryAdapter seam；Server-owned destination；filesystem reference delivery；enumeration-safe failure；F.11 Main delivered-proof reset/fresh-login | ✅ |
-| **S4-F.13** | **HTTPS/TLS 1.3 relay；owner-only credential；stable idempotent retry；outcome classification；secret-safe logs；F.11 Main relay-proof reset/fresh-login** | **✅** |
+| S4-F.13 | HTTPS/TLS 1.3 relay；owner-only credential；stable idempotent retry；outcome classification；secret-safe logs；F.11 Main relay-proof reset/fresh-login | ✅ |
+| **S4-F.14** | **schema-v2 provider/credential/CA SIGHUP generation reload；in-flight cutover fence；old challenge routing；invalid reload LKG；F.11 Main post-rotation reset/fresh-login** | **✅** |
 
-Server runtime contract現在是F.13；paired Client runtime仍是F.11。F.13 final exact product head `21b02a277bc18c67828f6eb2b931ff7ba532098d`通過5/5 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E與Production Recovery Delivery Provider E2E；Protocol仍v9，Client product code未為F.13增加任何account/game authority。
+Server runtime contract現在是F.14；paired Client runtime仍是F.11。F.14 final exact product head `6d3856a204a6188adbf50f6e7760a0d94cbb6bc7`通過6/6 workflows：Server CI、Production Account Recovery E2E、Production Public Recovery E2E、Production Recovery Delivery E2E、Production Recovery Delivery Provider E2E與Production Recovery Delivery Reload E2E；Protocol仍v9，Client product code未為F.14增加任何account/game authority。
 
 ## 文件入口
 
@@ -600,6 +630,7 @@ Server runtime contract現在是F.13；paired Client runtime仍是F.11。F.13 fi
 
 - 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md`](docs/S4F14_RECOVERY_DELIVERY_RUNTIME_RELOAD.md) — recovery provider / credential / CA runtime generations / cutover / last-known-good contract
 - [`docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md`](docs/S4F13_PRODUCTION_RECOVERY_DELIVERY_PROVIDER.md) — vendor-isolated HTTPS relay / credential / retry / idempotency / observability contract
 - [`docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md`](docs/S4F12_VERIFIED_RECOVERY_DELIVERY.md) — provider-neutral verified delivery adapter / reference transport / failure mapping
 - [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md) — verified recovery provider / public reset / immediate revocation
@@ -692,14 +723,15 @@ Production issued-session deployment：
 
 Static trusted mode 與 issued-session mode互斥。Login/recovery control plane與 trusted game ingress都要求 TLS 1.3。Realtime UDP仍是 Protocol v9 authenticated plaintext datagram。
 
-Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`；HTTPS relay的credential/CA/endpoint由provider config與獨立credential file提供。TLS certificate/key、recovery provider與relay credential/CA目前仍為process-start載入。
+Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-session account schema-v1/v2為 restart-only compatibility，durable schema-v3/v4支援 SIGHUP account-generation reload。Public recovery provider啟用時要求 durable schema v4。Schema-v2 recovery provider可選F.12 `filesystem-reference-v1`或F.13 `https-json-v1`，並自F.14起支援`SIGHUP` provider generation reload；HTTPS relay credential/private CA/endpoint可隨generation輪替。Schema-v1 recovery provider仍restart-only。TLS game/login certificate/key仍為process-start載入。
 
 ## 目前刻意保留的限制
 
 - Realtime UDP尚未加密；目前只有 authenticity / integrity。
 - Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
-- F.13 已有可部署、vendor-isolated的HTTPS/TLS 1.3 recovery relay contract與bounded retry/idempotency/outcome observability，但core Server刻意不綁特定email/SMS vendor SDK；尚未有durable async delivery queue或跨process send deduplication。
-- F.13 recovery provider、relay Bearer credential與private CA仍是process-start載入；尚未有fail-closed runtime rotation/hot reload或last-known-good delivery-provider generation切換。
+- F.14 已有provider/credential/private-CA runtime generation reload、in-flight cutover fence與last-known-good保留；最多保留4個仍有未到期challenge的retired generations，超出上限會安全退休最舊challenge。
+- Recovery delivery仍在public request控制路徑同步執行；尚未有durable delivery outbox、process-crash後send recovery、跨process idempotency state或bounded asynchronous backpressure contract。
+- Core Server刻意不綁特定email/SMS vendor SDK；實際vendor仍應位於F.13 HTTPS relay後方。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
 - Login/recovery都有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
@@ -712,10 +744,10 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.13 已把F.12 reference delivery推進成真正可部署、但仍vendor-isolated的HTTPS relay contract：TLS 1.3、separate owner-only Bearer credential、raw request-ID isolation、stable idempotency、bounded transient retry、permanent failure分類與secret-safe observability都在同一exact head由fake relay + 未修改F.11 normal `Main.tscn`證明，F.10/F.12既有revocation與filesystem compatibility gates也持續全綠。
+S4-F.14 已把F.13 restart-only relay config推進成fail-closed runtime generation model：proof key、relay endpoint、Bearer credential、private CA與destination map都可在`SIGHUP`上完整validate後cutover；old-generation in-flight delivery先完成再publish，新request只用新generation，舊challenge則保留原verifier route；invalid replacement維持last-known-good。F.9/F.10/F.12/F.13 gates與未修改F.11 normal `Main.tscn`也在同一exact head持續全綠。
 
-下一個 bounded stage 建議進入 **S4-F.14 — Recovery Delivery Credential Rotation / Runtime Reload**：維持public recovery API、Client F.11與Protocol v9不變，為schema-v2 recovery provider / relay credential / private CA建立fail-closed runtime reload generation，invalid reload保留last-known-good；定義in-flight delivery在舊generation完成或被安全退休的邊界，以及credential rotation時的可觀測reload outcome。TLS game/login certificate hot reload、特定vendor SDK與distributed delivery queue仍保持獨立decision gate。
+下一個 bounded stage 建議進入 **S4-F.15 — Durable Recovery Delivery Outbox / Restart Reliability**：維持public recovery API、Client F.11、schema-v4與Protocol v9不變，把目前同步delivery的process-local可靠性缺口收斂成bounded durable outbox / idempotent resend contract，明確定義enqueue durability、restart replay、expiry/drop、backpressure、duplicate suppression與secret-at-rest邊界；不把vendor SDK、distributed broker或多主機consensus引入core Server。
 
-Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
+Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session、TLS certificate hot reload與Protocol v10仍保持獨立 decision gate。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
