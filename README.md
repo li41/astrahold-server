@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-目前主線已完成到 **S4-F.10 — Verified Recovery Provider / Public Reset Exchange**。
+Server runtime 主線已完成到 **S4-F.10 — Verified Recovery Provider / Public Reset Exchange**；paired Godot Client 已完成 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -36,7 +36,10 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 - **F.10 pluggable verified-recovery provider seam + TLS public recovery request/reset exchange**
 - F.10 known/unknown request同 status / field set，沒有 explicit account-existence欄位
 - F.10 successful public reset在同一 account/session mutation fence內立即退休舊 bearer/live peer，**不需要 SIGHUP**
-- F.10 production public-reset → normal `Main.tscn` reauthentication E2E
+- **F.11 normal Godot `Main.tscn` provider-neutral forgot-password / proof / new-password UX**
+- F.11 Client只保存opaque recovery challenge於process memory；不顯示、不持久化、不寫log
+- F.11 successful reset回normal login並要求fresh password submit；不自動replay replacement password
+- F.11 production gate同時驗證generic unknown request、generic `invalid_recovery`、`recovery_throttled + Retry-After`與13/13 Client workflows
 
 核心 production contract：
 
@@ -417,6 +420,29 @@ F.9 的 single-writer operational contract仍成立：啟用 public recovery時�
 
 完整 F.10 contract：[`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md)。
 
+### F.11 Client recovery acceptance
+
+F.11 不改 Server wire或authority contract；它讓 normal Godot產品 Client正式消費 F.10 public endpoints：
+
+```text
+forgot password
+→ Client sends login_id only
+→ F.10 returns opaque request_id + expires_at
+→ Client shows generic provider-proof UI
+→ Client submits request_id + recovery_proof + new_password
+→ Server validates provider proof / generation / durable CAS
+→ successful reset = 204 + immediate old-generation retirement
+→ Client discards challenge
+→ normal login screen
+→ user performs fresh password login
+```
+
+Client不接收account existence、AccountID、credential version、CharacterID或takeover authority；opaque `request_id`只存在process memory，不顯示、不持久化、不寫log。Recovery proof與new-password欄位在submit前清空。
+
+F.11 product E2E證明：unknown-account request使用generic accepted UX、wrong proof使用generic `invalid_recovery` UX、correct proof成功reset、舊密碼失效、新密碼完成既有issued-session/game bootstrap、explicit logout成功，且`recovery_throttled + Retry-After`不會被誤顯示為invalid credentials。
+
+F.11 Client exact final head通過13/13 workflows；這個Stage沒有新增GameV1、Protocol v10或任何Client gameplay/account authority。
+
 ### KDF migration
 
 ```bash
@@ -457,41 +483,7 @@ load + validate new account snapshot
 
 Argon2id verification刻意在 issuance lock外執行；`Issue` 會在同一 serialization boundary重新檢查 `AuthenticationSubject + AuthenticationGeneration`。即使舊 password verification在 reload/reset前已完成，只要新的 generation已 commit，stale grant就不能再 mint bearer。
 
-F.9 production recovery E2E證明 operator流程：
-
-```text
-schema v3 → explicit migrate → v4
-→ normal Main old-password login
-→ issue recovery proof
-→ SIGHUP: removed_bearers=0 / retired_peers=0
-→ one-time password reset
-→ proof reuse rejected
-→ SIGHUP: removed_bearers=1 / retired_peers=1
-→ old password returns 401
-→ existing F.8 normal Main requires reauthentication
-→ new password login succeeds
-```
-
-F.10 production public recovery E2E另外證明：
-
-```text
-normal Main old-password login
-→ known recovery request = 202 request_id + expires_at
-→ unknown recovery request = same status / field set
-→ unknown challenge + otherwise-valid proof = 401 invalid_recovery
-→ known challenge + wrong proof = same 401 body
-→ known challenge + correct proof = 204
-→ NO SIGHUP
-→ old bearer/live peer retired
-→ Main enters ReauthenticationRequired
-→ old password = 401 invalid_credentials
-→ consumed challenge replay = 401 invalid_recovery
-→ durable credential generation advanced
-→ legacy F.9 recovery grants removed
-→ Main reauth with new password succeeds
-```
-
-Recovery proof、password與issued bearer均有 log-leak fail-fast檢查。
+F.9 production recovery E2E證明 operator流程；F.10 production public recovery E2E證明 no-SIGHUP public reset；F.11再由normal Client產品UX直接覆蓋public request/reset/fresh-login/throttle。Recovery proof、password與issued bearer持續有log-leak fail-fast檢查。
 
 ### Login / recovery abuse control
 
@@ -561,9 +553,10 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | S4-F.7 | Schema-v3 durable store；password rotation / disable live revocation；enable/relogin；source-IP throttle | ✅ |
 | S4-F.8 | Normal Godot `Main.tscn` login / live-revocation reauth / logout / 401 / 429 UX | ✅ |
 | S4-F.9 | Schema-v4 operator recovery；digest-only proof；issue不踢人；one-time reset後live retirement | ✅ |
-| **S4-F.10** | **Provider seam + public recovery request/reset；same known/unknown response schema；no-SIGHUP immediate retirement；normal Main reauth** | **✅** |
+| S4-F.10 | Provider seam + public recovery request/reset；same known/unknown response schema；no-SIGHUP immediate retirement；normal Main reauth | ✅ |
+| **S4-F.11** | **Normal Godot Client recovery UX；generic unknown/wrong-proof；reset→fresh login；recovery throttle；secret/challenge no-persistence** | **✅** |
 
-S4-F.10 final exact head通過 Server Test / Vet / Race、既有 F.9 recovery compatibility E2E與新的 Production Public Recovery E2E；Client runtime沒有為 F.10增加任何 account/game authority。
+Server runtime contract仍停在F.10；F.11是paired Client integration stage。F.11 final exact head通過13/13 Client workflows，並將七條歷史E.5/E.6/E.7/F.5/F.6/F.7/F.8 workflow修為真正checkout其原先assert的固定Server milestone SHA，scenario本體未改。
 
 ## 文件入口
 
@@ -572,6 +565,7 @@ S4-F.10 final exact head通過 Server Test / Vet / Race、既有 F.9 recovery co
 - 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / known limitations
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
 - [`docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md`](docs/S4F10_VERIFIED_RECOVERY_PUBLIC_RESET.md) — verified recovery provider / public reset / immediate revocation
+- Client `docs/S4F11_CLIENT_RECOVERY_UX.md` — provider-neutral normal Client recovery / fresh-login / secret-handling acceptance
 - [`docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md`](docs/S4F9_ACCOUNT_RECOVERY_KDF_MIGRATION.md) — schema-v4 operator recovery / one-time reset / KDF migration
 - [`docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md`](docs/S4F7_DURABLE_ACCOUNT_LIFECYCLE.md) — durable schema-v3 lifecycle / SIGHUP / abuse control
 - [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md) — account-auth provider seam / Argon2id reference backend
@@ -666,12 +660,11 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 - Realtime UDP尚未加密；目前只有 authenticity / integrity。
 - Schema-v4仍是 **single-writer durable JSON account backend**；public recovery啟用時running `worldd`是 active writer，尚未有 distributed account DB或 multi-writer recovery CAS。
-- F.10已有 public recovery request/reset exchange與provider seam，但內建provider只驗 high-entropy recovery code；尚未有 verified email/SMS ownership / delivery provider。
-- 尚未有 normal Godot Client forgot-password / recovery proof / new-password UX；目前 F.10 production gate直接用 HTTP exchange驅動既有 F.8 reauthentication state machine。
+- F.11 Client已有provider-neutral recovery API/UX，但Server內建F.10 provider仍只驗high-entropy recovery code；尚未有verified email/SMS ownership / delivery provider。
 - 尚未加入 breached-password corpus、MFA / TOTP / WebAuthn / passkeys / OIDC external IdP adapter。
 - Login/recovery都有 direct-listener source-IP fixed-window throttling，但尚未有 trusted reverse-proxy attribution、distributed rate limit、IP reputation、credential-stuffing intelligence或 CAPTCHA。
 - Issued session credential仍為 process-local short-lived proof；Server restart強制重新 login，尚無 refresh token、remembered-device session、durable bearer recovery或 cross-server revocation propagation。
-- F.8 normal產品 Client已有login/reauth state machine，但尚未加入 OS keychain / secure remembered-session storage；human password與issued bearer都不落地持久化。
+- F.11 Client刻意不持久化human password、recovery proof或opaque recovery challenge；尚未加入 OS keychain / secure remembered-session storage，因目前沒有refresh token/remember-session contract。
 - TLS game/login certificate與 key、recovery provider config尚未 hot reload。
 - NAT-like migration目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
 - 尚未做 multi-server distributed ownership / failover。
@@ -680,8 +673,10 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.10 已把 F.9 operator recovery primitive提升成 provider-neutral public exchange：challenge綁定 Server-owned account generation、known/unknown request沒有 explicit existence欄位差異、proof有 TTL/attempt/IP bounds，成功 public reset在 durable commit後立即撤銷舊 bearer/live peer且不需要 SIGHUP；真實 production gate也已用未修改的 F.8 normal `Main.tscn`完成新密碼 reauthentication。
+S4-F.11 已把 F.10 public recovery contract正式接進normal Godot Client，並證明generic unknown-account feedback、opaque challenge、wrong-proof UX、successful reset→fresh login、recovery throttle與secret/challenge no-persistence都可在不新增任何Client authority的前提下成立。
 
-下一個 bounded stage 應進入 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**：把 F.10 `/v1/account/recovery/request`與`/reset`接入 normal Godot產品 state machine，定義 forgot-password、challenge pending、proof/new-password submit、generic enumeration-safe request feedback、401/429/TLS/network failure與成功後重新登入的 UX；實際 email/SMS delivery provider、MFA/WebAuthn/OIDC與distributed recovery仍保持獨立 decision gate。
+下一個 bounded stage 應進入 **S4-F.12 — Verified Recovery Delivery Adapter / Provider Integration**：把F.10 provider seam從「預先配置的high-entropy recovery code」推進到可插拔verified delivery adapter contract，定義destination ownership、challenge correlation、send/retry/expiry/failure mapping與enumeration-resistant request行為；先建立provider-neutral adapter seam與可自動驗證的reference transport，不把真實email/SMS vendor credentials綁進核心Server。
+
+實際email/SMS vendor、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與transport替換仍保持獨立 decision gate。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
