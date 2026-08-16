@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/netip"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,11 +35,11 @@ var sessionLoginTrustedProxyEdgePolicyFile = flag.String(
 var errSessionEdgePolicyConfig = errors.New("worldd: invalid trusted proxy edge policy config")
 
 type sessionEdgePolicyDefinition struct {
-	SchemaVersion    uint16                               `json:"schema_version"`
-	Revision         string                               `json:"revision"`
-	ForwardedHeader  string                               `json:"forwarded_header"`
-	ClientCAFile     string                               `json:"client_ca_file"`
-	Bindings         []sessionEdgePolicyBindingDefinition `json:"bindings"`
+	SchemaVersion   uint16                                `json:"schema_version"`
+	Revision        string                                `json:"revision"`
+	ForwardedHeader string                                `json:"forwarded_header"`
+	ClientCAFile    string                                `json:"client_ca_file"`
+	Bindings        []sessionEdgePolicyBindingDefinition `json:"bindings"`
 }
 
 type sessionEdgePolicyBindingDefinition struct {
@@ -58,6 +61,7 @@ type sessionEdgePolicySnapshot struct {
 	bindings        []sessionEdgePolicyBinding
 	trustedPrefixes []netip.Prefix
 	identityCount   int
+	authorityDigest [sha256.Size]byte
 }
 
 type sessionEdgePolicyMetadata struct {
@@ -81,6 +85,7 @@ type sessionEdgePolicyReloadResult struct {
 	BindingCount       int
 	PrefixCount        int
 	IdentityCount      int
+	AuthorityChanged   bool
 }
 
 type sessionEdgePolicyConnection struct {
@@ -161,9 +166,9 @@ func loadSessionEdgePolicySnapshot(definitionFile string, now time.Time) (*sessi
 	if !filepath.IsAbs(caFile) {
 		caFile = filepath.Join(filepath.Dir(definitionFile), caFile)
 	}
-	roots, rootCount, err := loadSessionProxyMTLSRoots(caFile, now)
+	roots, rootCount, rootDigests, err := loadSessionEdgePolicyRoots(caFile, now)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errSessionEdgePolicyConfig, err)
+		return nil, err
 	}
 	if len(definition.Bindings) == 0 || len(definition.Bindings) > sessionEdgePolicyMaxBindings {
 		return nil, fmt.Errorf("%w: bindings must contain 1..%d entries", errSessionEdgePolicyConfig, sessionEdgePolicyMaxBindings)
@@ -237,7 +242,103 @@ func loadSessionEdgePolicySnapshot(definitionFile string, now time.Time) (*sessi
 		bindings:        bindings,
 		trustedPrefixes: trustedPrefixes,
 		identityCount:   identityCount,
+		authorityDigest: sessionEdgePolicyAuthorityDigest(mode, rootDigests, bindings),
 	}, nil
+}
+
+// loadSessionEdgePolicyRoots mirrors the F.18 trust-anchor validation but also
+// returns a sorted de-duplicated DER digest set. F.21 compares that set instead
+// of PEM bytes, paths, order, or duplicate blocks so representation-only CA
+// changes do not create a new edge authority generation.
+func loadSessionEdgePolicyRoots(path string, now time.Time) (*x509.CertPool, int, [][sha256.Size]byte, error) {
+	data, err := readSessionProxyMTLSFile(path, sessionProxyMTLSMaxCABundleBytes)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("%w: client CA bundle: %v", errSessionEdgePolicyConfig, err)
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	roots := x509.NewCertPool()
+	rootCount := 0
+	seenDigests := make(map[[sha256.Size]byte]struct{})
+	rootDigests := make([][sha256.Size]byte, 0)
+	remaining := data
+	for len(bytes.TrimSpace(remaining)) > 0 {
+		block, rest := pem.Decode(remaining)
+		if block == nil {
+			return nil, 0, nil, fmt.Errorf("%w: client CA bundle contains invalid PEM data", errSessionEdgePolicyConfig)
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, 0, nil, fmt.Errorf("%w: client CA bundle contains non-certificate PEM block", errSessionEdgePolicyConfig)
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("%w: parse client CA: %v", errSessionEdgePolicyConfig, err)
+		}
+		if !certificate.BasicConstraintsValid || !certificate.IsCA {
+			return nil, 0, nil, fmt.Errorf("%w: client trust anchor is not a CA", errSessionEdgePolicyConfig)
+		}
+		if certificate.KeyUsage != 0 && certificate.KeyUsage&x509.KeyUsageCertSign == 0 {
+			return nil, 0, nil, fmt.Errorf("%w: client CA does not permit certificate signing", errSessionEdgePolicyConfig)
+		}
+		if now.Before(certificate.NotBefore) || !now.Before(certificate.NotAfter) {
+			return nil, 0, nil, fmt.Errorf("%w: client CA is not currently valid", errSessionEdgePolicyConfig)
+		}
+		rootCount++
+		if rootCount > sessionProxyMTLSMaxRoots {
+			return nil, 0, nil, fmt.Errorf("%w: client CA bundle exceeds %d roots", errSessionEdgePolicyConfig, sessionProxyMTLSMaxRoots)
+		}
+		roots.AddCert(certificate)
+		digest := sha256.Sum256(certificate.Raw)
+		if _, exists := seenDigests[digest]; !exists {
+			seenDigests[digest] = struct{}{}
+			rootDigests = append(rootDigests, digest)
+		}
+		remaining = rest
+	}
+	if rootCount == 0 {
+		return nil, 0, nil, fmt.Errorf("%w: client CA bundle contains no roots", errSessionEdgePolicyConfig)
+	}
+	sort.Slice(rootDigests, func(i, j int) bool {
+		return bytes.Compare(rootDigests[i][:], rootDigests[j][:]) < 0
+	})
+	return roots, rootCount, rootDigests, nil
+}
+
+// sessionEdgePolicyAuthorityDigest represents only effective edge authority.
+// Operator revision labels, JSON order, binding grouping, duplicate entries,
+// CA file paths, PEM formatting, and PEM order are intentionally excluded.
+func sessionEdgePolicyAuthorityDigest(mode sessionSourceHeaderMode, rootDigests [][sha256.Size]byte, bindings []sessionEdgePolicyBinding) [sha256.Size]byte {
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte("astrahold/session-edge-policy-authority/v1\x00"))
+	_, _ = hasher.Write([]byte(sessionSourceHeaderModeString(mode)))
+	for _, digest := range rootDigests {
+		_, _ = hasher.Write([]byte{0x01})
+		_, _ = hasher.Write(digest[:])
+	}
+
+	records := make([]string, 0)
+	for _, binding := range bindings {
+		identities := make([]string, 0, len(binding.allowedDNS))
+		for identity := range binding.allowedDNS {
+			identities = append(identities, identity)
+		}
+		sort.Strings(identities)
+		identitySet := strings.Join(identities, "\x00")
+		for _, prefix := range binding.prefixes {
+			records = append(records, prefix.String()+"\x00"+identitySet)
+		}
+	}
+	sort.Strings(records)
+	for _, record := range records {
+		_, _ = hasher.Write([]byte{0x02})
+		_, _ = hasher.Write([]byte(record))
+		_, _ = hasher.Write([]byte{0x00})
+	}
+
+	var digest [sha256.Size]byte
+	copy(digest[:], hasher.Sum(nil))
+	return digest
 }
 
 func parseSessionEdgePolicyHeaderMode(value string) (sessionSourceHeaderMode, string, error) {
@@ -394,6 +495,22 @@ func (r *reloadableSessionEdgePolicy) Snapshot() sessionEdgePolicyMetadata {
 	}
 }
 
+func sessionEdgePolicyReloadResultFrom(previous *sessionEdgePolicySnapshot, previousGeneration uint64, current *sessionEdgePolicySnapshot, generation uint64, changed bool) sessionEdgePolicyReloadResult {
+	return sessionEdgePolicyReloadResult{
+		PreviousGeneration: previousGeneration,
+		Generation:         generation,
+		PreviousRevision:   previous.revision,
+		Revision:           current.revision,
+		PreviousHeaderMode: sessionSourceHeaderModeString(previous.mode),
+		HeaderMode:         sessionSourceHeaderModeString(current.mode),
+		RootCount:          current.rootCount,
+		BindingCount:       len(current.bindings),
+		PrefixCount:        len(current.trustedPrefixes),
+		IdentityCount:      current.identityCount,
+		AuthorityChanged:   changed,
+	}
+}
+
 func (r *reloadableSessionEdgePolicy) Reload() (sessionEdgePolicyReloadResult, error) {
 	if r == nil || r.now == nil || strings.TrimSpace(r.definitionFile) == "" {
 		return sessionEdgePolicyReloadResult{}, errSessionEdgePolicyConfig
@@ -405,23 +522,18 @@ func (r *reloadableSessionEdgePolicy) Reload() (sessionEdgePolicyReloadResult, e
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.current == nil || r.generation == ^uint64(0) {
+	if r.current == nil {
 		return sessionEdgePolicyReloadResult{}, errSessionEdgePolicyConfig
 	}
 	previousGeneration := r.generation
 	previous := r.current
+	if previous.authorityDigest == candidate.authorityDigest {
+		return sessionEdgePolicyReloadResultFrom(previous, previousGeneration, previous, previousGeneration, false), nil
+	}
+	if r.generation == ^uint64(0) {
+		return sessionEdgePolicyReloadResult{}, errSessionEdgePolicyConfig
+	}
 	r.current = candidate
 	r.generation++
-	return sessionEdgePolicyReloadResult{
-		PreviousGeneration: previousGeneration,
-		Generation:         r.generation,
-		PreviousRevision:   previous.revision,
-		Revision:           candidate.revision,
-		PreviousHeaderMode: sessionSourceHeaderModeString(previous.mode),
-		HeaderMode:         sessionSourceHeaderModeString(candidate.mode),
-		RootCount:          candidate.rootCount,
-		BindingCount:       len(candidate.bindings),
-		PrefixCount:        len(candidate.trustedPrefixes),
-		IdentityCount:      candidate.identityCount,
-	}, nil
+	return sessionEdgePolicyReloadResultFrom(previous, previousGeneration, candidate, r.generation, true), nil
 }

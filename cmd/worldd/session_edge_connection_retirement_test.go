@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -22,10 +23,7 @@ func TestSessionEdgeConnectionRetirementClosesOlderAuthenticatedGeneration(t *te
 	runtime.bindConnection(connection.RemoteAddr().String(), snapshot, generation, 0)
 	attributor.observeEdgeConnectionState(connection, http.StateActive)
 
-	result, err := runtime.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := reloadSessionEdgePolicyAuthorityChangeForRetirementTest(t, runtime)
 	if retired := attributor.retireOldEdgeConnections(result.Generation); retired != 1 {
 		t.Fatalf("retired=%d want=1", retired)
 	}
@@ -42,10 +40,7 @@ func TestSessionEdgeConnectionRetirementLeavesDirectConnectionOpen(t *testing.T)
 	connection := newSessionEdgeRetirementTestConn("127.0.0.1", 6200)
 	attributor.observeEdgeConnectionState(connection, http.StateNew)
 
-	result, err := runtime.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := reloadSessionEdgePolicyAuthorityChangeForRetirementTest(t, runtime)
 	if retired := attributor.retireOldEdgeConnections(result.Generation); retired != 0 {
 		t.Fatalf("retired=%d want=0", retired)
 	}
@@ -65,10 +60,7 @@ func TestSessionEdgeConnectionRetirementGracefulCompatibilityMode(t *testing.T) 
 	snapshot, generation := runtime.currentSnapshot()
 	runtime.bindConnection(connection.RemoteAddr().String(), snapshot, generation, 0)
 	attributor.observeEdgeConnectionState(connection, http.StateActive)
-	result, err := runtime.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := reloadSessionEdgePolicyAuthorityChangeForRetirementTest(t, runtime)
 	if retired := attributor.retireOldEdgeConnections(result.Generation); retired != 0 {
 		t.Fatalf("retired=%d want=0", retired)
 	}
@@ -111,10 +103,7 @@ func TestSessionEdgeConnectionRetirementClosesHandshakeThatFinishesAfterCutover(
 	attributor.observeEdgeConnectionState(connection, http.StateNew)
 
 	oldSnapshot, oldGeneration := runtime.currentSnapshot()
-	result, err := runtime.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := reloadSessionEdgePolicyAuthorityChangeForRetirementTest(t, runtime)
 	if result.Generation <= oldGeneration {
 		t.Fatalf("reload generation=%d old=%d", result.Generation, oldGeneration)
 	}
@@ -126,6 +115,35 @@ func TestSessionEdgeConnectionRetirementClosesHandshakeThatFinishesAfterCutover(
 	if !connection.Closed() {
 		t.Fatal("stale handshake connection remained open after cutover")
 	}
+}
+
+// F.20 retirement tests require a real authority cutover. Before F.21, calling
+// Reload on identical policy text implicitly advanced the generation; F.21
+// correctly treats that as a no-op, so these tests now make their cutover
+// explicit instead of depending on the old unconditional-generation behavior.
+func reloadSessionEdgePolicyAuthorityChangeForRetirementTest(t *testing.T, runtime *reloadableSessionEdgePolicy) sessionEdgePolicyReloadResult {
+	t.Helper()
+	if runtime == nil {
+		t.Fatal("nil edge policy runtime")
+	}
+	writeSessionEdgePolicyTest(t, runtime.definitionFile, sessionEdgePolicyDefinition{
+		SchemaVersion:   sessionEdgePolicySchemaVersion,
+		Revision:        "edge-002",
+		ForwardedHeader: "forwarded",
+		ClientCAFile:    filepath.Base(filepath.Join(filepath.Dir(runtime.definitionFile), "edge-ca.pem")),
+		Bindings: []sessionEdgePolicyBindingDefinition{
+			{Prefixes: []string{"127.0.0.2/32"}, DNSNames: []string{"edge-b.astrahold.test"}},
+			{Prefixes: []string{"10.0.0.0/8"}, DNSNames: []string{"internal-hop.astrahold.test"}},
+		},
+	})
+	result, err := runtime.Reload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AuthorityChanged {
+		t.Fatalf("retirement fixture did not publish an authority change: %+v", result)
+	}
+	return result
 }
 
 func setSessionEdgeRetirementForTest(t *testing.T, enabled bool) {
