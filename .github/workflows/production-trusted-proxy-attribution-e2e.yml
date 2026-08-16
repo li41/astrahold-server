@@ -1,0 +1,307 @@
+name: Production Trusted Proxy Attribution E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-proxy-source-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run trusted proxy source attribution acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_root="$RUNNER_TEMP/s4f17-data"
+          tls_dir="$data_root/tls"
+          accounts_file="$data_root/accounts.json"
+          provider_file="$data_root/recovery-provider.json"
+          server_log="$RUNNER_TEMP/s4f17-worldd.log"
+          proxy_log="$RUNNER_TEMP/s4f17-proxy.log"
+          proxy_script="$RUNNER_TEMP/s4f17-proxy.py"
+          wrong_password="F17-Wrong-Password-Should-Not-Log!"
+          recovery_code="F17-High-Entropy-Recovery-Code-0123456789abcdef"
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+
+          rm -rf "$data_root"
+          mkdir -p "$data_root" "$tls_dir" "$data_root/character-state"
+
+          "$ACCOUNTCTL" init -path "$accounts_file"
+          printf '%s\n' 'F17-Correct-Horse-Battery-Staple!' | "$ACCOUNTCTL" create \
+            -path "$accounts_file" \
+            -login holder \
+            -character f17-character \
+            -password-stdin
+
+          python3 - "$provider_file" "$recovery_code" <<'PY'
+          import hashlib, json, os, sys
+          path, code = sys.argv[1:]
+          with open(path, "x", encoding="utf-8") as f:
+              json.dump({
+                  "schema_version": 1,
+                  "revision": "f17-ci-recovery-provider-001",
+                  "subjects": [{
+                      "login_id": "holder",
+                      "recovery_code_sha256": hashlib.sha256(code.encode()).hexdigest(),
+                  }],
+              }, f, indent=2)
+              f.write("\n")
+              f.flush()
+              os.fsync(f.fileno())
+          os.chmod(path, 0o600)
+          PY
+
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/ca.key" -out "$tls_dir/ca.crt" -days 1 -sha256 \
+            -subj "/CN=Astrahold S4-F.17 CI CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server.key" -out "$tls_dir/server.csr" \
+            -subj "/CN=localhost" >/dev/null 2>&1
+          cat >"$tls_dir/server.ext" <<'EOF_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_EXT
+          openssl x509 -req -in "$tls_dir/server.csr" \
+            -CA "$tls_dir/ca.crt" -CAkey "$tls_dir/ca.key" -CAcreateserial \
+            -out "$tls_dir/server.crt" -days 1 -sha256 -extfile "$tls_dir/server.ext" >/dev/null 2>&1
+          chmod 600 "$tls_dir/ca.key" "$tls_dir/server.key" "$accounts_file" "$provider_file"
+
+          cat >"$proxy_script" <<'PY'
+          import http.client
+          import http.server
+          import ssl
+          import sys
+
+          ca, cert, key = sys.argv[1:]
+          upstream_context = ssl.create_default_context(cafile=ca)
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def log_message(self, *_):
+                  pass
+
+              def do_POST(self):
+                  length = int(self.headers.get("Content-Length", "0"))
+                  body = self.rfile.read(length)
+                  headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+                  if "X-Forwarded-For" in self.headers:
+                      headers["X-Forwarded-For"] = self.headers["X-Forwarded-For"]
+                  connection = http.client.HTTPSConnection(
+                      "127.0.0.1",
+                      39444,
+                      context=upstream_context,
+                      source_address=("127.0.0.2", 0),
+                      timeout=5,
+                  )
+                  connection.request("POST", self.path, body=body, headers=headers)
+                  response = connection.getresponse()
+                  response_body = response.read()
+                  self.send_response(response.status)
+                  for name in ("Content-Type", "Cache-Control", "Pragma", "Retry-After"):
+                      value = response.getheader(name)
+                      if value is not None:
+                          self.send_header(name, value)
+                  self.send_header("Content-Length", str(len(response_body)))
+                  self.end_headers()
+                  self.wfile.write(response_body)
+                  connection.close()
+
+          server = http.server.ThreadingHTTPServer(("127.0.0.1", 39555), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.load_cert_chain(certfile=cert, keyfile=key)
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          server.serve_forever()
+          PY
+
+          cleanup() {
+            set +e
+            for pid in "${proxy_pid:-}" "${server_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for_marker() {
+            file="$1"
+            marker="$2"
+            pid="$3"
+            attempts="${4:-300}"
+            i=0
+            while [ "$i" -lt "$attempts" ]; do
+              if grep -Fq "$marker" "$file" 2>/dev/null; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "process exited before marker: $marker"
+                cat "$file" || true
+                return 1
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
+            echo "timed out waiting for marker: $marker"
+            cat "$file" || true
+            return 1
+          }
+
+          "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:39777 \
+            -udp 127.0.0.1:39778 \
+            -session-login-account-file "$accounts_file" \
+            -session-login-tls-listen 127.0.0.1:39444 \
+            -session-login-tls-cert "$tls_dir/server.crt" \
+            -session-login-tls-key "$tls_dir/server.key" \
+            -session-login-trusted-proxy-cidrs '127.0.0.2/32,10.0.0.0/8' \
+            -session-login-forwarded-header x-forwarded-for \
+            -session-login-ip-max-attempts 1 \
+            -session-login-ip-attempt-window 1m \
+            -session-recovery-provider-file "$provider_file" \
+            -session-recovery-challenge-ttl 10m \
+            -session-recovery-challenge-max-attempts 5 \
+            -session-recovery-ip-max-attempts 1 \
+            -session-recovery-ip-attempt-window 1m \
+            -character-state-dir "$data_root/character-state" \
+            -character-state-save-journal "$data_root/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data_root/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data_root/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
+          server_pid=$!
+
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "source_attribution=trusted-proxy/x-forwarded-for trusted_proxy_prefixes=2 forwarded_max_hops=16" "$server_pid"
+          wait_for_marker "$server_log" "session recovery: enabled=true" "$server_pid"
+
+          python3 "$proxy_script" "$tls_dir/ca.crt" "$tls_dir/server.crt" "$tls_dir/server.key" >"$proxy_log" 2>&1 &
+          proxy_pid=$!
+          proxy_ready=false
+          for _ in $(seq 1 100); do
+            proxy_status="$(printf '{}' | curl --silent --show-error --cacert "$tls_dir/ca.crt" \
+              --output /dev/null --write-out '%{http_code}' \
+              -H 'Content-Type: application/json' --data-binary @- \
+              https://localhost:39555/does-not-exist 2>/dev/null || true)"
+            if [ "$proxy_status" = "404" ]; then
+              proxy_ready=true
+              break
+            fi
+            if ! kill -0 "$proxy_pid" 2>/dev/null; then cat "$proxy_log"; exit 1; fi
+            sleep 0.1
+          done
+          if [ "$proxy_ready" != "true" ]; then
+            echo "trusted proxy did not become ready"
+            cat "$proxy_log" || true
+            exit 1
+          fi
+
+          login_body="$(printf '{"login_id":"holder","login_secret":"%s"}' "$wrong_password")"
+          login_status() {
+            url="$1"
+            forwarded="$2"
+            if [ "$forwarded" = "__missing__" ]; then
+              printf '%s' "$login_body" | curl --silent --show-error --cacert "$tls_dir/ca.crt" \
+                --output /tmp/f17-response --write-out '%{http_code}' \
+                -H 'Content-Type: application/json' --data-binary @- "$url"
+            else
+              printf '%s' "$login_body" | curl --silent --show-error --cacert "$tls_dir/ca.crt" \
+                --output /tmp/f17-response --write-out '%{http_code}' \
+                -H 'Content-Type: application/json' -H "X-Forwarded-For: $forwarded" \
+                --data-binary @- "$url"
+            fi
+          }
+
+          # Direct/untrusted socket peers must ignore forwarding metadata completely.
+          test "$(login_status https://localhost:39444/v1/session/login 'malformed-spoof')" = "401"
+          test "$(login_status https://localhost:39444/v1/session/login '198.51.100.99')" = "429"
+          grep -F '"error":"login_throttled"' /tmp/f17-response
+
+          # Trusted proxy clients receive independent buckets from sanitized XFF.
+          test "$(login_status https://localhost:39555/v1/session/login '198.51.100.10')" = "401"
+          test "$(login_status https://localhost:39555/v1/session/login '198.51.100.11')" = "401"
+          test "$(login_status https://localhost:39555/v1/session/login '198.51.100.10')" = "429"
+
+          # Right-to-left trust-chain stripping: the 10/8 hop is trusted, client is not.
+          test "$(login_status https://localhost:39555/v1/session/login '198.51.100.20, 10.0.0.9')" = "401"
+          test "$(login_status https://localhost:39555/v1/session/login '198.51.100.20, 10.0.0.10')" = "429"
+
+          # IPv4-mapped IPv6 and canonical IPv4 must share one normalized bucket.
+          test "$(login_status https://localhost:39555/v1/session/login '::ffff:198.51.100.30')" = "401"
+          test "$(login_status https://localhost:39555/v1/session/login '198.51.100.30')" = "429"
+
+          # Trusted peer malformed or missing metadata fails closed before auth/KDF.
+          test "$(login_status https://localhost:39555/v1/session/login 'not-an-ip')" = "400"
+          grep -F '"error":"invalid_request"' /tmp/f17-response
+          test "$(login_status https://localhost:39555/v1/session/login '__missing__')" = "400"
+
+          recovery_status() {
+            forwarded="$1"
+            login_id="$2"
+            printf '{"login_id":"%s"}' "$login_id" | curl --silent --show-error --cacert "$tls_dir/ca.crt" \
+              --output /tmp/f17-recovery-response --write-out '%{http_code}' \
+              -H 'Content-Type: application/json' -H "X-Forwarded-For: $forwarded" \
+              --data-binary @- https://localhost:39555/v1/account/recovery/request
+          }
+
+          # Recovery has an independent guard but consumes the exact same attributed source.
+          test "$(recovery_status '203.0.113.10' holder)" = "202"
+          test "$(recovery_status '203.0.113.10' holder)" = "429"
+          grep -F '"error":"recovery_throttled"' /tmp/f17-recovery-response
+          test "$(recovery_status '203.0.113.11' holder)" = "202"
+          test "$(recovery_status 'bad-recovery-source' holder)" = "400"
+
+          # Operational logs describe the trust mode but never emit attacker-controlled
+          # forwarding values or request secrets.
+          if grep -Fq "$wrong_password" "$server_log"; then
+            echo "worldd log leaked login secret"
+            cat "$server_log"
+            exit 1
+          fi
+          for forbidden in malformed-spoof 198.51.100.10 203.0.113.10 bad-recovery-source; do
+            if grep -Fq "$forbidden" "$server_log"; then
+              echo "worldd log leaked forwarding metadata: $forbidden"
+              cat "$server_log"
+              exit 1
+            fi
+          done
+
+          echo "ASTRAHOLD_F17_E2E_OK direct_header_ignored=true trusted_proxy_attributed=true multi_hop=true malformed_fail_closed=true ipv4_mapped_normalized=true recovery_attributed=true protocol=9 tls=1.3"
+
+      - name: Upload F.17 attribution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4f17-trusted-proxy-attribution-logs
+          path: |
+            ${{ runner.temp }}/s4f17-worldd.log
+            ${{ runner.temp }}/s4f17-proxy.log
+          if-no-files-found: ignore
