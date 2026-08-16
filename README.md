@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-目前主線已完成到 **S4-F.4 — Formal Login / Session Credential Issuance**。
+目前主線已完成到 **S4-F.6 — Account Authentication Provider / Human Credential Hardening**。
 
 核心 production contract：
 
@@ -46,6 +46,8 @@ Godot Client
 - Credential `not_before` / expiry / revocation policy with bounded rotation overlap
 - Schema-v2 runtime credential `SIGHUP` reload、emergency revocation、live-session invalidation
 - TLS 1.3 formal login control plane、32-byte CSPRNG opaque session credential issuance、explicit logout、exact Server-clock expiry
+- Formal account-authentication provider seam；schema v1 高熵 SHA-256 compatibility 與 schema v2 Argon2id human-password verifier 共用同一 issued-session lifecycle
+- Argon2id provider 的最低 KDF policy、成本上限、unknown-login equivalent KDF work 與 bounded concurrent verification
 - Authoritative Siege match state、Gate breach、Throne capture、winner、castle ownership、next-round role rotation
 - Durable castle ownership recovery
 - Production `worldd` TLS 1.3 trusted ingress
@@ -208,14 +210,15 @@ live RoutingID generation
 
 ## Trusted Identity / Login / TLS / Takeover
 
-Production `worldd` 現在可選擇兩種互斥的 trusted credential source：既有 `-trusted-character-auth-file` static credential mode，或 S4-F.4 issued-session login mode。兩種模式最後都進入同一個 `sessioncredential.Provider`、`ASTRAH1` trusted game admission、Session / Ownership Fence 與既有 world authority path。
+Production `worldd` 現在可選擇兩種互斥的 trusted credential source：既有 `-trusted-character-auth-file` static credential mode，或 issued-session login mode。兩種模式最後都進入同一個 `sessioncredential.Provider`、`ASTRAH1` trusted game admission、Session / Ownership Fence 與既有 world authority path。
 
 Issued-session mode 的控制面與 game transport 分離：
 
 ```text
 TLS 1.3 Login Client
 → /v1/session/login
-→ Server account verifier
+→ Server account-authentication provider
+→ Server-owned CharacterID / takeover grant
 → 32-byte CSPRNG opaque session credential
 → Client
 → TLS 1.3 trusted game ingress
@@ -224,6 +227,25 @@ TLS 1.3 Login Client
 → Session Credential Provider
 → trusted CharacterID
 ```
+
+Account-authentication provider 目前有兩種 file-backed reference schema：
+
+```text
+schema v1
+└── login_secret_sha256
+    └── high-entropy bootstrap / compatibility only
+
+schema v2
+└── password_argon2id PHC verifier
+    ├── Argon2id v=19
+    ├── memory 64..128 MiB
+    ├── passes 3..10
+    ├── parallelism 1..8
+    ├── salt 16..64 bytes
+    └── digest 32 bytes
+```
+
+Schema v2 在 unknown `login_id` 也會執行同成本的 dummy Argon2id derivation，再回相同 `invalid_credentials` shape；單一 `worldd` 最多同時執行四個 password KDF，以限制 account verification 的記憶體壓力。這是 application-level enumeration hardening，不宣稱網路層 perfect timing indistinguishability。
 
 Static compatibility mode 則維持：
 
@@ -242,6 +264,7 @@ TLS 1.3 trusted game ingress
 - 未設定 trusted auth 時，原本 ephemeral development identity 仍可使用。
 - Trusted bearer bootstrap 的 backend TCP 必須維持 loopback。
 - `sessioncredential.Provider` 不擁有 TCP / SessionID / EntityID / world state；只解析 opaque credential 成 trusted grant。
+- account-authentication provider 只驗證 account proof 並回 Server-owned `sessioncredential.Grant`；issued bearer、revocation scope、logout / expiry lifecycle 仍由原有 issuance runtime 管理。
 - provider grant 必須是 `AssuranceTrusted`，否則 fail-closed before normal GameV1 admission。
 - issued-session mode 與 `-trusted-character-auth-file` 刻意互斥，避免同一 process 出現兩套 credential namespace / revocation-scope authority。
 - login request 只接受 `login_id` + `login_secret`；CharacterID 與 `allow_active_takeover` 只由 Server account record 決定，未知 JSON authority 欄位直接拒絕。
@@ -250,7 +273,8 @@ TLS 1.3 trusted game ingress
 - `POST /v1/session/logout` 會撤銷 issued bearer；known / unknown well-formed bearer 都回 204，避免 credential existence oracle。
 - issued credential 的 logout / expiry 都先撤 transport scope，再移除 provider record；live peer 因此沿 S4-F.3 `ready=false` → token/route revocation → TCP close → fenced leave 路徑退休。
 - issued credential 是 process-local；`worldd` restart 後舊 bearer 全部失效並要求重新 login，不把短期 auth proof 變成新的 durable gameplay authority。
-- reference account verifier 的 `login_secret_sha256` **只適合高熵 bootstrap secret，不是 human-password KDF**；正式 password/OIDC/account DB 仍是後續 identity-backend 工作。
+- schema v1 `login_secret_sha256` 只適合高熵 machine/bootstrap secret；human password 使用 schema v2 Argon2id verifier。
+- schema v2 account file 仍只是 reference/bootstrap backend，不等於完整 account DB、registration/recovery、MFA、OIDC 或 password reset service。
 - static schema v1 仍維持 timeless 相容性，而且不能偷偷使用 lifecycle 欄位；v1 runtime reload / live invalidation 刻意不支援。
 - static schema v2 要求唯一 Server-side `credential_id`，可設定 RFC3339 `not_before` / `expires_at` / `revoked_at`。
 - `not_before` 邊界當下可用；`expires_at` / `revoked_at` 邊界當下立即失效。
@@ -259,7 +283,7 @@ TLS 1.3 trusted game ingress
 - operator 可 atomically replace schema-v2 credential JSON 後對 `worldd` 發 `SIGHUP`；合法 reload 更新 provider 與 live scope policy，非法 reload 保留 last-known-good。
 - reload 先安裝 transport scope fence，再 publish 新 provider；舊 in-flight authentication 無法在 revocation 後晚到並取得 realtime/world authority。
 - `allow_active_takeover` 預設 `false`，duplicate active session fail-closed。
-- 只有 Server credential provider grant 可授權 active takeover；Client 沒有 takeover bit。
+- 只有 Server credential / account provider grant 可授權 active takeover；Client 沒有 takeover bit。
 - takeover authority 綁定 exact CharacterID，並轉成既有 connection-scoped authorizer。
 - world ownership transfer 使用 fence / epoch CAS。
 - 舊 peer retirement 後 stale Leave 不能刪掉新 owner。
@@ -267,6 +291,7 @@ TLS 1.3 trusted game ingress
 
 完整文件：
 
+- [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md)
 - [`docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md`](docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md)
 - [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md)
 - [`docs/S4F2_CREDENTIAL_LIFECYCLE.md`](docs/S4F2_CREDENTIAL_LIFECYCLE.md)
@@ -344,6 +369,7 @@ Dirty Vitals max               4000 / tick
 | S4-E.5 | UDP HMAC、tamper / replay rejection、loss / reorder / duplicate impairment recovery | ✅ |
 | S4-E.6 | Connection-generation realtime route rotation + old-generation revocation | ✅ |
 | S4-E.7 | NAT-like endpoint migration、rebind spoof protection、WAN impairment、long-session health | ✅ |
+| S4-F.6 | Schema-v2 Argon2id account provider；real Godot password login → issued bearer → duplicate/takeover/logout/reuse rejection | ✅ |
 
 ## 文件入口
 
@@ -352,6 +378,7 @@ Dirty Vitals max               4000 / tick
 以下文件描述**目前**架構與 deployment / realtime security boundary：
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
+- [`docs/S4F6_ACCOUNT_AUTH_PROVIDER.md`](docs/S4F6_ACCOUNT_AUTH_PROVIDER.md) — account-auth provider seam / Argon2id human-password reference backend
 - [`docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md`](docs/S4F4_FORMAL_LOGIN_SESSION_ISSUANCE.md) — TLS login / short-lived opaque session issuance / logout / expiry
 - [`docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md`](docs/S4F3_RUNTIME_CREDENTIAL_REVOCATION.md) — runtime reload / emergency revocation / live-session invalidation
 - [`docs/S4F2_CREDENTIAL_LIFECYCLE.md`](docs/S4F2_CREDENTIAL_LIFECYCLE.md) — credential expiry / rotation / revocation lifecycle
@@ -433,11 +460,12 @@ Static trusted mode 與 issued-session mode 互斥。TLS flag 必須成組使用
 ## 目前刻意保留的限制
 
 - Realtime UDP 尚未加密；目前只有 authenticity / integrity。
-- S4-F.4 已有 formal login/session issuance，但第一個 account verifier 仍是 static SHA-256 high-entropy bootstrap-secret file；它不是 human-password store/KDF，也尚未接 account DB、OIDC、MFA 或 recovery flow。
+- S4-F.6 已有 formal account-auth provider seam 與 Argon2id human-password reference verifier，但仍是 static file-backed bootstrap backend；尚未有 durable account DB、registration/recovery、password reset/KDF migration、MFA/WebAuthn 或 OIDC adapter。
 - issued session credential 是 process-local、短生命週期 proof；尚無 refresh token、durable/distributed session credential store 或 cross-server revocation propagation。
-- Godot production Client 尚未自動走 `/v1/session/login` → `ASTRAH1` bootstrap；現有 production E2E 仍使用既有 trusted credential injection 路徑。
+- real Godot F.5/F.6 E2E 已走 `/v1/session/login` → issued bearer → `ASTRAH1`，但一般產品 Client 尚未接完整 visual login state machine / secure local credential handling。
 - schema v1 trusted credential config 僅保留 restart-only 相容性，不提供 runtime revocation scope。
 - TLS terminator 與 `worldd` 目前在同一 process，game/login certificate/key 尚未 hot reload。
+- login abuse throttling / IP reputation / CAPTCHA 等 anti-abuse policy 尚未加入。
 - NAT-like migration 目前只允許 same-IP UDP source-port change；跨 IP migration fail-closed。
 - 尚未做 multi-server distributed ownership / failover。
 - 尚未加入 periodic in-session realtime rekey、DTLS 或 QUIC；S4-E.7 目前沒有證明 MVP 需要它們。
@@ -445,6 +473,6 @@ Static trusted mode 與 issued-session mode 互斥。TLS flag 必須成組使用
 
 ## 下一個 bounded focus
 
-S4-F.4 已把人工預先配置的 game bearer 往正式 login → short-lived issued session credential 推進，同時完全沿用 F.1 Provider、F.2 Lifecycle 與 F.3 Runtime Revocation。下一個 bounded stage 應進入 **S4-F.5 — Godot Login Bootstrap / Issued Session Credential E2E**：讓真實 Godot Client 先經 TLS login 取得 opaque bearer，再以既有 `ASTRAH1` 完成 game admission，並驗證 login failure、expiry/logout、reconnect/takeover 與 authority boundary；Protocol v9 與 realtime transport仍不需要重新設計。
+S4-F.6 已把 human-password verification 從 issued-session lifecycle 中抽成正式 account-authentication seam，並以 Argon2id reference provider + real Godot E2E 證明 account proof 不需要改寫 game-session contract。下一個 bounded stage 應進入 **S4-F.7 — Durable Account Backend / Credential Lifecycle & Abuse Controls**：把 static reference account file 往可管理的 durable account store、password reset/KDF migration、reauthentication 與 login abuse controls 推進；MFA/OIDC 或 distributed issuance 仍應保持可插拔，不把它們硬綁進 Protocol v9。
 
 Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
