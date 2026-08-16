@@ -1,0 +1,96 @@
+name: Production Trusted Proxy Revocation Rollout Observation E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-proxy-revocation-rollout-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+          go build -o "$GITHUB_WORKSPACE/.tools/revocationctl" ./cmd/revocationctl
+
+      - name: Run rollout observation acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/production-trusted-proxy-revocation-rollout-e2e.yml').read_text()
+          step = source.index('      - name: Run required-ack rollout acceptance')
+          run = source.index('        run: |\n', step) + len('        run: |\n')
+          body = source[run:]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines()) + '\n'
+
+          needle = 'test "$(request 39752 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401\n\nkill -HUP "$b_pid"'
+          replacement = 'test "$(request 39752 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401\nsleep 0.35\n\nkill -HUP "$b_pid"'
+          if needle not in script:
+              raise SystemExit('F.27 harness could not locate delayed-member activation point')
+          script = script.replace(needle, replacement, 1)
+          Path('/tmp/s4f27-rollout.sh').write_text(script)
+          PY
+          bash /tmp/s4f27-rollout.sh
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('/tmp')
+          candidates = list(Path('/home/runner/work/_temp').glob('s4f26'))
+          if not candidates:
+              raise SystemExit('F.27 harness could not locate F.26 acceptance output root')
+          root = candidates[0]
+
+          wait1 = json.load(open(root / 'wait1.json'))
+          o1 = wait1['observation']
+          assert o1['timing_source'] == 'controller'
+          assert [x['instance_id'] for x in o1['acks']] == ['instance-a', 'instance-b']
+
+          rollout2 = json.load(open(root / 'rollout2.json'))
+          o2 = rollout2['observation']
+          acks2 = {x['instance_id']: x for x in o2['acks']}
+          assert set(acks2) == {'instance-a', 'instance-b'}
+          assert acks2['instance-b']['observed_elapsed_ms'] >= acks2['instance-a']['observed_elapsed_ms'] + 200
+          assert o2['elapsed_ms'] >= acks2['instance-b']['observed_elapsed_ms']
+
+          rollout3 = json.load(open(root / 'rollout3.json'))
+          o3 = rollout3['observation']
+          assert rollout3['status'] == 'incomplete' and rollout3['reason'] == 'timeout'
+          assert [x['instance_id'] for x in o3['acks']] == ['instance-a']
+          assert rollout3['pending_instances'] == ['instance-b']
+          assert 1900 <= o3['elapsed_ms'] <= 2600
+
+          wait3 = json.load(open(root / 'wait3.json'))
+          assert wait3['status'] == 'converged'
+          assert wait3['observation']['timing_source'] == 'controller'
+          assert [x['instance_id'] for x in wait3['observation']['acks']] == ['instance-a', 'instance-b']
+          PY
+
+          echo "ASTRAHOLD_F27_ROLLOUT_OBSERVATION_OK controller_timing=true staggered_ack_observed=true incomplete_timing=true required_ack_gate=true delayed_member_blocks_convergence=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=9 tls=1.3"

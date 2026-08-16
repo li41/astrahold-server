@@ -65,31 +65,45 @@ func waitForAcks(plan *rolloutPlan, candidate *revocationCandidate, now func() t
 		result.Status = "rejected"
 		return result, errConfig
 	}
-	start := now().UTC()
-	deadline := start.Add(plan.ackTimeout)
-	if plan.validUntil.Before(deadline) {
-		deadline = plan.validUntil
-	}
+	start := now()
+	current := start
+	observed := make(map[string]rolloutAckObservation, len(plan.members))
 	for {
 		if err := validatePublishedTargets(plan, candidate); err != nil {
 			result.Status = "rejected"
 			return result, err
+		}
+		elapsed := current.Sub(start)
+		if elapsed < 0 {
+			result.Status = "rejected"
+			return result, fmt.Errorf("%w: controller clock moved backwards during acknowledgement observation", errConfig)
 		}
 		acknowledged, pending, err := collectAcks(plan, candidate)
 		if err != nil {
 			result.Status = "rejected"
 			return result, err
 		}
+		for _, instanceID := range acknowledged {
+			if _, exists := observed[instanceID]; exists {
+				continue
+			}
+			observed[instanceID] = rolloutAckObservation{
+				InstanceID:        instanceID,
+				FirstObservedAt:   current.UTC().Format(time.RFC3339Nano),
+				ObservedElapsedMS: elapsed.Milliseconds(),
+			}
+		}
 		result.AcknowledgedInstances = acknowledged
 		result.PendingInstances = pending
+		result.Observation = buildObservationEvidence(start, current, observed)
 		if len(pending) == 0 {
 			result.Status = "converged"
 			return result, nil
 		}
-		current := now().UTC()
-		if !current.Before(deadline) {
+		currentUTC := current.UTC()
+		if elapsed >= plan.ackTimeout || !currentUTC.Before(plan.validUntil) {
 			result.Status = "incomplete"
-			if !current.Before(plan.validUntil) {
+			if !currentUTC.Before(plan.validUntil) {
 				result.Reason = "lease_expired"
 			} else {
 				result.Reason = "timeout"
@@ -97,12 +111,35 @@ func waitForAcks(plan *rolloutPlan, candidate *revocationCandidate, now func() t
 			return result, nil
 		}
 		delay := plan.pollInterval
-		if remaining := deadline.Sub(current); remaining < delay {
+		if remaining := plan.ackTimeout - elapsed; remaining < delay {
+			delay = remaining
+		}
+		if remaining := plan.validUntil.Sub(currentUTC); remaining < delay {
 			delay = remaining
 		}
 		if delay > 0 {
 			sleep(delay)
 		}
+		current = now()
+	}
+}
+
+func buildObservationEvidence(start, current time.Time, observed map[string]rolloutAckObservation) *rolloutObservationEvidence {
+	elapsed := current.Sub(start)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	acks := make([]rolloutAckObservation, 0, len(observed))
+	for _, observation := range observed {
+		acks = append(acks, observation)
+	}
+	sort.Slice(acks, func(i, j int) bool { return acks[i].InstanceID < acks[j].InstanceID })
+	return &rolloutObservationEvidence{
+		TimingSource: "controller",
+		StartedAt:    start.UTC().Format(time.RFC3339Nano),
+		CompletedAt:  current.UTC().Format(time.RFC3339Nano),
+		ElapsedMS:    elapsed.Milliseconds(),
+		Acks:         acks,
 	}
 }
 

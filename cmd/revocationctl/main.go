@@ -105,19 +105,34 @@ type ackDefinition struct {
 	AcknowledgedAt            string `json:"acknowledged_at"`
 }
 
+type rolloutAckObservation struct {
+	InstanceID        string `json:"instance_id"`
+	FirstObservedAt   string `json:"first_observed_at"`
+	ObservedElapsedMS int64  `json:"observed_elapsed_ms"`
+}
+
+type rolloutObservationEvidence struct {
+	TimingSource string                  `json:"timing_source"`
+	StartedAt    string                  `json:"started_at"`
+	CompletedAt  string                  `json:"completed_at"`
+	ElapsedMS    int64                   `json:"elapsed_ms"`
+	Acks         []rolloutAckObservation `json:"acks,omitempty"`
+}
+
 type rolloutResult struct {
-	SchemaVersion             uint16   `json:"schema_version"`
-	Status                    string   `json:"status"`
-	Epoch                     uint64   `json:"epoch"`
-	RevocationRevision        string   `json:"revocation_revision"`
-	RevocationAuthoritySHA256 string   `json:"revocation_authority_sha256"`
-	ValidUntil                string   `json:"valid_until"`
-	RequiredInstances         []string `json:"required_instances"`
-	PublishedInstances        []string `json:"published_instances,omitempty"`
-	FailedInstances           []string `json:"failed_instances,omitempty"`
-	AcknowledgedInstances     []string `json:"acknowledged_instances,omitempty"`
-	PendingInstances          []string `json:"pending_instances,omitempty"`
-	Reason                    string   `json:"reason,omitempty"`
+	SchemaVersion             uint16                      `json:"schema_version"`
+	Status                    string                      `json:"status"`
+	Epoch                     uint64                      `json:"epoch"`
+	RevocationRevision        string                      `json:"revocation_revision"`
+	RevocationAuthoritySHA256 string                      `json:"revocation_authority_sha256"`
+	ValidUntil                string                      `json:"valid_until"`
+	RequiredInstances         []string                    `json:"required_instances"`
+	PublishedInstances        []string                    `json:"published_instances,omitempty"`
+	FailedInstances           []string                    `json:"failed_instances,omitempty"`
+	AcknowledgedInstances     []string                    `json:"acknowledged_instances,omitempty"`
+	PendingInstances          []string                    `json:"pending_instances,omitempty"`
+	Observation               *rolloutObservationEvidence `json:"observation,omitempty"`
+	Reason                    string                      `json:"reason,omitempty"`
 }
 
 type targetPair struct {
