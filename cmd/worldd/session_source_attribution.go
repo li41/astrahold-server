@@ -54,6 +54,9 @@ func loadSessionSourceAttributor() (*sessionSourceAttributor, error) {
 	legacyHeader := strings.TrimSpace(*sessionLoginForwardedHeader)
 	legacyCIDRs := strings.TrimSpace(*sessionLoginTrustedProxyCIDRs)
 	legacyMTLS := strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile)
+	if err := validateSessionLeafRevocationDistributionFlags(edgePolicyFile, leafRevocationFile); err != nil {
+		return nil, err
+	}
 	if edgePolicyFile != "" {
 		if legacyHeader != "" || legacyCIDRs != "" || legacyMTLS != "" {
 			return nil, fmt.Errorf("%w: session-login-trusted-proxy-edge-policy-file is mutually exclusive with the F.17/F.18 trusted proxy flags", errSessionSourceAttribution)
@@ -265,7 +268,7 @@ func (a *sessionSourceAttributor) sourceIP(request *http.Request) (string, error
 			return "", fmt.Errorf("%w: trusted proxy edge-policy identity mismatch", errSessionSourceAttribution)
 		}
 		if a.edgePolicy.connectionCredentialRevoked(connection) {
-			return "", fmt.Errorf("%w: trusted proxy leaf credential is revoked", errSessionSourceAttribution)
+			return "", fmt.Errorf("%w: trusted proxy leaf credential authority is revoked or distribution-fenced", errSessionSourceAttribution)
 		}
 		return sessionSourceIPFromForwarding(request, connection.snapshot.mode, connection.snapshot.headerName, connection.snapshot.trusted)
 	}
