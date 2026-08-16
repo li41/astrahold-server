@@ -61,6 +61,8 @@ type sessionEdgePolicySnapshot struct {
 	bindings        []sessionEdgePolicyBinding
 	trustedPrefixes []netip.Prefix
 	identityCount   int
+	rootSetDigest   [sha256.Size]byte
+	prefixSetDigest [sha256.Size]byte
 	authorityDigest [sha256.Size]byte
 }
 
@@ -242,6 +244,8 @@ func loadSessionEdgePolicySnapshot(definitionFile string, now time.Time) (*sessi
 		bindings:        bindings,
 		trustedPrefixes: trustedPrefixes,
 		identityCount:   identityCount,
+		rootSetDigest:   sessionEdgePolicyRootSetDigest(rootDigests),
+		prefixSetDigest: sessionEdgePolicyPrefixSetDigest(trustedPrefixes),
 		authorityDigest: sessionEdgePolicyAuthorityDigest(mode, rootDigests, bindings),
 	}, nil
 }
@@ -319,11 +323,7 @@ func sessionEdgePolicyAuthorityDigest(mode sessionSourceHeaderMode, rootDigests 
 
 	records := make([]string, 0)
 	for _, binding := range bindings {
-		identities := make([]string, 0, len(binding.allowedDNS))
-		for identity := range binding.allowedDNS {
-			identities = append(identities, identity)
-		}
-		sort.Strings(identities)
+		identities := sessionEdgePolicySortedIdentities(binding.allowedDNS)
 		identitySet := strings.Join(identities, "\x00")
 		for _, prefix := range binding.prefixes {
 			records = append(records, prefix.String()+"\x00"+identitySet)
@@ -339,6 +339,75 @@ func sessionEdgePolicyAuthorityDigest(mode sessionSourceHeaderMode, rootDigests 
 	var digest [sha256.Size]byte
 	copy(digest[:], hasher.Sum(nil))
 	return digest
+}
+
+func sessionEdgePolicyRootSetDigest(rootDigests [][sha256.Size]byte) [sha256.Size]byte {
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte("astrahold/session-edge-policy-roots/v1\x00"))
+	for _, digest := range rootDigests {
+		_, _ = hasher.Write(digest[:])
+	}
+	var result [sha256.Size]byte
+	copy(result[:], hasher.Sum(nil))
+	return result
+}
+
+func sessionEdgePolicyPrefixSetDigest(prefixes []netip.Prefix) [sha256.Size]byte {
+	values := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		values = append(values, prefix.String())
+	}
+	sort.Strings(values)
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte("astrahold/session-edge-policy-prefixes/v1\x00"))
+	for _, value := range values {
+		_, _ = hasher.Write([]byte(value))
+		_, _ = hasher.Write([]byte{0x00})
+	}
+	var result [sha256.Size]byte
+	copy(result[:], hasher.Sum(nil))
+	return result
+}
+
+func sessionEdgePolicySortedIdentities(allowedDNS map[string]struct{}) []string {
+	identities := make([]string, 0, len(allowedDNS))
+	for identity := range allowedDNS {
+		identities = append(identities, identity)
+	}
+	sort.Strings(identities)
+	return identities
+}
+
+func sessionEdgePolicyIdentitySetDigest(allowedDNS map[string]struct{}) [sha256.Size]byte {
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte("astrahold/session-edge-policy-identities/v1\x00"))
+	for _, identity := range sessionEdgePolicySortedIdentities(allowedDNS) {
+		_, _ = hasher.Write([]byte(identity))
+		_, _ = hasher.Write([]byte{0x00})
+	}
+	var result [sha256.Size]byte
+	copy(result[:], hasher.Sum(nil))
+	return result
+}
+
+// sessionEdgePolicySnapshotsCompatibleForPeer is the F.22 retirement boundary.
+// Global forwarding mode, CA-root set, or trusted-prefix topology changes make
+// every old trusted-proxy connection stale. When those global authorities are
+// unchanged, only a peer whose own normalized prefix now maps to a different
+// exact-DNS identity set needs to reconnect.
+func sessionEdgePolicySnapshotsCompatibleForPeer(previous, current *sessionEdgePolicySnapshot, peer netip.Addr) bool {
+	if previous == nil || current == nil || !peer.IsValid() {
+		return false
+	}
+	if previous.mode != current.mode || previous.rootSetDigest != current.rootSetDigest || previous.prefixSetDigest != current.prefixSetDigest {
+		return false
+	}
+	previousBinding, previousOK := previous.bindingForPeer(peer)
+	currentBinding, currentOK := current.bindingForPeer(peer)
+	if !previousOK || !currentOK || previousBinding < 0 || previousBinding >= len(previous.bindings) || currentBinding < 0 || currentBinding >= len(current.bindings) {
+		return false
+	}
+	return sessionEdgePolicyIdentitySetDigest(previous.bindings[previousBinding].allowedDNS) == sessionEdgePolicyIdentitySetDigest(current.bindings[currentBinding].allowedDNS)
 }
 
 func parseSessionEdgePolicyHeaderMode(value string) (sessionSourceHeaderMode, string, error) {
@@ -477,6 +546,25 @@ func (r *reloadableSessionEdgePolicy) releaseConnection(remote string) {
 	r.connectionsMu.Lock()
 	delete(r.connections, remote)
 	r.connectionsMu.Unlock()
+}
+
+func (r *reloadableSessionEdgePolicy) connectionRequiresRetirement(remote string, binding sessionEdgePolicyConnection) bool {
+	if r == nil || binding.generation == 0 || binding.snapshot == nil {
+		return false
+	}
+	current, currentGeneration := r.currentSnapshot()
+	if currentGeneration == 0 || binding.generation >= currentGeneration {
+		return false
+	}
+	if current == nil || strings.TrimSpace(remote) == "" {
+		return true
+	}
+	peerText := sessionLoginSourceIP(remote)
+	peer, err := netip.ParseAddr(peerText)
+	if err != nil {
+		return true
+	}
+	return !sessionEdgePolicySnapshotsCompatibleForPeer(binding.snapshot, current, peer.Unmap())
 }
 
 func (r *reloadableSessionEdgePolicy) Snapshot() sessionEdgePolicyMetadata {
