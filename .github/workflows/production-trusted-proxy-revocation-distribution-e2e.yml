@@ -1,0 +1,239 @@
+name: Production Trusted Proxy Revocation Distribution Fence E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-proxy-revocation-distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run multi-instance revocation distribution acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/s4f25"
+          tls="$root/tls"
+          shared="$root/shared"
+          a="$root/a"
+          b="$root/b"
+          rm -rf "$root"
+          mkdir -p "$tls" "$shared" "$a/character-state" "$b/character-state"
+
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+          "$ACCOUNTCTL" init -path "$shared/accounts.json"
+          printf '%s\n' 'F25-Correct-Horse-Battery-Staple!' | "$ACCOUNTCTL" create -path "$shared/accounts.json" -login holder -character f25-character -password-stdin
+          cp "$shared/accounts.json" "$a/accounts.json"
+          cp "$shared/accounts.json" "$b/accounts.json"
+
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tls/server-ca.key" -out "$tls/server-ca.crt" -days 1 -sha256 -subj "/CN=Astrahold S4-F.25 Server CA" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes -keyout "$tls/server.key" -out "$tls/server.csr" -subj "/CN=localhost" >/dev/null 2>&1
+          cat >"$tls/server.ext" <<'EOF'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF
+          openssl x509 -req -in "$tls/server.csr" -CA "$tls/server-ca.crt" -CAkey "$tls/server-ca.key" -CAcreateserial -out "$tls/server.crt" -days 1 -sha256 -extfile "$tls/server.ext" >/dev/null 2>&1
+
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tls/edge-ca.key" -out "$tls/edge-ca.crt" -days 1 -sha256 -subj "/CN=Astrahold S4-F.25 Edge CA" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+          make_leaf() {
+            label="$1"
+            openssl req -newkey rsa:2048 -nodes -keyout "$tls/edge-$label.key" -out "$tls/edge-$label.csr" -subj "/CN=edge-a.astrahold.test" >/dev/null 2>&1
+            cat >"$tls/edge-$label.ext" <<'EOF'
+          subjectAltName=DNS:edge-a.astrahold.test
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature
+          extendedKeyUsage=clientAuth
+          EOF
+            openssl x509 -req -in "$tls/edge-$label.csr" -CA "$tls/edge-ca.crt" -CAkey "$tls/edge-ca.key" -CAcreateserial -out "$tls/edge-$label.crt" -days 1 -sha256 -extfile "$tls/edge-$label.ext" >/dev/null 2>&1
+          }
+          make_leaf a
+          make_leaf b
+          leaf_a_spki="$(openssl x509 -in "$tls/edge-a.crt" -pubkey -noout | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | awk '{print $1}')"
+          leaf_b_spki="$(openssl x509 -in "$tls/edge-b.crt" -pubkey -noout | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | awk '{print $1}')"
+          test "$leaf_a_spki" != "$leaf_b_spki"
+
+          cat >"$shared/edge-policy.json" <<EOF
+          {"schema_version":1,"revision":"edge-001","forwarded_header":"x-forwarded-for","client_ca_file":"../tls/edge-ca.crt","bindings":[{"prefixes":["127.0.0.2/32"],"dns_names":["edge-a.astrahold.test"]}]}
+          EOF
+
+          make_pair() {
+            dir="$1"; epoch="$2"; revoked="$3"; seconds="$4"; revision="$5"
+            python3 - "$dir/revocations.json" "$dir/distribution.json" "$epoch" "$revoked" "$seconds" "$revision" <<'PY'
+          import datetime, hashlib, json, os, sys
+          rev_path, dist_path, epoch, revoked, seconds, revision = sys.argv[1:]
+          values = sorted(set(v for v in revoked.split(',') if v))
+          h = hashlib.sha256(); h.update(b"astrahold/session-leaf-revocation-authority/v1\x00")
+          for value in values: h.update(bytes.fromhex(value))
+          valid = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=int(seconds))).replace(microsecond=0).isoformat().replace('+00:00','Z')
+          for path, payload in [
+              (rev_path, {"schema_version":1,"revision":revision,"revoked_spki_sha256":values}),
+              (dist_path, {"schema_version":1,"epoch":int(epoch),"revocation_authority_sha256":h.hexdigest(),"valid_until":valid}),
+          ]:
+              tmp=path+'.tmp'
+              with open(tmp,'w') as f:
+                  json.dump(payload,f,separators=(',',':')); f.write('\n'); f.flush(); os.fsync(f.fileno())
+              os.replace(tmp,path); os.chmod(path,0o600)
+          print(valid)
+          PY
+          }
+
+          valid1_a="$(make_pair "$a" 1 "" 14 leaf-001)"
+          valid1_b="$(make_pair "$b" 1 "" 14 leaf-001)"
+          chmod 600 "$a/accounts.json" "$b/accounts.json" "$shared/edge-policy.json" "$tls"/*.key
+
+          cleanup() {
+            set +e
+            for pid in "${a_pid:-}" "${b_pid:-}"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+
+          start_instance() {
+            name="$1"; dir="$2"; login_port="$3"; tcp_port="$4"; udp_port="$5"; log="$6"
+            "$GITHUB_WORKSPACE/.tools/worldd" \
+              -tcp "127.0.0.1:$tcp_port" -udp "127.0.0.1:$udp_port" \
+              -session-login-account-file "$dir/accounts.json" \
+              -session-login-tls-listen "127.0.0.1:$login_port" \
+              -session-login-tls-cert "$tls/server.crt" -session-login-tls-key "$tls/server.key" \
+              -session-login-trusted-proxy-edge-policy-file "$shared/edge-policy.json" \
+              -session-login-trusted-proxy-leaf-revocation-file "$dir/revocations.json" \
+              -session-login-trusted-proxy-leaf-revocation-distribution-file "$dir/distribution.json" \
+              -session-login-trusted-proxy-leaf-revocation-instance-id "$name" \
+              -session-login-trusted-proxy-leaf-revocation-ack-file "$dir/ack.json" \
+              -session-login-trusted-proxy-edge-retire-old-connections \
+              -session-login-ip-max-attempts 1000 -session-login-ip-attempt-window 1m \
+              -character-state-dir "$dir/character-state" \
+              -character-state-save-journal "$dir/character-state-saves.journal" \
+              -character-state-save-checkpoint "$dir/character-state-saves.checkpoint.json" \
+              -death-outcome-journal "$dir/death-outcomes.journal" \
+              -death-outcome-checkpoint "$dir/death-outcomes.checkpoint.json" \
+              -siege-ownership-dir "$dir/siege-ownership" >"$log" 2>&1 &
+            echo $!
+          }
+          a_log="$root/a.log"; b_log="$root/b.log"
+          a_pid="$(start_instance instance-a "$a" 39651 39981 39982 "$a_log")"
+          b_pid="$(start_instance instance-b "$b" 39652 39983 39984 "$b_log")"
+
+          wait_marker() {
+            file="$1"; marker="$2"; pid="$3"
+            for _ in $(seq 1 300); do
+              grep -Fq "$marker" "$file" 2>/dev/null && return 0
+              if ! kill -0 "$pid" 2>/dev/null; then cat "$file"; return 1; fi
+              sleep 0.1
+            done
+            cat "$file"; return 1
+          }
+          wait_marker "$a_log" "session trusted proxy leaf revocation distribution: enabled=true instance_id=instance-a epoch=1" "$a_pid"
+          wait_marker "$b_log" "session trusted proxy leaf revocation distribution: enabled=true instance_id=instance-b epoch=1" "$b_pid"
+          wait_marker "$a_log" "Astrahold worldd ready: protocol=9" "$a_pid"
+          wait_marker "$b_log" "Astrahold worldd ready: protocol=9" "$b_pid"
+
+          request() {
+            port="$1"; cert="$2"; key="$3"; source="$4"
+            python3 - "$tls/server-ca.crt" "$cert" "$key" "$port" "$source" <<'PY'
+          import http.client, ssl, sys
+          ca, cert, key, port, source = sys.argv[1:]
+          ctx=ssl.create_default_context(cafile=ca); ctx.minimum_version=ssl.TLSVersion.TLSv1_3
+          if cert: ctx.load_cert_chain(cert,key)
+          kwargs={"context":ctx,"timeout":5}
+          if source: kwargs["source_address"]=(source,0)
+          c=http.client.HTTPSConnection('127.0.0.1',int(port),**kwargs)
+          try:
+              headers={"Content-Type":"application/json"}
+              if source == '127.0.0.2': headers["X-Forwarded-For"]='198.51.100.251'
+              c.request('POST','/v1/session/login',body=b'{"login_id":"holder","login_secret":"wrong"}',headers=headers)
+              r=c.getresponse(); r.read(); print(r.status)
+          except Exception:
+              print('TLS_FAIL')
+          finally:
+              c.close()
+          PY
+          }
+
+          test "$(request 39651 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401
+          test "$(request 39652 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401
+          test "$(request 39651 "$tls/edge-b.crt" "$tls/edge-b.key" 127.0.0.2)" = 401
+          test "$(request 39652 "$tls/edge-b.crt" "$tls/edge-b.key" 127.0.0.2)" = 401
+
+          valid2="$(make_pair "$a" 2 "$leaf_a_spki" 120 leaf-002)"
+          kill -HUP "$a_pid"
+          wait_marker "$a_log" "session trusted proxy leaf revocation distribution reload: epoch=2 valid_until=$valid2 ack=ok" "$a_pid"
+          test "$(request 39651 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = TLS_FAIL
+          test "$(request 39651 "$tls/edge-b.crt" "$tls/edge-b.key" 127.0.0.2)" = 401
+          test "$(request 39652 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401
+
+          python3 - "$valid1_b" <<'PY'
+          import datetime, sys, time
+          target=datetime.datetime.fromisoformat(sys.argv[1].replace('Z','+00:00')).timestamp()
+          time.sleep(max(0,target-time.time()+1.2))
+          PY
+          test "$(request 39652 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = TLS_FAIL
+          test "$(request 39652 "$tls/edge-b.crt" "$tls/edge-b.key" 127.0.0.2)" = TLS_FAIL
+          test "$(request 39652 '' '' '')" = 401
+
+          cp "$a/revocations.json" "$b/revocations.json"
+          cp "$a/distribution.json" "$b/distribution.json"
+          chmod 600 "$b/revocations.json" "$b/distribution.json"
+          kill -HUP "$b_pid"
+          wait_marker "$b_log" "session trusted proxy leaf revocation distribution reload: epoch=2 valid_until=$valid2 ack=ok" "$b_pid"
+          test "$(request 39652 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = TLS_FAIL
+          test "$(request 39652 "$tls/edge-b.crt" "$tls/edge-b.key" 127.0.0.2)" = 401
+
+          python3 - "$a/ack.json" "$b/ack.json" <<'PY'
+          import json, sys
+          a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
+          assert a['instance_id']=='instance-a' and b['instance_id']=='instance-b'
+          for k in ('epoch','revocation_authority_sha256','valid_until'):
+              assert a[k]==b[k], (k,a[k],b[k])
+          assert a['epoch']==2
+          PY
+
+          make_pair "$b" 1 "" 120 leaf-rollback >/dev/null
+          kill -HUP "$b_pid"
+          wait_marker "$b_log" "session trusted proxy leaf revocation reload rejected; last-known-good retained" "$b_pid"
+          test "$(request 39652 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = TLS_FAIL
+          test "$(request 39652 "$tls/edge-b.crt" "$tls/edge-b.key" 127.0.0.2)" = 401
+          python3 - "$b/ack.json" <<'PY'
+          import json, sys
+          ack=json.load(open(sys.argv[1])); assert ack['epoch']==2
+          PY
+          test "$(request 39651 '' '' '')" = 401
+          test "$(request 39652 '' '' '')" = 401
+
+          if grep -Fq 'F25-Correct-Horse-Battery-Staple!' "$a_log" "$b_log"; then
+            echo 'password leaked to server log'; exit 1
+          fi
+          if grep -Fq 'BEGIN PRIVATE KEY' "$a_log" "$b_log"; then
+            echo 'private key material leaked to server log'; exit 1
+          fi
+          echo "ASTRAHOLD_F25_REVOCATION_DISTRIBUTION_OK multi_instance=true lease_expiry_fail_closed=true ack_converged=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=9 tls=1.3"

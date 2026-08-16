@@ -218,6 +218,8 @@ func sessionLoginConfigurationRequested() bool {
 		strings.TrimSpace(*sessionLoginForwardedHeader) != "" ||
 		strings.TrimSpace(*sessionLoginTrustedProxyMTLSFile) != "" ||
 		strings.TrimSpace(*sessionLoginTrustedProxyEdgePolicyFile) != "" ||
+		sessionLeafRevocationRequested() ||
+		sessionLeafRevocationDistributionRequested() ||
 		sessionEdgeConnectionRetirementRequested()
 }
 
@@ -727,6 +729,18 @@ func runIssuedSessionCredentialRuntime(
 	if leafRevocation.Generation != 0 {
 		logf("session trusted proxy leaf revocation: enabled=true generation=%d revision=%s revoked_credentials=%d identifier=spki-sha256", leafRevocation.Generation, leafRevocation.Revision, leafRevocation.RevokedCredentialCount)
 	}
+	distribution := sessionLeafRevocationDistributionMetadataForAttributor(runtime.sourceAttributor)
+	if distribution.Enabled {
+		leaseState := "expired"
+		if distribution.LeaseValid {
+			leaseState = "valid"
+		}
+		ackState := "failed"
+		if distribution.AckHealthy {
+			ackState = "ok"
+		}
+		logf("session trusted proxy leaf revocation distribution: enabled=true instance_id=%s epoch=%d valid_until=%s lease=%s ack=%s authority_sha256=%s", distribution.InstanceID, distribution.Epoch, distribution.ValidUntil.UTC().Format(time.RFC3339), leaseState, ackState, distribution.AuthoritySHA256)
+	}
 	if runtime.recoveryProvider != nil {
 		recoveryReloadMode, recoveryGeneration := sessionRecoveryReloadMetadata(runtime.recoveryProvider)
 		logf("session recovery: enabled=true provider=%s revision=%s challenge_ttl=%s challenge_max_attempts=%d recovery_ip_limit=%d/%s durable_schema=%d recovery_reload=%s generation=%d source_attribution=%s proxy_auth=%s edge_policy_generation=%d", runtime.recoveryProvider.Method(), runtime.recoveryProvider.Revision(), *sessionRecoveryChallengeTTL, *sessionRecoveryChallengeMaxAttempts, runtime.recoveryGuard.maxAttempts, runtime.recoveryGuard.window, sessionDurableAccountSchemaVersion, recoveryReloadMode, recoveryGeneration, sourceAttribution, proxyAuth, edgePolicy.Generation)
@@ -790,8 +804,20 @@ func runIssuedSessionCredentialRuntime(
 						state := "no-op"
 						if leafResult.AuthorityChanged {
 							state = "applied"
+						} else if leafResult.DistributionChanged {
+							state = "distribution-applied"
+						}
+						if leafResult.DistributionEnabled && !leafResult.DistributionAckHealthy {
+							state = "applied-fenced"
 						}
 						logf("session trusted proxy leaf revocation reload %s: previous_generation=%d generation=%d previous_revision=%s revision=%s revoked_credentials=%d connection_cutover=%s retired_connections=%d", state, leafResult.PreviousGeneration, leafResult.Generation, leafResult.PreviousRevision, leafResult.Revision, leafResult.RevokedCredentialCount, runtime.sourceAttributor.edgeConnectionCutoverMode(), retiredConnections)
+						if leafResult.DistributionEnabled {
+							ackState := "failed"
+							if leafResult.DistributionAckHealthy {
+								ackState = "ok"
+							}
+							logf("session trusted proxy leaf revocation distribution reload: epoch=%d valid_until=%s ack=%s", leafResult.DistributionEpoch, leafResult.DistributionValidUntil.UTC().Format(time.RFC3339), ackState)
+						}
 					}
 				}
 			} else if runtime.sourceAttributor != nil && runtime.sourceAttributor.proxyMTLS != nil {

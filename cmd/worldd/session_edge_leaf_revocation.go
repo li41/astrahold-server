@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -57,6 +58,11 @@ type sessionLeafRevocationReloadResult struct {
 	Revision               string
 	RevokedCredentialCount int
 	AuthorityChanged       bool
+	DistributionEnabled    bool
+	DistributionChanged    bool
+	DistributionEpoch      uint64
+	DistributionValidUntil time.Time
+	DistributionAckHealthy bool
 }
 
 type reloadableSessionLeafRevocation struct {
@@ -64,6 +70,8 @@ type reloadableSessionLeafRevocation struct {
 	definitionFile string
 	current        *sessionLeafRevocationSnapshot
 	generation     uint64
+	now            func() time.Time
+	distribution   *sessionLeafRevocationDistributionRuntime
 }
 
 func sessionLeafRevocationRequested() bool {
@@ -71,19 +79,33 @@ func sessionLeafRevocationRequested() bool {
 }
 
 func newReloadableSessionLeafRevocation(definitionFile string) (*reloadableSessionLeafRevocation, error) {
+	return newReloadableSessionLeafRevocationWithClock(definitionFile, time.Now)
+}
+
+func newReloadableSessionLeafRevocationWithClock(definitionFile string, now func() time.Time) (*reloadableSessionLeafRevocation, error) {
 	definitionFile = strings.TrimSpace(definitionFile)
 	if definitionFile == "" {
 		return nil, errSessionLeafRevocationConfig
+	}
+	if now == nil {
+		now = time.Now
 	}
 	snapshot, err := loadSessionLeafRevocationSnapshot(definitionFile)
 	if err != nil {
 		return nil, err
 	}
-	return &reloadableSessionLeafRevocation{
+	runtime := &reloadableSessionLeafRevocation{
 		definitionFile: definitionFile,
 		current:        snapshot,
 		generation:     1,
-	}, nil
+		now:            now,
+	}
+	distribution, err := newSessionLeafRevocationDistributionRuntime(runtime, snapshot, now)
+	if err != nil {
+		return nil, err
+	}
+	runtime.distribution = distribution
+	return runtime, nil
 }
 
 func loadSessionLeafRevocationSnapshot(definitionFile string) (*sessionLeafRevocationSnapshot, error) {
@@ -186,6 +208,20 @@ func (r *reloadableSessionLeafRevocation) revokedCredential(identifier [sha256.S
 	return snapshot != nil && snapshot.revokedCredential(identifier)
 }
 
+func (r *reloadableSessionLeafRevocation) credentialAuthorizationError(identifier [sha256.Size]byte) error {
+	snapshot, _ := r.currentSnapshot()
+	if snapshot == nil {
+		return errSessionLeafRevocationConfig
+	}
+	if r.distribution != nil && !r.distribution.authorityAvailable(snapshot.authorityDigest, r.now().UTC()) {
+		return errSessionLeafRevocationDistributionUnavailable
+	}
+	if snapshot.revokedCredential(identifier) {
+		return errSessionLeafCredentialRevoked
+	}
+	return nil
+}
+
 func (r *reloadableSessionLeafRevocation) Snapshot() sessionLeafRevocationMetadata {
 	snapshot, generation := r.currentSnapshot()
 	if snapshot == nil {
@@ -206,7 +242,16 @@ func (r *reloadableSessionLeafRevocation) Reload() (sessionLeafRevocationReloadR
 	if err != nil {
 		return sessionLeafRevocationReloadResult{}, err
 	}
+	if r.distribution != nil {
+		return r.reloadDistributed(candidate)
+	}
+	return r.publishCandidate(candidate, false)
+}
 
+func (r *reloadableSessionLeafRevocation) publishCandidate(candidate *sessionLeafRevocationSnapshot, refreshMetadata bool) (sessionLeafRevocationReloadResult, error) {
+	if r == nil || candidate == nil {
+		return sessionLeafRevocationReloadResult{}, errSessionLeafRevocationConfig
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.current == nil {
@@ -215,12 +260,16 @@ func (r *reloadableSessionLeafRevocation) Reload() (sessionLeafRevocationReloadR
 	previous := r.current
 	previousGeneration := r.generation
 	if previous.authorityDigest == candidate.authorityDigest {
+		if refreshMetadata {
+			r.current = candidate
+		}
+		current := r.current
 		return sessionLeafRevocationReloadResult{
 			PreviousGeneration:     previousGeneration,
 			Generation:             previousGeneration,
 			PreviousRevision:       previous.revision,
-			Revision:               previous.revision,
-			RevokedCredentialCount: len(previous.revoked),
+			Revision:               current.revision,
+			RevokedCredentialCount: len(current.revoked),
 			AuthorityChanged:       false,
 		}, nil
 	}
@@ -247,8 +296,10 @@ func (r *reloadableSessionEdgePolicy) verifiedLeafCredential(state tls.Connectio
 		}
 		return [sha256.Size]byte{}, false, nil
 	}
-	if r != nil && r.leafRevocation != nil && r.leafRevocation.revokedCredential(identifier) {
-		return [sha256.Size]byte{}, false, errSessionLeafCredentialRevoked
+	if r != nil && r.leafRevocation != nil {
+		if err := r.leafRevocation.credentialAuthorizationError(identifier); err != nil {
+			return [sha256.Size]byte{}, false, err
+		}
 	}
 	return identifier, true, nil
 }
@@ -258,8 +309,11 @@ func (r *reloadableSessionEdgePolicy) bindVerifiedConnectionCredential(remote st
 		return errSessionEdgePolicyConfig
 	}
 	if r.leafRevocation != nil {
-		if !credentialPinned || r.leafRevocation.revokedCredential(credentialID) {
+		if !credentialPinned {
 			return errSessionLeafCredentialRevoked
+		}
+		if err := r.leafRevocation.credentialAuthorizationError(credentialID); err != nil {
+			return err
 		}
 	}
 	allowedDNS := snapshot.bindings[bindingIndex].allowedDNS
@@ -281,8 +335,13 @@ func (r *reloadableSessionEdgePolicy) bindVerifiedConnectionCredential(remote st
 
 	r.connectionsMu.Lock()
 	defer r.connectionsMu.Unlock()
-	if r.leafRevocation != nil && (!credentialPinned || r.leafRevocation.revokedCredential(credentialID)) {
-		return errSessionLeafCredentialRevoked
+	if r.leafRevocation != nil {
+		if !credentialPinned {
+			return errSessionLeafCredentialRevoked
+		}
+		if err := r.leafRevocation.credentialAuthorizationError(credentialID); err != nil {
+			return err
+		}
 	}
 	r.connections[remote] = sessionEdgePolicyConnection{
 		snapshot:         snapshot,
@@ -302,7 +361,7 @@ func (r *reloadableSessionEdgePolicy) connectionCredentialRevoked(connection ses
 	if !connection.credentialPinned {
 		return true
 	}
-	return r.leafRevocation.revokedCredential(connection.credentialID)
+	return r.leafRevocation.credentialAuthorizationError(connection.credentialID) != nil
 }
 
 func (r *reloadableSessionEdgePolicy) LeafRevocationSnapshot() sessionLeafRevocationMetadata {

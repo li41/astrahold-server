@@ -129,7 +129,7 @@ func newReloadableSessionEdgePolicy(definitionFile string, now func() time.Time)
 	}
 	var leafRevocation *reloadableSessionLeafRevocation
 	if sessionLeafRevocationRequested() {
-		leafRevocation, err = newReloadableSessionLeafRevocation(strings.TrimSpace(*sessionLoginTrustedProxyLeafRevocationFile))
+		leafRevocation, err = newReloadableSessionLeafRevocationWithClock(strings.TrimSpace(*sessionLoginTrustedProxyLeafRevocationFile), now)
 		if err != nil {
 			return nil, err
 		}

@@ -10,7 +10,7 @@ import (
 var sessionLoginTrustedProxyEdgeRetireOldConnections = flag.Bool(
 	"session-login-trusted-proxy-edge-retire-old-connections",
 	false,
-	"F.20/F.22/F.23/F.24 edge authority cutover fence: retire stale or revoked trusted-proxy TLS authority after successful policy/revocation reloads while preserving compatible healthy credentials",
+	"F.20/F.22/F.23/F.24/F.25 edge authority cutover fence: retire stale or revoked trusted-proxy TLS authority after successful policy/revocation reloads while preserving compatible healthy credentials",
 )
 
 type sessionEdgeTrackedConnection struct {
