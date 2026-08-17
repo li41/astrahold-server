@@ -1,0 +1,29 @@
+{
+  "schema_version": 3,
+  "revision": "s5a1-playtest-001",
+  "match_id": "castle-sandbox-siege-playtest",
+  "attacker_id": "attackers",
+  "defender_id": "defenders",
+  "breach_gate_id": "main-gate",
+  "throne_objective_id": "throne",
+  "throne_zone": {
+    "layer": 0,
+    "bounds": {
+      "min_x": -4,
+      "max_x": 4,
+      "min_z": 27,
+      "max_z": 33
+    }
+  },
+  "throne_capture_seconds": 10,
+  "participants": [
+    {
+      "character_id": "playtest-attacker",
+      "team": "attacker"
+    },
+    {
+      "character_id": "playtest-defender",
+      "team": "defender"
+    }
+  ]
+}

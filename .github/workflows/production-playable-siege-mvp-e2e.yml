@@ -1,0 +1,150 @@
+name: Production Playable Siege MVP E2E
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  playable-siege-mvp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Validate playable siege profile
+        run: go test ./internal/siege -run '^TestPlayableSiegeMVPProfile$' -count=1
+
+      - name: Build production server tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          go build -o "$GITHUB_WORKSPACE/.tools/worldd" ./cmd/worldd
+          go build -o "$GITHUB_WORKSPACE/.tools/accountctl" ./cmd/accountctl
+
+      - name: Run production playtest admission acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/s5a1"
+          tls="$root/tls"
+          data="$root/data"
+          accounts="$data/accounts.json"
+          log="$root/worldd.log"
+          attacker_password='S5A1-Attacker-Correct-Horse-Battery!'
+          defender_password='S5A1-Defender-Correct-Horse-Battery!'
+          rm -rf "$root"
+          mkdir -p "$tls" "$data/character-state"
+
+          ACCOUNTCTL="$GITHUB_WORKSPACE/.tools/accountctl"
+          "$ACCOUNTCTL" init -path "$accounts"
+          printf '%s\n' "$attacker_password" | "$ACCOUNTCTL" create \
+            -path "$accounts" -login playtest-attacker \
+            -character playtest-attacker -password-stdin
+          printf '%s\n' "$defender_password" | "$ACCOUNTCTL" create \
+            -path "$accounts" -login playtest-defender \
+            -character playtest-defender -password-stdin
+
+          python3 - "$accounts" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          pairs={(a['login_id'],a['character_id']) for a in d['accounts']}
+          assert ('playtest-attacker','playtest-attacker') in pairs
+          assert ('playtest-defender','playtest-defender') in pairs
+          PY
+
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls/ca.key" -out "$tls/ca.crt" -days 1 -sha256 \
+            -subj '/CN=Astrahold S5-A.1 Local Playtest CA' \
+            -addext 'basicConstraints=critical,CA:TRUE' \
+            -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls/server.key" -out "$tls/server.csr" \
+            -subj '/CN=localhost' >/dev/null 2>&1
+          cat >"$tls/server.ext" <<'EOF_EXT'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          EOF_EXT
+          openssl x509 -req -in "$tls/server.csr" \
+            -CA "$tls/ca.crt" -CAkey "$tls/ca.key" -CAcreateserial \
+            -out "$tls/server.crt" -days 1 -sha256 -extfile "$tls/server.ext" >/dev/null 2>&1
+          chmod 600 "$accounts" "$tls/ca.key" "$tls/server.key"
+
+          cleanup() {
+            set +e
+            if [ -n "${server_pid:-}" ]; then kill -KILL "$server_pid" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+
+          "$GITHUB_WORKSPACE/.tools/worldd" \
+            -tcp 127.0.0.1:41777 -udp 127.0.0.1:41778 \
+            -siege-match "$GITHUB_WORKSPACE/config/siege-match-playtest.json" \
+            -session-login-account-file "$accounts" \
+            -session-login-tls-listen 127.0.0.1:41444 \
+            -session-login-tls-cert "$tls/server.crt" \
+            -session-login-tls-key "$tls/server.key" \
+            -trusted-tls-listen 127.0.0.1:41443 \
+            -trusted-tls-cert "$tls/server.crt" \
+            -trusted-tls-key "$tls/server.key" \
+            -character-state-dir "$data/character-state" \
+            -character-state-save-journal "$data/character-state-saves.journal" \
+            -character-state-save-checkpoint "$data/character-state-saves.checkpoint.json" \
+            -death-outcome-journal "$data/death-outcomes.journal" \
+            -death-outcome-checkpoint "$data/death-outcomes.checkpoint.json" \
+            -siege-ownership-dir "$data/siege-ownership" >"$log" 2>&1 &
+          server_pid=$!
+
+          for _ in $(seq 1 300); do
+            grep -Fq 'Astrahold worldd ready: protocol=9' "$log" && break
+            if ! kill -0 "$server_pid" 2>/dev/null; then cat "$log"; exit 1; fi
+            sleep 0.1
+          done
+          grep -Fq 'Astrahold worldd ready: protocol=9' "$log"
+          grep -Fq 'siege_match_revision=s5a1-playtest-001' "$log"
+          grep -Fq 'siege_match=castle-sandbox-siege-playtest' "$log"
+          grep -Fq 'breach_gate=main-gate throne=throne' "$log"
+          grep -Fq 'session login issuance: enabled=true' "$log"
+          grep -Fq 'trusted TLS ingress: enabled=true' "$log"
+
+          python3 - "$tls/ca.crt" "$attacker_password" "$defender_password" <<'PY'
+          import http.client,json,ssl,sys
+          ca,attacker,defender=sys.argv[1:]
+          ctx=ssl.create_default_context(cafile=ca)
+          ctx.minimum_version=ssl.TLSVersion.TLSv1_3
+          for login,password in [('playtest-attacker',attacker),('playtest-defender',defender)]:
+              c=http.client.HTTPSConnection('localhost',41444,context=ctx,timeout=5)
+              c.request('POST','/v1/session/login',body=json.dumps({'login_id':login,'login_secret':password}),headers={'Content-Type':'application/json'})
+              r=c.getresponse(); body=r.read()
+              assert r.status==200,(login,r.status,body)
+              parsed=json.loads(body)
+              assert parsed.get('session_credential')
+              assert parsed.get('expires_at')
+              c.close()
+          PY
+
+          if grep -Fq "$attacker_password" "$log" || grep -Fq "$defender_password" "$log"; then
+            echo 'playtest password leaked to worldd log'; exit 1
+          fi
+          if grep -Fq 'session_credential' "$log"; then
+            echo 'issued bearer leaked to worldd log'; exit 1
+          fi
+
+          echo 'ASTRAHOLD_S5A1_PLAYABLE_SIEGE_MVP_OK production_worldd=true playtest_profile=true precreated_accounts=true attacker_role=true defender_role=true product_login=true tls=1.3 protocol=9 public_registration=false'
