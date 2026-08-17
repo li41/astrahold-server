@@ -157,6 +157,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("build respawn policy service: %v", err)
 	}
+	freshSpawn, err := freshPlayerSpawn(loadedRespawnPolicy.Definition)
+	if err != nil {
+		log.Fatalf("resolve fresh player spawn from respawn policy %q: %v", *respawnPolicyPath, err)
+	}
 	loadedDeathPenalty, err := deathpenalty.LoadFile(*deathPenaltyPath)
 	if err != nil {
 		log.Fatalf("load death penalty policy %q: %v", *deathPenaltyPath, err)
@@ -220,6 +224,7 @@ func main() {
 	networkConfig.TickRateHz = uint16(*tickRate)
 	networkConfig.SnapshotRateHz = uint16(*snapshotRate)
 	networkConfig.WorldIdentity = worldIdentity
+	networkConfig.PlayerFactory = newWorldPlayerFactory(freshSpawn, loadedWorld.Definition.Agent)
 	networkConfig.CharacterRestoreFactory = characterStatePersistence.LoadRestore
 	if trustedCharacterAuthenticator != nil {
 		networkConfig.TrustedCharacterConnectionAuthenticator = trustedCharacterAuthenticator
