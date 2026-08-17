@@ -6,7 +6,7 @@ Astrahold 是全新設計的 Go authoritative MMORPG Server Core，目標是支�
 
 ## 目前狀態
 
-Server runtime 主線已完成到 **S4-F.28 — Rollout Evidence Journal / Decision Metrics**；paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
+Server product 主線已進入 **S5-A.1 — Playable Siege MVP / Local Product Playtest Profile**；底層 runtime/security baseline 維持完成到 **S4-F.28 — Rollout Evidence Journal / Decision Metrics**，paired Godot Client 維持 **S4-F.11 — Client Recovery UX / Provider-Neutral Reset Flow**。
 
 目前 production vertical slice 已具備：
 
@@ -91,6 +91,9 @@ Server runtime 主線已完成到 **S4-F.28 — Rollout Evidence Journal / Decis
 - **F.28 rollout evidence journal / decision metrics**
 - F.28 為`revocationctl wait|rollout`新增optional `-evidence-dir`，把final F.27 `converged`/`incomplete` observation以owner-only 0700 directory + immutable 0600 schema-v1 record落盤；random 128-bit record ID綁filename，file fsync後以same-directory no-overwrite link commit，再fsync directory
 - F.28 新增read-only `revocationctl report -evidence-dir DIR`：strict bounded重驗matching records後只輸出descriptive convergence metrics；不推論activation cause、不設定policy threshold、不觸發supervisor。Evidence不是F.25/F.26 authorization input，Client仍不接收record/report/deployment authority
+- **S5-A.1 playable siege MVP / local product playtest profile**
+- S5-A.1 不新增第二套siege規則；`config/siege-match-playtest.json`直接用production schema-v3把Server-owned CharacterID `playtest-attacker` / `playtest-defender`映射到既有attacker / defender team，並重用`main-gate`、`throne`、10秒capture、PvP/respawn、winner/ownership與next-round authority
+- S5-A.1 使用既有`accountctl`預建帳號、production `worldd -siege-match`、TLS 1.3 login/game ingress與normal Godot `Main.tscn`；不需要public registration，也不讓Client選team、HP、Gate、capture、winner或ownership。新增Production Playable Siege MVP E2E驗證兩個帳號可由production login admission進入此profile
 
 核心 production contract：
 
@@ -1026,14 +1029,16 @@ S3-E 已包含 Network LOD / tier cadence、shared AOI work、encode/buffer owne
 | **S4-F.26** | **Server/deployment `revocationctl`；explicit required instance set；exact F.24 semantic digest；all-revocation-stage-before-manifest-commit；rollback/conflict preflight；fail-forward idempotent retry；all-required exact durable-ack gate；incomplete exit 2/resumable wait；worldd/Client contract unchanged** | **✅** |
 | **S4-F.27** | **controller-owned rollout observation evidence；per-required-instance first-observed exact-ack timing；controller elapsed timeout + absolute F.25 lease boundary；staggered/incomplete convergence timing；no remote executor / no new Client or worldd authority** | **✅** |
 | **S4-F.28** | **optional owner-only immutable rollout evidence journal；strict bounded descriptive report；per-instance required/observed/pending samples；evidence persistence fail-visible；no cause inference / no supervisor execution / no new Client or worldd authority** | **✅** |
+| **S5-A.1** | **Playable Siege MVP local product playtest profile；pre-created attacker/defender accounts；production worldd + normal Main.tscn path；main-gate→throne→winner/ownership/next-round沿用既有Server authority；no public registration / no Client team authority** | **✅** |
 
-Server runtime contract現在是F.28；paired Client runtime仍是F.11。F.28 final exact product head `0c2a64e0ce7101cf5c3b9b1d11d220dbcd2972c4`通過20/20 workflows：既有19個exact-head workflows全部success，新增的Production Trusted Proxy Revocation Rollout Evidence Journal E2E亦success；Server CI的Test、Vet、Race detector全部success。Protocol仍v9，`worldd` F.25 authorization semantics、F.26 all-required acknowledgement gate與F.27 controller timing model均未改，Client product code未為F.28增加任何edge-policy/network/certificate/revocation/distribution-epoch/lease/ack/required-membership/evidence-record/report-metric/activation-control authority。
+Server product主線現在是S5-A.1；底層runtime/security contract仍是F.28，paired Client runtime仍是F.11。S5-A.1 final exact product head `e9e079fd465327877de612944e08baf9b5f6819e`通過21/21 workflows：既有20個exact-head workflows全部success，新增Production Playable Siege MVP E2E亦success；Server CI Test/Vet/Race全部success。新gate以production `worldd` + `accountctl`建立`playtest-attacker` / `playtest-defender`、載入`config/siege-match-playtest.json`、啟動TLS 1.3 login/game ingress並驗證兩個預建帳號可成功取得issued session credential；Protocol仍v9，既有Siege/PvP/respawn/Gate/throne/winner/ownership/next-round authority與S4-F.28 infrastructure contract均未改。Product以squash merge進main，merge SHA為`ed61a45b1142c745459ea46f4becd73c09ebf18f`。
 
 ## 文件入口
 
 ### Current production contract
 
-- 本 `README.md` — current Server / Protocol v9 / account lifecycle / recovery / TLS lifecycle / edge trust / known limitations
+- 本 `README.md` — current Server / Playable Siege MVP / Protocol v9 / account lifecycle / recovery / TLS lifecycle / edge trust / known limitations
+- [`docs/S5A1_PLAYABLE_SIEGE_MVP.md`](docs/S5A1_PLAYABLE_SIEGE_MVP.md) — pre-created attacker/defender accounts / local TLS / production `worldd` / normal `Main.tscn` / solo + two-Client siege playtest runbook
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Current Architecture Baseline
 - [`docs/S4F23_AUTHENTICATED_PROXY_IDENTITY_RETIREMENT.md`](docs/S4F23_AUTHENTICATED_PROXY_IDENTITY_RETIREMENT.md) — handshake-authorized matched DNS identity set / partial binding rotation / multi-SAN anti-promotion / identity-aware late-handshake contract
 - [`docs/S4F22_BINDING_AWARE_TRUSTED_PROXY_RETIREMENT.md`](docs/S4F22_BINDING_AWARE_TRUSTED_PROXY_RETIREMENT.md) — peer-specific pinned-snapshot compatibility / binding-local identity rotation / global cutover / late-handshake contract
@@ -1176,10 +1181,10 @@ Static trusted credential schema-v2可用原有 SIGHUP runtime reload；issued-s
 
 ## 下一個 bounded focus
 
-S4-F.28 已把F.27單次invocation observation延伸成optional owner-only durable samples與strict descriptive aggregation，因此真實deployment現在可以跨rollout累積converged/incomplete、timeout/lease-expiry與per-instance observed/pending timing evidence，而不把journal變成F.25/F.26 authority。Direct Godot Client、Protocol v9與gameplay authority仍沒有擴權。
+S5-A.1 已把既有完整攻城vertical slice接到可直接操作的MVP product path：operator先用`accountctl`建立`playtest-attacker`（需要時再建`playtest-defender`），production `worldd`載入playtest siege profile，Godot則使用normal `Main.tscn`登入。攻守team、PvP damage/death/respawn、Gate HP/breach、throne contest/capture、winner、castle ownership與next-round仍全部由Server裁定。
 
-**下一個 bounded focus 仍是 deployment evidence decision gate，而不是自動進F.29。** F.28 Production E2E中的4筆records、約350ms stagger與2秒timeout仍是correctness驗證用的synthetic evidence；應先在真實deployment使用`-evidence-dir`累積samples，並與既有deployment/supervisor logs做operator correlation。只有資料顯示publish-success後的activation miss或過高activation lag是material且反覆出現的operational risk，才考慮 **S4-F.29 — Activation / Supervisor Handoff Contract**。若沒有這類證據，就不加入remote executor、service discovery、consensus或更大的PKI control plane。CRL/OCSP、ACME/PKI automation、HSM、自動compromise detection、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立decision gate。
+**下一個 bounded focus 改為真實 manual playable-siege evidence，而不是繼續自動堆 infrastructure stage。** 先依[`docs/S5A1_PLAYABLE_SIEGE_MVP.md`](docs/S5A1_PLAYABLE_SIEGE_MVP.md)實際跑solo attacker smoke test，再視需要開第二個normal Client做defender PvP/contest。只有實際遊玩暴露阻斷「登入→進場→破門→王座→勝負→下一局」的gameplay/UI/operability缺口，才開 **S5-A.2** 修那個最小缺口。
 
-Public registration、MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session與Protocol v10仍保持獨立 decision gate。
+S4-F.29 Activation / Supervisor Handoff仍是獨立deployment evidence gate：只有F.28真實journal與supervisor logs證明activation miss/lag是material且反覆出現時才做，不能搶在Playable Siege MVP前面。Public registration目前也不是MVP gate；MVP刻意採operator預建帳號。MFA/WebAuthn/passkeys/OIDC、distributed account DB、refresh-token / remember-session、Protocol v10、CRL/OCSP、ACME/PKI automation、HSM、distributed rate limit、WAF/CDN與PROXY protocol仍保持獨立 decision gate。
 
-Astrahold 的原則保持不變：**Server State 是真相；先證明 correctness，再用量測決定複雜度。**
+Astrahold 的原則保持不變：**Server State 是真相；先把一場攻城完整玩通，再讓真實證據決定下一個複雜度。**
