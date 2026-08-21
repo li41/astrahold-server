@@ -48,10 +48,12 @@ type Transform struct {
 }
 
 // EntityState 是世界層需要知道的最小實體狀態。
+// ArchetypeID 只引用 immutable authored content identity；它不包含 model path、AI runtime 或 HP truth。
 type EntityState struct {
-	ID        EntityID
-	Kind      EntityKind
-	Transform Transform
+	ID          EntityID
+	Kind        EntityKind
+	ArchetypeID string
+	Transform   Transform
 }
 
 // Add 將位移向量加到 Position；Layer 不變。
