@@ -5,6 +5,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -40,6 +41,13 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		r.grantReviveProtection(targetID, tick, report)
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID: prepared.ActionInstanceID,
+			ActorEntityID: actor.ID,
+			ActionID: prepared.Definition.ID,
+			Result: protocol.CombatEventResurrect,
+			TargetEntityID: targetID,
+		}, tick, report)
 		return true
 
 	case combat.EffectDamage:
@@ -70,6 +78,14 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		}
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID: prepared.ActionInstanceID,
+			ActorEntityID: actor.ID,
+			ActionID: prepared.Definition.ID,
+			Result: protocol.CombatEventHit,
+			TargetEntityID: targetID,
+			Damage: prepared.Damage.Amount,
+		}, tick, report)
 		return true
 
 	default:
