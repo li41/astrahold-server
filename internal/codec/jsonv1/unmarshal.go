@@ -14,7 +14,7 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 	case protocol.MessageClientUseAction:
 		var in clientUseAction
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
-		return protocol.ClientUseAction{ActionID:in.ActionID,TargetKind:protocol.ActionTargetKind(in.TargetKind),TargetID:in.TargetID},nil
+		return protocol.ClientUseAction{ActionID:in.ActionID,TargetKind:protocol.ActionTargetKind(in.TargetKind),TargetID:in.TargetID,TargetX:in.TargetX,TargetZ:in.TargetZ},nil
 	case protocol.MessageSessionWelcome:
 		var in sessionWelcome
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
