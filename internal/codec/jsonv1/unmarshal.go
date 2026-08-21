@@ -22,7 +22,7 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 	case protocol.MessageEntitySpawn:
 		var in entitySpawn
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
-		return protocol.EntitySpawn{EntityID:world.EntityID(in.EntityID),Kind:world.EntityKind(in.Kind),Transform:fromEntityTransform(in.Transform)},nil
+		return protocol.EntitySpawn{EntityID:world.EntityID(in.EntityID),Kind:world.EntityKind(in.Kind),Transform:fromEntityTransform(in.Transform),ArchetypeID:in.ArchetypeID},nil
 	case protocol.MessageEntityDespawn:
 		var in entityDespawn
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
@@ -50,6 +50,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in siegeMatchState
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
 		return protocol.SiegeMatchState{Revision:in.Revision,Round:in.Round,MatchID:in.MatchID,AttackerID:in.AttackerID,DefenderID:in.DefenderID,YourTeam:protocol.SiegeTeam(in.YourTeam),Phase:protocol.SiegePhase(in.Phase),BreachGateID:in.BreachGateID,ThroneObjectiveID:in.ThroneObjectiveID,GateBreached:in.GateBreached,WinnerTeam:protocol.SiegeTeam(in.WinnerTeam),WinnerID:in.WinnerID,CastleOwnerID:in.CastleOwnerID},nil
+	case protocol.MessageCombatEvent:
+		var in combatEvent
+		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
+		return protocol.CombatEvent{ActionInstanceID:in.ActionInstanceID,ActorEntityID:world.EntityID(in.ActorEntityID),ActionID:in.ActionID,Result:protocol.CombatEventResult(in.Result),TargetEntityID:world.EntityID(in.TargetEntityID),ImpactX:in.ImpactX,ImpactZ:in.ImpactZ,Damage:in.Damage},nil
 	default:
 		return nil, ErrUnsupportedMessage
 	}

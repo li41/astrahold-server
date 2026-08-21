@@ -4,14 +4,15 @@ import (
 	"strconv"
 
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// applyPointAction resolves a client-selected endpoint into the first authoritative
-// player intersected by the cast line. The Client chooses only the endpoint; range,
-// LOS, hit selection and damage remain Server-owned.
+// applyPointAction resolves a selected endpoint into the first authoritative combatant
+// intersected by the cast line. The source chooses only the endpoint; range, LOS, hit
+// selection and damage remain Server-owned.
 func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, report *StepReport) bool {
 	targetID, hit, err := r.resolvePointActionTarget(actor, prepared)
 	if err != nil {
@@ -23,7 +24,17 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 		return false
 	}
 	if !hit {
-		// A legal skillshot may miss. It still consumes cooldown in the caller.
+		// A legal skillshot may miss. It still consumes cooldown in the caller and emits
+		// a Server-authored miss so presentation no longer has to infer the outcome.
+		x, z := prepared.Target.PointX, prepared.Target.PointZ
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID: prepared.ActionInstanceID,
+			ActorEntityID: actor.ID,
+			ActionID: prepared.Definition.ID,
+			Result: protocol.CombatEventMiss,
+			ImpactX: &x,
+			ImpactZ: &z,
+		}, tick, report)
 		return true
 	}
 
@@ -74,10 +85,10 @@ func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared com
 	bestT := float32(2)
 	bestDistanceSq := float32(0)
 	for _, candidate := range candidates {
-		if candidate.ID == actor.ID || candidate.Kind != world.EntityPlayer {
+		if candidate.ID == actor.ID || !combatantKind(candidate.Kind) {
 			continue
 		}
-		state, ok := r.characters.State(candidate.ID)
+		state, ok := r.combatantState(candidate.ID)
 		if !ok || state.Defeated {
 			continue
 		}

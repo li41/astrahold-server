@@ -5,32 +5,28 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 )
 
-func (r *Runtime) dispatchPreparedAction(name string, command useActionCommand, prepared combat.PreparedAction, tick uint64, delta time.Duration, report *StepReport) {
-	actorSession, ok := r.sessions.Get(command.sessionID)
+func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID, prepared combat.PreparedAction, tick uint64, delta time.Duration, report *StepReport) {
+	actor, ok := r.world.Entity(prepared.ActorEntityID)
 	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrSessionEntityNotFound})
-		return
-	}
-	actor, ok := r.world.Entity(actorSession.EntityID)
-	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrSessionEntityNotFound})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: ErrSessionEntityNotFound})
 		return
 	}
 	switch prepared.Target.Kind {
 	case combat.TargetGate:
 		if r.siege == nil || r.dynamic == nil {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrSiegeUnavailable})
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: ErrSiegeUnavailable})
 			return
 		}
 		gateState, err := r.siege.ApplyActionDamage(actor.Transform.Position, prepared.Target.ID, prepared.Definition.Range, prepared.Damage, r.dynamic)
 		if err != nil {
 			if isExpectedGateRejection(err) {
-				report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: err})
+				report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sourceSessionID, Err: err})
 			} else {
-				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
 			}
 			return
 		}
@@ -40,22 +36,24 @@ func (r *Runtime) dispatchPreparedAction(name string, command useActionCommand, 
 		}
 		r.siege.ObserveGateState(gateState)
 		r.bumpDynamicRevision()
+		// Keep the established gate Reliable ordering unchanged: WorldDynamicState remains the
+		// first observable gate outcome. CombatEvent is currently scoped to entity combat only.
 	case combat.TargetEntity:
-		if r.applyEntityAction(name, command.sessionID, actor, prepared, tick, report) {
+		if r.applyEntityAction(name, sourceSessionID, actor, prepared, tick, report) {
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage {
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)
 			}
 		}
 	case combat.TargetPoint:
-		if r.applyPointAction(name, command.sessionID, actor, prepared, tick, report) {
+		if r.applyPointAction(name, sourceSessionID, actor, prepared, tick, report) {
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage {
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)
 			}
 		}
 	default:
-		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: combat.ErrTargetNotAllowed})
+		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sourceSessionID, Err: combat.ErrTargetNotAllowed})
 	}
 }
 

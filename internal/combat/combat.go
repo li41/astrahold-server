@@ -86,11 +86,20 @@ type Target struct {
 	HasPoint bool
 }
 
-type PreparedAction struct {
+// Intent is the transport-neutral combat request consumed after ingress/session/AI validation.
+// It deliberately contains ActorEntityID rather than a network SessionID.
+type Intent struct {
 	ActorEntityID world.EntityID
-	Definition    ActionDefinition
+	ActionID      string
 	Target        Target
-	Damage        Damage
+}
+
+type PreparedAction struct {
+	ActionInstanceID uint64
+	ActorEntityID    world.EntityID
+	Definition       ActionDefinition
+	Target           Target
+	Damage           Damage
 }
 
 type cooldownKey struct {
@@ -99,8 +108,9 @@ type cooldownKey struct {
 }
 
 type Service struct {
-	actions     map[string]ActionDefinition
-	nextUseTick map[cooldownKey]uint64
+	actions        map[string]ActionDefinition
+	nextUseTick    map[cooldownKey]uint64
+	nextInstanceID uint64
 }
 
 func LoadFile(path string) (Loaded, error) {
@@ -206,6 +216,10 @@ func NewService(definitions []ActionDefinition) (*Service, error) {
 	return &Service{actions: actions, nextUseTick: make(map[cooldownKey]uint64)}, nil
 }
 
+func (s *Service) PrepareIntent(intent Intent, tick uint64) (PreparedAction, error) {
+	return s.Prepare(intent.ActorEntityID, intent.ActionID, intent.Target, tick)
+}
+
 func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target Target, tick uint64) (PreparedAction, error) {
 	action, ok := s.actions[actionID]
 	if !ok {
@@ -228,10 +242,15 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 	if next := s.nextUseTick[key]; next != 0 && tick < next {
 		return PreparedAction{}, ErrActionCooldown
 	}
+	s.nextInstanceID++
+	if s.nextInstanceID == 0 {
+		s.nextInstanceID++
+	}
 	prepared := PreparedAction{
-		ActorEntityID: actorEntityID,
-		Definition:    action,
-		Target:        target,
+		ActionInstanceID: s.nextInstanceID,
+		ActorEntityID:    actorEntityID,
+		Definition:       action,
+		Target:           target,
 	}
 	if action.Effect == EffectDamage {
 		prepared.Damage = Damage{

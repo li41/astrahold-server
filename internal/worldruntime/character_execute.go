@@ -5,6 +5,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -31,45 +32,53 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
 		}
-		// Resurrection 是原地 vitals transition，不搬動 authoritative transform，也不重置
-		// input/action sequence 或任何既有 combat cooldown。Defeat 時 movement input 已歸零，
-		// 因此復活後仍需新的 ClientMoveInput 才會移動。
 		if r.respawnPolicy != nil {
 			r.respawnPolicy.Cancel(targetID)
 		}
 		r.grantReviveProtection(targetID, tick, report)
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID: prepared.ActionInstanceID,
+			ActorEntityID: actor.ID,
+			ActionID: prepared.Definition.ID,
+			Result: protocol.CombatEventResurrect,
+			TargetEntityID: targetID,
+		}, tick, report)
 		return true
 
 	case combat.EffectDamage:
-		// Grace 是 server-side target damage legality。一般 range / layer / LOS 已在上面驗證；
-		// 受保護 Player 不吃 damage，也不讓本次 action Commit cooldown。
+		// Player-only policies stay outside generic combatant HP mutation.
 		if target.Kind == world.EntityPlayer && r.isReviveProtected(targetID, tick) {
 			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sessionID, Err: ErrEntityReviveProtected})
 			report.Metrics.ReviveProtectionDamageBlocks++
 			return false
 		}
-		state, err := r.characters.ReduceHP(targetID, prepared.Damage.Amount)
+		state, err := r.reduceCombatantHP(targetID, prepared.Damage.Amount)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
 		}
 		if state.Defeated {
-			// Movement input 是 persistent authoritative state。若只拒絕未來 ClientMoveInput，
-			// lethal hit 前最後一個方向仍會在 simulation tick 繼續推動角色，因此 defeat transition
-			// 必須在同一個 world-owner command phase立即把既有 input清零。
+			// Every movable combatant stops immediately on defeat; only Players receive the
+			// durable death/respawn/death-penalty policy below.
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			}
-			// Player death outcome統一在這個 owner-phase boundary產生 DefeatRevision，先綁定
-			// S3-F.4 respawn destination，再 exactly-once 套用 S3-F.7 death penalty。
 			if target.Kind == world.EntityPlayer {
 				r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report)
 			}
 		}
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID: prepared.ActionInstanceID,
+			ActorEntityID: actor.ID,
+			ActionID: prepared.Definition.ID,
+			Result: protocol.CombatEventHit,
+			TargetEntityID: targetID,
+			Damage: prepared.Damage.Amount,
+		}, tick, report)
 		return true
 
 	default:

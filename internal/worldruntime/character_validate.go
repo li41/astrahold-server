@@ -18,16 +18,17 @@ func (r *Runtime) validateEntityTarget(actor world.EntityState, prepared combat.
 		return 0, ErrSelfTarget
 	}
 	target, ok := r.world.Entity(targetID)
-	if !ok {
+	if !ok || !combatantKind(target.Kind) {
 		return 0, ErrInvalidEntityTarget
 	}
-	state, ok := r.characters.State(targetID)
+	state, ok := r.combatantState(targetID)
 	if !ok {
 		return 0, character.ErrCharacterNotFound
 	}
 
 	switch prepared.Definition.Effect {
 	case combat.EffectResurrect:
+		// Current resurrection is intentionally a Player policy, not a generic monster revive.
 		if target.Kind != world.EntityPlayer {
 			return 0, ErrResurrectionTargetNotPlayer
 		}
