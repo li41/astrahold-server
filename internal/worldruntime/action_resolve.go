@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -24,6 +25,21 @@ func combatIntentFromClientAction(actorID world.EntityID, action protocol.Client
 // prepareAndDispatchAction is transport-neutral after ingress has resolved ActorEntityID.
 // SourceSessionID is retained only for diagnostics/backpressure attribution, never for actor truth.
 func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
+	actor, ok := r.world.Entity(intent.ActorEntityID)
+	if !ok || !combatantKind(actor.Kind) {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:ErrSessionEntityNotFound})
+		return
+	}
+	actorState, ok := r.combatantState(intent.ActorEntityID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:character.ErrCharacterNotFound})
+		return
+	}
+	if actorState.Defeated {
+		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sourceSessionID,Err:character.ErrCharacterDefeated})
+		return
+	}
+
 	prepared, err := r.combat.PrepareIntent(intent, tick)
 	if err != nil {
 		if intent.ActionID == legacyGateActionID && errors.Is(err, combat.ErrActionCooldown) {
