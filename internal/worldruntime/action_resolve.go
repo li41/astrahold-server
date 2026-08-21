@@ -10,7 +10,13 @@ import (
 )
 
 func (r *Runtime) prepareAndDispatchAction(name string, command useActionCommand, actorID world.EntityID, tick uint64, delta time.Duration, report *StepReport) {
-	prepared, err := r.combat.Prepare(actorID, command.action.ActionID, combat.Target{Kind:combat.TargetKind(command.action.TargetKind),ID:command.action.TargetID}, tick)
+	target := combat.Target{Kind: combat.TargetKind(command.action.TargetKind), ID: command.action.TargetID}
+	if command.action.TargetKind == "point" && command.action.TargetX != nil && command.action.TargetZ != nil {
+		target.PointX = *command.action.TargetX
+		target.PointZ = *command.action.TargetZ
+		target.HasPoint = true
+	}
+	prepared, err := r.combat.Prepare(actorID, command.action.ActionID, target, tick)
 	if err != nil {
 		if command.action.ActionID == legacyGateActionID && errors.Is(err, combat.ErrActionCooldown) {
 			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:command.sessionID,Err:siege.ErrGateAttackCooldown})
