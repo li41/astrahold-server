@@ -5,7 +5,19 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// combatantKind identifies entity kinds that may participate in entity-target combat.
+// combatActorKind identifies world entities that may originate an action. Siege objects are
+// valid sources (for example siege engines / existing death-context fixtures) even though
+// they do not use the generic entity-target HP path as targets.
+func combatActorKind(kind world.EntityKind) bool {
+	switch kind {
+	case world.EntityPlayer, world.EntityNPC, world.EntityMonster, world.EntitySiegeObject:
+		return true
+	default:
+		return false
+	}
+}
+
+// combatantKind identifies entity kinds that may be targeted by generic entity combat.
 // Siege objects keep their dedicated topology/HP path and are intentionally excluded.
 func combatantKind(kind world.EntityKind) bool {
 	switch kind {
