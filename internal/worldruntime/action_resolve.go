@@ -26,7 +26,7 @@ func combatIntentFromClientAction(actorID world.EntityID, action protocol.Client
 // SourceSessionID is retained only for diagnostics/backpressure attribution, never for actor truth.
 func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
 	actor, ok := r.world.Entity(intent.ActorEntityID)
-	if !ok || !combatantKind(actor.Kind) {
+	if !ok || !combatActorKind(actor.Kind) {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:ErrSessionEntityNotFound})
 		return
 	}
