@@ -21,6 +21,7 @@ type TargetKind string
 const (
 	TargetGate   TargetKind = "gate"
 	TargetEntity TargetKind = "entity"
+	TargetPoint  TargetKind = "point"
 )
 
 type ActionEffect string
@@ -49,6 +50,7 @@ type ActionDefinition struct {
 	Effect          ActionEffect `json:"effect,omitempty"`
 	Targets         []TargetKind `json:"targets"`
 	Range           float32      `json:"range"`
+	HitRadius       float32      `json:"hit_radius,omitempty"`
 	BaseDamage      uint32       `json:"base_damage,omitempty"`
 	DamageType      DamageType   `json:"damage_type,omitempty"`
 	ReviveHPPercent uint8        `json:"revive_hp_percent,omitempty"`
@@ -77,8 +79,11 @@ type Damage struct {
 }
 
 type Target struct {
-	Kind TargetKind
-	ID   string
+	Kind     TargetKind
+	ID       string
+	PointX   float32
+	PointZ   float32
+	HasPoint bool
 }
 
 type PreparedAction struct {
@@ -147,6 +152,7 @@ func Validate(definition Definition) error {
 		ids[action.ID] = struct{}{}
 
 		targets := make(map[TargetKind]struct{}, len(action.Targets))
+		hasPointTarget := false
 		for _, target := range action.Targets {
 			if !validTargetKind(target) {
 				return fmt.Errorf("%w: action %q target %q", ErrInvalidDefinition, action.ID, target)
@@ -155,6 +161,9 @@ func Validate(definition Definition) error {
 				return fmt.Errorf("%w: action %q duplicate target %q", ErrInvalidDefinition, action.ID, target)
 			}
 			targets[target] = struct{}{}
+			if target == TargetPoint {
+				hasPointTarget = true
+			}
 		}
 
 		switch effectiveEffect(action.Effect) {
@@ -162,8 +171,11 @@ func Validate(definition Definition) error {
 			if action.BaseDamage == 0 || !validDamageType(action.DamageType) || action.ReviveHPPercent != 0 {
 				return fmt.Errorf("%w: damage action %q", ErrInvalidDefinition, action.ID)
 			}
+			if hasPointTarget && !positiveFinite(action.HitRadius) {
+				return fmt.Errorf("%w: point damage action %q requires hit_radius", ErrInvalidDefinition, action.ID)
+			}
 		case EffectResurrect:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 {
+			if action.BaseDamage != 0 || action.DamageType != "" || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 {
 				return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID)
 			}
 			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
@@ -199,8 +211,18 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 	if !ok {
 		return PreparedAction{}, ErrUnknownAction
 	}
-	if target.ID == "" || !containsTarget(action.Targets, target.Kind) {
+	if !containsTarget(action.Targets, target.Kind) {
 		return PreparedAction{}, ErrTargetNotAllowed
+	}
+	switch target.Kind {
+	case TargetPoint:
+		if !target.HasPoint || !finite(target.PointX) || !finite(target.PointZ) {
+			return PreparedAction{}, ErrTargetNotAllowed
+		}
+	default:
+		if target.ID == "" {
+			return PreparedAction{}, ErrTargetNotAllowed
+		}
 	}
 	key := cooldownKey{entityID: actorEntityID, actionID: actionID}
 	if next := s.nextUseTick[key]; next != 0 && tick < next {
@@ -249,7 +271,7 @@ func containsTarget(targets []TargetKind, target TargetKind) bool {
 
 func validTargetKind(kind TargetKind) bool {
 	switch kind {
-	case TargetGate, TargetEntity:
+	case TargetGate, TargetEntity, TargetPoint:
 		return true
 	default:
 		return false
@@ -277,6 +299,10 @@ func cooldownTicks(seconds float32, delta time.Duration) uint64 {
 }
 
 func positiveFinite(value float32) bool {
+	return value > 0 && finite(value)
+}
+
+func finite(value float32) bool {
 	f := float64(value)
-	return value > 0 && !math.IsNaN(f) && !math.IsInf(f, 0)
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }

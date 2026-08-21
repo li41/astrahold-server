@@ -47,6 +47,13 @@ func (r *Runtime) dispatchPreparedAction(name string, command useActionCommand, 
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)
 			}
 		}
+	case combat.TargetPoint:
+		if r.applyPointAction(name, command.sessionID, actor, prepared, tick, report) {
+			r.combat.Commit(prepared, tick, delta)
+			if prepared.Definition.Effect == combat.EffectDamage {
+				r.cancelReviveProtectionByDamageAction(actor.ID, report)
+			}
+		}
 	default:
 		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: combat.ErrTargetNotAllowed})
 	}

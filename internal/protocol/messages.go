@@ -9,6 +9,7 @@ import (
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
 // v9: ASTU realtime 不再攜帶 bearer token；改為 public routing ID + 128-bit HMAC trailer，並做 C2S/S2C domain separation。
+// ClientUseAction 的 point target 採 Reliable JSON optional fields，既有 v9 Client 不帶欄位時仍保持相容。
 const Version uint16 = 9
 
 const MaxSnapshotEntitiesPerChunk = 43
@@ -47,8 +48,13 @@ type ClientMoveInput struct { DirectionX float32; DirectionZ float32 }
 func (ClientMoveInput) Type() MessageType { return MessageClientMoveInput }
 
 type ActionTargetKind string
-const ( ActionTargetGate ActionTargetKind = "gate"; ActionTargetEntity ActionTargetKind = "entity" )
-type ClientUseAction struct { ActionID string; TargetKind ActionTargetKind; TargetID string }
+const (
+	ActionTargetGate ActionTargetKind = "gate"
+	ActionTargetEntity ActionTargetKind = "entity"
+	ActionTargetPoint ActionTargetKind = "point"
+)
+// TargetX/TargetZ are present only for point-target actions. Entity/gate callers keep using TargetID.
+type ClientUseAction struct { ActionID string; TargetKind ActionTargetKind; TargetID string; TargetX *float32; TargetZ *float32 }
 func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
 
 type SessionWelcome struct { SessionID uint64; EntityID world.EntityID; RealtimePort uint16; RealtimeToken string; TickRateHz uint16; SnapshotRateHz uint16; World WorldIdentity }

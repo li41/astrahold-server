@@ -14,10 +14,10 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientMoveInput{DX:m.DirectionX,DZ:m.DirectionZ})
 	case protocol.ClientUseAction:
-		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID})
+		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID,TargetX:m.TargetX,TargetZ:m.TargetZ})
 	case *protocol.ClientUseAction:
 		if m == nil { return nil, ErrUnsupportedMessage }
-		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID})
+		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID,TargetX:m.TargetX,TargetZ:m.TargetZ})
 	case protocol.SessionWelcome:
 		return json.Marshal(sessionWelcome{SessionID:m.SessionID,EntityID:uint64(m.EntityID),RealtimePort:m.RealtimePort,RealtimeToken:m.RealtimeToken,TickRateHz:m.TickRateHz,SnapshotRateHz:m.SnapshotRateHz,WorldID:m.World.WorldID,WorldRevision:m.World.Revision,GameplaySHA256:m.World.GameplaySHA256})
 	case protocol.EntitySpawn:
