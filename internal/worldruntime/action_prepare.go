@@ -43,5 +43,9 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: character.ErrCharacterDefeated})
 		return
 	}
-	r.prepareAndDispatchAction(name, command, s.EntityID, tick, delta, report)
+
+	// Network/session authority ends here. Combat execution consumes an ActorEntityID intent so
+	// future Server-owned AI can reuse the same legality/damage path without inventing fake Sessions.
+	intent := combatIntentFromClientAction(s.EntityID, command.action)
+	r.prepareAndDispatchAction(name, command.sessionID, intent, tick, delta, report)
 }
