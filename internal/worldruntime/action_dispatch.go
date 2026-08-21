@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/combat"
-	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 )
@@ -37,13 +36,8 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 		}
 		r.siege.ObserveGateState(gateState)
 		r.bumpDynamicRevision()
-		r.emitCombatEvent(protocol.CombatEvent{
-			ActionInstanceID: prepared.ActionInstanceID,
-			ActorEntityID: actor.ID,
-			ActionID: prepared.Definition.ID,
-			Result: protocol.CombatEventHit,
-			Damage: prepared.Damage.Amount,
-		}, tick, report)
+		// Keep the established gate Reliable ordering unchanged: WorldDynamicState remains the
+		// first observable gate outcome. CombatEvent is currently scoped to entity combat only.
 	case combat.TargetEntity:
 		if r.applyEntityAction(name, sourceSessionID, actor, prepared, tick, report) {
 			r.combat.Commit(prepared, tick, delta)
