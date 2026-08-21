@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "revision": "s3f5-001",
+  "revision": "playable-siege-fireball-001",
   "actions": [
     {
       "id": "basic-attack",
@@ -10,6 +10,16 @@
       "base_damage": 100,
       "damage_type": "physical",
       "cooldown_seconds": 0.5
+    },
+    {
+      "id": "fireball",
+      "effect": "damage",
+      "targets": ["point"],
+      "range": 12.0,
+      "hit_radius": 0.9,
+      "base_damage": 150,
+      "damage_type": "physical",
+      "cooldown_seconds": 2.0
     },
     {
       "id": "resurrect",
