@@ -9,7 +9,7 @@ import (
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
 // v9: ASTU realtime 不再攜帶 bearer token；改為 public routing ID + 128-bit HMAC trailer，並做 C2S/S2C domain separation。
-// ClientUseAction 的 point target 採 Reliable JSON optional fields，既有 v9 Client 不帶欄位時仍保持相容。
+// ClientUseAction 的 point target、EntitySpawn archetype_id 與 CombatEvent 都採 Reliable JSON additive contract。
 const Version uint16 = 9
 
 const MaxSnapshotEntitiesPerChunk = 43
@@ -28,6 +28,7 @@ const (
 	MessageWorldDynamicState  MessageType = 104
 	MessageEntityVitalsState  MessageType = 105
 	MessageSiegeMatchState    MessageType = 106
+	MessageCombatEvent        MessageType = 107
 )
 
 type Delivery uint8
@@ -60,7 +61,8 @@ func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
 type SessionWelcome struct { SessionID uint64; EntityID world.EntityID; RealtimePort uint16; RealtimeToken string; TickRateHz uint16; SnapshotRateHz uint16; World WorldIdentity }
 func (SessionWelcome) Type() MessageType { return MessageSessionWelcome }
 type EntityTransform struct { EntityID world.EntityID; Tick uint64; Position world.Position; Yaw float32 }
-type EntitySpawn struct { EntityID world.EntityID; Kind world.EntityKind; Transform EntityTransform }
+// ArchetypeID is stable content/presentation identity only; gameplay authority remains server-side.
+type EntitySpawn struct { EntityID world.EntityID; Kind world.EntityKind; Transform EntityTransform; ArchetypeID string }
 func (EntitySpawn) Type() MessageType { return MessageEntitySpawn }
 type EntityDespawn struct{ EntityID world.EntityID }
 func (EntityDespawn) Type() MessageType { return MessageEntityDespawn }
@@ -74,9 +76,30 @@ type WorldGateState struct { ID string; HP uint32; MaxHP uint32; Destroyed bool 
 type WorldDynamicState struct { Revision uint64; Blockers []WorldBlockerState; Gates []WorldGateState }
 func (WorldDynamicState) Type() MessageType { return MessageWorldDynamicState }
 
-// EntityVitalsState 是單一角色完整、可重送的 Reliable vitals snapshot。
+// EntityVitalsState 是單一 combatant 完整、可重送的 Reliable vitals snapshot。
 type EntityVitalsState struct { EntityID world.EntityID; HP uint32; MaxHP uint32; Defeated bool }
 func (EntityVitalsState) Type() MessageType { return MessageEntityVitalsState }
+
+type CombatEventResult string
+const (
+	CombatEventHit       CombatEventResult = "hit"
+	CombatEventMiss      CombatEventResult = "miss"
+	CombatEventResurrect CombatEventResult = "resurrect"
+)
+
+// CombatEvent 描述 Server 已 resolve 的 action outcome。EntityVitalsState 仍是 HP truth；
+// event 供 animation/VFX/audio 等 presentation 對齊 stable ActionInstanceID。
+type CombatEvent struct {
+	ActionInstanceID uint64
+	ActorEntityID    world.EntityID
+	ActionID         string
+	Result           CombatEventResult
+	TargetEntityID   world.EntityID
+	ImpactX          *float32
+	ImpactZ          *float32
+	Damage           uint32
+}
+func (CombatEvent) Type() MessageType { return MessageCombatEvent }
 
 type SiegeTeam string
 const (
