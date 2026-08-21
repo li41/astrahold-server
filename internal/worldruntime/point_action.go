@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/spatial"
 	"github.com/li41/astrahold-server/internal/world"
@@ -23,7 +24,17 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 		return false
 	}
 	if !hit {
-		// A legal skillshot may miss. It still consumes cooldown in the caller.
+		// A legal skillshot may miss. It still consumes cooldown in the caller and emits
+		// a Server-authored miss so presentation no longer has to infer the outcome.
+		x, z := prepared.Target.PointX, prepared.Target.PointZ
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID: prepared.ActionInstanceID,
+			ActorEntityID: actor.ID,
+			ActionID: prepared.Definition.ID,
+			Result: protocol.CombatEventMiss,
+			ImpactX: &x,
+			ImpactZ: &z,
+		}, tick, report)
 		return true
 	}
 
