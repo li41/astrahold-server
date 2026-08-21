@@ -5,29 +5,37 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func (r *Runtime) prepareAndDispatchAction(name string, command useActionCommand, actorID world.EntityID, tick uint64, delta time.Duration, report *StepReport) {
-	target := combat.Target{Kind: combat.TargetKind(command.action.TargetKind), ID: command.action.TargetID}
-	if command.action.TargetKind == "point" && command.action.TargetX != nil && command.action.TargetZ != nil {
-		target.PointX = *command.action.TargetX
-		target.PointZ = *command.action.TargetZ
+func combatIntentFromClientAction(actorID world.EntityID, action protocol.ClientUseAction) combat.Intent {
+	target := combat.Target{Kind: combat.TargetKind(action.TargetKind), ID: action.TargetID}
+	if action.TargetKind == protocol.ActionTargetPoint && action.TargetX != nil && action.TargetZ != nil {
+		target.PointX = *action.TargetX
+		target.PointZ = *action.TargetZ
 		target.HasPoint = true
 	}
-	prepared, err := r.combat.Prepare(actorID, command.action.ActionID, target, tick)
+	return combat.Intent{ActorEntityID: actorID, ActionID: action.ActionID, Target: target}
+}
+
+// prepareAndDispatchAction is transport-neutral after ingress has resolved ActorEntityID.
+// SourceSessionID is retained only for diagnostics/backpressure attribution, never for actor truth.
+func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
+	prepared, err := r.combat.PrepareIntent(intent, tick)
 	if err != nil {
-		if command.action.ActionID == legacyGateActionID && errors.Is(err, combat.ErrActionCooldown) {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:command.sessionID,Err:siege.ErrGateAttackCooldown})
+		if intent.ActionID == legacyGateActionID && errors.Is(err, combat.ErrActionCooldown) {
+			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sourceSessionID,Err:siege.ErrGateAttackCooldown})
 			return
 		}
 		if isExpectedCombatRejection(err) {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:command.sessionID,Err:err})
+			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sourceSessionID,Err:err})
 			return
 		}
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:command.sessionID,Err:err})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:err})
 		return
 	}
-	r.dispatchPreparedAction(name, command, prepared, tick, delta, report)
+	r.dispatchPreparedAction(name, sourceSessionID, prepared, tick, delta, report)
 }
