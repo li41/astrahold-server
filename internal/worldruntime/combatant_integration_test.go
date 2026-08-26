@@ -55,7 +55,7 @@ func TestPlayerAndMonsterShareGenericCombatantActionPath(t *testing.T) {
 	}
 
 	aiReport := StepReport{Tick: 3}
-	rt.prepareAndDispatchAction("monster_ai_action", 0, combat.Intent{
+	rt.prepareAndDispatchAction("monster_ai_action", 0, 0, combat.Intent{
 		ActorEntityID: 2,
 		ActionID: "basic-attack",
 		Target: combat.Target{Kind: combat.TargetEntity, ID: "1"},
