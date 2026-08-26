@@ -12,19 +12,17 @@ import (
 
 // applyPointAction resolves a selected endpoint according to the Server-owned action definition.
 // The source chooses only the endpoint; range, LOS, target selection and damage remain Server-owned.
-func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
+func (r *Runtime) applyPointAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, hit, err := r.resolvePointActionTarget(actor, prepared)
 	if err != nil {
 		if err == ErrDynamicWorldUnavailable {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sessionID, Err: err})
+			r.rejectClientAction(name, sessionID, clientActionSequence, actor.ID, prepared.Definition.ID, protocol.ActionTargetPoint, err, tick, report)
 		}
 		return false
 	}
 	if !hit {
-		// A legal point miss is still a fully accepted action: announce acceptance before the
-		// resolved miss so Reliable ordering gives observers the cast cue first.
 		r.emitActionStarted(actor.ID, prepared, tick, report)
 		x, z := prepared.Target.PointX, prepared.Target.PointZ
 		r.emitCombatEvent(protocol.CombatEvent{
@@ -41,9 +39,7 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 
 	resolved := prepared
 	resolved.Target = combat.Target{Kind: combat.TargetEntity, ID: strconv.FormatUint(uint64(targetID), 10)}
-	// applyEntityAction performs the remaining entity/player-policy legality checks. It emits the
-	// start only after those pass, while startPrepared keeps the original point for presentation.
-	return r.applyEntityAction(name, sessionID, actor, resolved, prepared, tick, cooldownReadyTick, report)
+	return r.applyEntityAction(name, sessionID, clientActionSequence, actor, resolved, prepared, tick, cooldownReadyTick, report)
 }
 
 func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared combat.PreparedAction) (world.EntityID, bool, error) {

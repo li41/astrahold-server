@@ -8,9 +8,9 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v10: 新增 Reliable ActionStarted，讓 Server 完整接受的 action target spec 可先於 resolved outcome 廣播給 AOI observers。
-// ClientUseAction 的 point target、EntitySpawn archetype_id、CombatEvent 與 EntityVitalsState additive metadata 仍採 Reliable JSON contract。
-const Version uint16 = 10
+// v11: 新增 Reliable ActionRejected，讓 Server 對已處理的 action intent 明確回覆 authoritative rejection reason。
+// ActionStarted 仍只代表 Server accepted；CombatEvent / EntityVitalsState 仍分別是 resolved outcome / HP life-state truth。
+const Version uint16 = 11
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -30,6 +30,7 @@ const (
 	MessageSiegeMatchState    MessageType = 106
 	MessageCombatEvent        MessageType = 107
 	MessageActionStarted      MessageType = 108
+	MessageActionRejected     MessageType = 109
 )
 
 type Delivery uint8
@@ -47,22 +48,52 @@ type Envelope struct {
 	ServerTick uint64
 	Message    Message
 }
-func (e Envelope) MessageType() MessageType { if e.Message == nil { return MessageUnknown }; return e.Message.Type() }
 
-type WorldIdentity struct { WorldID string; Revision string; GameplaySHA256 string }
-func (w WorldIdentity) Valid() bool { if w.WorldID==""||w.Revision==""||len(w.GameplaySHA256)!=64{return false};decoded,err:=hex.DecodeString(w.GameplaySHA256);return err==nil&&len(decoded)==32 }
+func (e Envelope) MessageType() MessageType {
+	if e.Message == nil {
+		return MessageUnknown
+	}
+	return e.Message.Type()
+}
 
-type ClientMoveInput struct { DirectionX float32; DirectionZ float32 }
+type WorldIdentity struct {
+	WorldID        string
+	Revision       string
+	GameplaySHA256 string
+}
+
+func (w WorldIdentity) Valid() bool {
+	if w.WorldID == "" || w.Revision == "" || len(w.GameplaySHA256) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(w.GameplaySHA256)
+	return err == nil && len(decoded) == 32
+}
+
+type ClientMoveInput struct {
+	DirectionX float32
+	DirectionZ float32
+}
+
 func (ClientMoveInput) Type() MessageType { return MessageClientMoveInput }
 
 type ActionTargetKind string
+
 const (
-	ActionTargetGate ActionTargetKind = "gate"
+	ActionTargetGate   ActionTargetKind = "gate"
 	ActionTargetEntity ActionTargetKind = "entity"
-	ActionTargetPoint ActionTargetKind = "point"
+	ActionTargetPoint  ActionTargetKind = "point"
 )
+
 // TargetX/TargetZ are present only for point-target actions. Entity/gate callers keep using TargetID.
-type ClientUseAction struct { ActionID string; TargetKind ActionTargetKind; TargetID string; TargetX *float32; TargetZ *float32 }
+type ClientUseAction struct {
+	ActionID   string
+	TargetKind ActionTargetKind
+	TargetID   string
+	TargetX    *float32
+	TargetZ    *float32
+}
+
 func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
 
 // ActionStarted means the Server has accepted the action far enough that it will consume gameplay
@@ -77,39 +108,128 @@ type ActionStarted struct {
 	TargetX          *float32
 	TargetZ          *float32
 }
+
 func (ActionStarted) Type() MessageType { return MessageActionStarted }
 
-type SessionWelcome struct { SessionID uint64; EntityID world.EntityID; RealtimePort uint16; RealtimeToken string; TickRateHz uint16; SnapshotRateHz uint16; World WorldIdentity }
+type ActionRejectionReason string
+
+const (
+	ActionRejectionCooldown        ActionRejectionReason = "cooldown"
+	ActionRejectionInvalidTarget   ActionRejectionReason = "invalid_target"
+	ActionRejectionOutOfRange      ActionRejectionReason = "out_of_range"
+	ActionRejectionWrongLayer      ActionRejectionReason = "wrong_layer"
+	ActionRejectionLineOfSight     ActionRejectionReason = "line_of_sight"
+	ActionRejectionDefeated        ActionRejectionReason = "defeated"
+	ActionRejectionReviveProtected ActionRejectionReason = "revive_protected"
+	ActionRejectionUnknownAction   ActionRejectionReason = "unknown_action"
+	ActionRejectionServerRejected  ActionRejectionReason = "server_rejected"
+)
+
+// ActionRejected is source-session-only authoritative legality feedback. ClientActionSequence is
+// the Reliable ClientUseAction envelope sequence already consumed by the Server; clients must not
+// invent Reason when this message is absent. CooldownReadyTick is supplied only when the Server
+// has an authoritative ready tick for a cooldown rejection.
+type ActionRejected struct {
+	ClientActionSequence uint32
+	ActorEntityID        world.EntityID
+	ActionID             string
+	TargetKind           ActionTargetKind
+	Reason               ActionRejectionReason
+	CooldownReadyTick    uint64
+}
+
+func (ActionRejected) Type() MessageType { return MessageActionRejected }
+
+type SessionWelcome struct {
+	SessionID        uint64
+	EntityID         world.EntityID
+	RealtimePort     uint16
+	RealtimeToken    string
+	TickRateHz       uint16
+	SnapshotRateHz   uint16
+	World            WorldIdentity
+}
+
 func (SessionWelcome) Type() MessageType { return MessageSessionWelcome }
-type EntityTransform struct { EntityID world.EntityID; Tick uint64; Position world.Position; Yaw float32 }
+
+type EntityTransform struct {
+	EntityID world.EntityID
+	Tick     uint64
+	Position world.Position
+	Yaw      float32
+}
+
 // ArchetypeID is stable content/presentation identity only; gameplay authority remains server-side.
-type EntitySpawn struct { EntityID world.EntityID; Kind world.EntityKind; Transform EntityTransform; ArchetypeID string }
+type EntitySpawn struct {
+	EntityID    world.EntityID
+	Kind        world.EntityKind
+	Transform   EntityTransform
+	ArchetypeID string
+}
+
 func (EntitySpawn) Type() MessageType { return MessageEntitySpawn }
+
 type EntityDespawn struct{ EntityID world.EntityID }
+
 func (EntityDespawn) Type() MessageType { return MessageEntityDespawn }
-type WorldSnapshot struct { Tick uint64; ChunkIndex uint16; ChunkCount uint16; Entities []EntityTransform }
+
+type WorldSnapshot struct {
+	Tick       uint64
+	ChunkIndex uint16
+	ChunkCount uint16
+	Entities   []EntityTransform
+}
+
 func (WorldSnapshot) Type() MessageType { return MessageWorldSnapshot }
-func (s WorldSnapshot) ValidChunk() bool { return s.ChunkCount>0&&s.ChunkIndex<s.ChunkCount&&len(s.Entities)<=MaxSnapshotEntitiesPerChunk }
-type PositionCorrection struct { Tick uint64; EntityID world.EntityID; Position world.Position; Yaw float32; LastProcessedInputSequence uint32 }
+func (s WorldSnapshot) ValidChunk() bool {
+	return s.ChunkCount > 0 && s.ChunkIndex < s.ChunkCount && len(s.Entities) <= MaxSnapshotEntitiesPerChunk
+}
+
+type PositionCorrection struct {
+	Tick                       uint64
+	EntityID                   world.EntityID
+	Position                   world.Position
+	Yaw                        float32
+	LastProcessedInputSequence uint32
+}
+
 func (PositionCorrection) Type() MessageType { return MessagePositionCorrection }
-type WorldBlockerState struct { ID string; Enabled bool }
-type WorldGateState struct { ID string; HP uint32; MaxHP uint32; Destroyed bool }
-type WorldDynamicState struct { Revision uint64; Blockers []WorldBlockerState; Gates []WorldGateState }
+
+type WorldBlockerState struct {
+	ID      string
+	Enabled bool
+}
+
+type WorldGateState struct {
+	ID        string
+	HP        uint32
+	MaxHP     uint32
+	Destroyed bool
+}
+
+type WorldDynamicState struct {
+	Revision uint64
+	Blockers []WorldBlockerState
+	Gates    []WorldGateState
+}
+
 func (WorldDynamicState) Type() MessageType { return MessageWorldDynamicState }
 
 // EntityVitalsState 是單一 combatant 完整、可重送的 Reliable vitals snapshot。
 // ReviveProtectionUntilTick=0 表示目前沒有 Server-authoritative revive protection；非 0 時
 // Client 只能以 Server tick 顯示剩餘保護時間，不得自行延長、取消或決定 gameplay protection。
 type EntityVitalsState struct {
-	EntityID                   world.EntityID
-	HP                         uint32
-	MaxHP                      uint32
-	Defeated                   bool
-	ReviveProtectionUntilTick  uint64
+	EntityID                  world.EntityID
+	HP                        uint32
+	MaxHP                     uint32
+	Defeated                  bool
+	ReviveProtectionUntilTick uint64
 }
+
 func (EntityVitalsState) Type() MessageType { return MessageEntityVitalsState }
 
 type CombatEventResult string
+
 const (
 	CombatEventHit       CombatEventResult = "hit"
 	CombatEventMiss      CombatEventResult = "miss"
@@ -130,20 +250,23 @@ type CombatEvent struct {
 	Damage            uint32
 	CooldownReadyTick uint64
 }
+
 func (CombatEvent) Type() MessageType { return MessageCombatEvent }
 
 type SiegeTeam string
+
 const (
-	SiegeTeamUnknown SiegeTeam = "unknown"
+	SiegeTeamUnknown  SiegeTeam = "unknown"
 	SiegeTeamAttacker SiegeTeam = "attacker"
 	SiegeTeamDefender SiegeTeam = "defender"
 )
 
 type SiegePhase string
+
 const (
-	SiegePhaseUnknown SiegePhase = "unknown"
-	SiegePhaseGate SiegePhase = "gate"
-	SiegePhaseThrone SiegePhase = "throne"
+	SiegePhaseUnknown   SiegePhase = "unknown"
+	SiegePhaseGate      SiegePhase = "gate"
+	SiegePhaseThrone    SiegePhase = "throne"
 	SiegePhaseCompleted SiegePhase = "completed"
 )
 
@@ -165,4 +288,5 @@ type SiegeMatchState struct {
 	WinnerID          string
 	CastleOwnerID     string
 }
+
 func (SiegeMatchState) Type() MessageType { return MessageSiegeMatchState }

@@ -23,8 +23,8 @@ func combatIntentFromClientAction(actorID world.EntityID, action protocol.Client
 }
 
 // prepareAndDispatchAction is transport-neutral after ingress has resolved ActorEntityID.
-// SourceSessionID is retained only for diagnostics/backpressure attribution, never for actor truth.
-func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
+// SourceSessionID/clientActionSequence are retained only for diagnostics and source-session UX feedback.
+func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, clientActionSequence uint32, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
 	actor, ok := r.world.Entity(intent.ActorEntityID)
 	if !ok || !combatActorKind(actor.Kind) {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:ErrSessionEntityNotFound})
@@ -36,22 +36,22 @@ func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.
 		return
 	}
 	if actorState.Defeated {
-		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sourceSessionID,Err:character.ErrCharacterDefeated})
+		r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), character.ErrCharacterDefeated, tick, report)
 		return
 	}
 
 	prepared, err := r.combat.PrepareIntent(intent, tick)
 	if err != nil {
 		if intent.ActionID == legacyGateActionID && errors.Is(err, combat.ErrActionCooldown) {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sourceSessionID,Err:siege.ErrGateAttackCooldown})
+			r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), siege.ErrGateAttackCooldown, tick, report)
 			return
 		}
 		if isExpectedCombatRejection(err) {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action:name,SessionID:sourceSessionID,Err:err})
+			r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), err, tick, report)
 			return
 		}
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:err})
 		return
 	}
-	r.dispatchPreparedAction(name, sourceSessionID, prepared, tick, delta, report)
+	r.dispatchPreparedAction(name, sourceSessionID, clientActionSequence, prepared, tick, delta, report)
 }

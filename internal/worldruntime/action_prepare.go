@@ -40,12 +40,12 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		return
 	}
 	if state.Defeated {
-		report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: command.sessionID, Err: character.ErrCharacterDefeated})
+		r.rejectClientAction(name, command.sessionID, command.sequence, s.EntityID, command.action.ActionID, command.action.TargetKind, character.ErrCharacterDefeated, tick, report)
 		return
 	}
 
 	// Network/session authority ends here. Combat execution consumes an ActorEntityID intent so
 	// future Server-owned AI can reuse the same legality/damage path without inventing fake Sessions.
 	intent := combatIntentFromClientAction(s.EntityID, command.action)
-	r.prepareAndDispatchAction(name, command.sessionID, intent, tick, delta, report)
+	r.prepareAndDispatchAction(name, command.sessionID, command.sequence, intent, tick, delta, report)
 }

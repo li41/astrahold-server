@@ -19,6 +19,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in actionStarted
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
 		return protocol.ActionStarted{ActionInstanceID:in.ActionInstanceID,ActorEntityID:world.EntityID(in.ActorEntityID),ActionID:in.ActionID,TargetKind:protocol.ActionTargetKind(in.TargetKind),TargetID:in.TargetID,TargetX:in.TargetX,TargetZ:in.TargetZ},nil
+	case protocol.MessageActionRejected:
+		var in actionRejected
+		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
+		return protocol.ActionRejected{ClientActionSequence:in.ClientActionSequence,ActorEntityID:world.EntityID(in.ActorEntityID),ActionID:in.ActionID,TargetKind:protocol.ActionTargetKind(in.TargetKind),Reason:protocol.ActionRejectionReason(in.Reason),CooldownReadyTick:in.CooldownReadyTick},nil
 	case protocol.MessageSessionWelcome:
 		var in sessionWelcome
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}

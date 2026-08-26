@@ -12,13 +12,13 @@ import (
 
 // startPrepared preserves the accepted target spec used for ActionStarted. Point actions may resolve
 // to an entity for HP mutation while their presentation target must remain the original point.
-func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, startPrepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
+func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, startPrepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, err := r.validateEntityTarget(actor, prepared)
 	if err != nil {
 		if errors.Is(err, ErrDynamicWorldUnavailable) {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sessionID, Err: err})
+			r.rejectClientAction(name, sessionID, clientActionSequence, actor.ID, startPrepared.Definition.ID, protocol.ActionTargetKind(startPrepared.Target.Kind), err, tick, report)
 		}
 		return false
 	}
@@ -52,9 +52,8 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 		return true
 
 	case combat.EffectDamage:
-		// Player-only policies stay outside generic combatant HP mutation.
 		if target.Kind == world.EntityPlayer && r.isReviveProtected(targetID, tick) {
-			report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sessionID, Err: ErrEntityReviveProtected})
+			r.rejectClientAction(name, sessionID, clientActionSequence, actor.ID, startPrepared.Definition.ID, protocol.ActionTargetKind(startPrepared.Target.Kind), ErrEntityReviveProtected, tick, report)
 			report.Metrics.ReviveProtectionDamageBlocks++
 			return false
 		}
@@ -65,8 +64,6 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 			return false
 		}
 		if state.Defeated {
-			// Every movable combatant stops immediately on defeat; only Players receive the
-			// durable death/respawn/death-penalty policy below.
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			}
