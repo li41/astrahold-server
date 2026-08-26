@@ -10,7 +10,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, report *StepReport) bool {
+func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, err := r.validateEntityTarget(actor, prepared)
 	if err != nil {
 		if errors.Is(err, ErrDynamicWorldUnavailable) {
@@ -44,6 +44,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 			ActionID: prepared.Definition.ID,
 			Result: protocol.CombatEventResurrect,
 			TargetEntityID: targetID,
+			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true
 
@@ -78,6 +79,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 			Result: protocol.CombatEventHit,
 			TargetEntityID: targetID,
 			Damage: prepared.Damage.Amount,
+			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true
 

@@ -53,7 +53,7 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 	case protocol.MessageCombatEvent:
 		var in combatEvent
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
-		return protocol.CombatEvent{ActionInstanceID:in.ActionInstanceID,ActorEntityID:world.EntityID(in.ActorEntityID),ActionID:in.ActionID,Result:protocol.CombatEventResult(in.Result),TargetEntityID:world.EntityID(in.TargetEntityID),ImpactX:in.ImpactX,ImpactZ:in.ImpactZ,Damage:in.Damage},nil
+		return protocol.CombatEvent{ActionInstanceID:in.ActionInstanceID,ActorEntityID:world.EntityID(in.ActorEntityID),ActionID:in.ActionID,Result:protocol.CombatEventResult(in.Result),TargetEntityID:world.EntityID(in.TargetEntityID),ImpactX:in.ImpactX,ImpactZ:in.ImpactZ,Damage:in.Damage,CooldownReadyTick:in.CooldownReadyTick},nil
 	default:
 		return nil, ErrUnsupportedMessage
 	}

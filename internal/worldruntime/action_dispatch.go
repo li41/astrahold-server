@@ -15,6 +15,7 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: ErrSessionEntityNotFound})
 		return
 	}
+	cooldownReadyTick := combat.CooldownReadyTick(prepared.Definition, tick, delta)
 	switch prepared.Target.Kind {
 	case combat.TargetGate:
 		if r.siege == nil || r.dynamic == nil {
@@ -39,14 +40,14 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 		// Keep the established gate Reliable ordering unchanged: WorldDynamicState remains the
 		// first observable gate outcome. CombatEvent is currently scoped to entity combat only.
 	case combat.TargetEntity:
-		if r.applyEntityAction(name, sourceSessionID, actor, prepared, tick, report) {
+		if r.applyEntityAction(name, sourceSessionID, actor, prepared, tick, cooldownReadyTick, report) {
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage {
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)
 			}
 		}
 	case combat.TargetPoint:
-		if r.applyPointAction(name, sourceSessionID, actor, prepared, tick, report) {
+		if r.applyPointAction(name, sourceSessionID, actor, prepared, tick, cooldownReadyTick, report) {
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage {
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)

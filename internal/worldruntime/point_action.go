@@ -12,7 +12,7 @@ import (
 
 // applyPointAction resolves a selected endpoint according to the Server-owned action definition.
 // The source chooses only the endpoint; range, LOS, target selection and damage remain Server-owned.
-func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, report *StepReport) bool {
+func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, hit, err := r.resolvePointActionTarget(actor, prepared)
 	if err != nil {
 		if err == ErrDynamicWorldUnavailable {
@@ -33,6 +33,7 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 			Result: protocol.CombatEventMiss,
 			ImpactX: &x,
 			ImpactZ: &z,
+			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true
 	}
@@ -42,7 +43,7 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 		Kind: combat.TargetEntity,
 		ID:   strconv.FormatUint(uint64(targetID), 10),
 	}
-	return r.applyEntityAction(name, sessionID, actor, resolved, tick, report)
+	return r.applyEntityAction(name, sessionID, actor, resolved, tick, cooldownReadyTick, report)
 }
 
 func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared combat.PreparedAction) (world.EntityID, bool, error) {

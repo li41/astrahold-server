@@ -20,6 +20,7 @@ func TestCombatEventRoundTrip(t *testing.T) {
 		ImpactX: &x,
 		ImpactZ: &z,
 		Damage: 150,
+		CooldownReadyTick: 240,
 	}
 	data, err := codec.Marshal(want)
 	if err != nil { t.Fatal(err) }
@@ -27,9 +28,17 @@ func TestCombatEventRoundTrip(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	got, ok := decoded.(protocol.CombatEvent)
 	if !ok { t.Fatalf("got type %T", decoded) }
-	if got.ActionInstanceID != want.ActionInstanceID || got.ActorEntityID != want.ActorEntityID || got.ActionID != want.ActionID || got.Result != want.Result || got.TargetEntityID != want.TargetEntityID || got.Damage != want.Damage || got.ImpactX == nil || got.ImpactZ == nil || *got.ImpactX != x || *got.ImpactZ != z {
+	if got.ActionInstanceID != want.ActionInstanceID || got.ActorEntityID != want.ActorEntityID || got.ActionID != want.ActionID || got.Result != want.Result || got.TargetEntityID != want.TargetEntityID || got.Damage != want.Damage || got.CooldownReadyTick != want.CooldownReadyTick || got.ImpactX == nil || got.ImpactZ == nil || *got.ImpactX != x || *got.ImpactZ != z {
 		t.Fatalf("got=%#v want=%#v", got, want)
 	}
+}
+
+func TestCombatEventCooldownMetadataMayBeOmitted(t *testing.T) {
+	codec := Codec{}
+	decoded, err := codec.Unmarshal(protocol.MessageCombatEvent, []byte(`{"action_instance_id":1,"actor_entity_id":10,"action_id":"fireball","result":"miss","target_entity_id":0,"damage":0}`))
+	if err != nil { t.Fatal(err) }
+	got := decoded.(protocol.CombatEvent)
+	if got.CooldownReadyTick != 0 { t.Fatalf("cooldown_ready_tick=%d want=0", got.CooldownReadyTick) }
 }
 
 func TestEntitySpawnArchetypeRoundTripAndOmission(t *testing.T) {

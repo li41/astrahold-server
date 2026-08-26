@@ -27,6 +27,7 @@ type combatEvent struct {
 	ImpactX          *float32 `json:"impact_x,omitempty"`
 	ImpactZ          *float32 `json:"impact_z,omitempty"`
 	Damage           uint32   `json:"damage"`
+	CooldownReadyTick uint64  `json:"cooldown_ready_tick,omitempty"`
 }
 type siegeMatchState struct {
 	Revision          uint64 `json:"revision"`

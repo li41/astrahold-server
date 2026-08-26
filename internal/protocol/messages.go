@@ -89,6 +89,7 @@ const (
 
 // CombatEvent 描述 Server 已 resolve 的 action outcome。EntityVitalsState 仍是 HP truth；
 // event 供 animation/VFX/audio 等 presentation 對齊 stable ActionInstanceID。
+// CooldownReadyTick=0 表示沒有 additive cooldown metadata；非 0 時是 Server 會執行的 ready tick。
 type CombatEvent struct {
 	ActionInstanceID uint64
 	ActorEntityID    world.EntityID
@@ -98,6 +99,7 @@ type CombatEvent struct {
 	ImpactX          *float32
 	ImpactZ          *float32
 	Damage           uint32
+	CooldownReadyTick uint64
 }
 func (CombatEvent) Type() MessageType { return MessageCombatEvent }
 

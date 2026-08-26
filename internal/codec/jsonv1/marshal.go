@@ -35,7 +35,7 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case protocol.SiegeMatchState:
 		return json.Marshal(siegeMatchState{Revision:m.Revision,Round:m.Round,MatchID:m.MatchID,AttackerID:m.AttackerID,DefenderID:m.DefenderID,YourTeam:string(m.YourTeam),Phase:string(m.Phase),BreachGateID:m.BreachGateID,ThroneObjectiveID:m.ThroneObjectiveID,GateBreached:m.GateBreached,WinnerTeam:string(m.WinnerTeam),WinnerID:m.WinnerID,CastleOwnerID:m.CastleOwnerID})
 	case protocol.CombatEvent:
-		return json.Marshal(combatEvent{ActionInstanceID:m.ActionInstanceID,ActorEntityID:uint64(m.ActorEntityID),ActionID:m.ActionID,Result:string(m.Result),TargetEntityID:uint64(m.TargetEntityID),ImpactX:m.ImpactX,ImpactZ:m.ImpactZ,Damage:m.Damage})
+		return json.Marshal(combatEvent{ActionInstanceID:m.ActionInstanceID,ActorEntityID:uint64(m.ActorEntityID),ActionID:m.ActionID,Result:string(m.Result),TargetEntityID:uint64(m.TargetEntityID),ImpactX:m.ImpactX,ImpactZ:m.ImpactZ,Damage:m.Damage,CooldownReadyTick:m.CooldownReadyTick})
 	default:
 		return nil, ErrUnsupportedMessage
 	}
