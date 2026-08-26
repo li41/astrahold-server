@@ -18,17 +18,17 @@ type positionCorrection struct { Tick uint64 `json:"tick"`; EntityID uint64 `jso
 type worldBlockerState struct { ID string `json:"id"`; Enabled bool `json:"enabled"` }
 type worldGateState struct { ID string `json:"id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; Destroyed bool `json:"destroyed"` }
 type worldDynamicState struct { Revision uint64 `json:"revision"`; Blockers []worldBlockerState `json:"blockers"`; Gates []worldGateState `json:"gates"` }
-type entityVitalsState struct { EntityID uint64 `json:"entity_id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; Defeated bool `json:"defeated"` }
+type entityVitalsState struct { EntityID uint64 `json:"entity_id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; Defeated bool `json:"defeated"`; ReviveProtectionUntilTick uint64 `json:"revive_protection_until_tick,omitempty"` }
 type combatEvent struct {
-	ActionInstanceID uint64   `json:"action_instance_id"`
-	ActorEntityID    uint64   `json:"actor_entity_id"`
-	ActionID         string   `json:"action_id"`
-	Result           string   `json:"result"`
-	TargetEntityID   uint64   `json:"target_entity_id"`
-	ImpactX          *float32 `json:"impact_x,omitempty"`
-	ImpactZ          *float32 `json:"impact_z,omitempty"`
-	Damage           uint32   `json:"damage"`
-	CooldownReadyTick uint64  `json:"cooldown_ready_tick,omitempty"`
+	ActionInstanceID  uint64   `json:"action_instance_id"`
+	ActorEntityID     uint64   `json:"actor_entity_id"`
+	ActionID          string   `json:"action_id"`
+	Result            string   `json:"result"`
+	TargetEntityID    uint64   `json:"target_entity_id"`
+	ImpactX           *float32 `json:"impact_x,omitempty"`
+	ImpactZ           *float32 `json:"impact_z,omitempty"`
+	Damage            uint32   `json:"damage"`
+	CooldownReadyTick uint64   `json:"cooldown_ready_tick,omitempty"`
 }
 type siegeMatchState struct {
 	Revision          uint64 `json:"revision"`

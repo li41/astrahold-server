@@ -379,7 +379,13 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 }
 
 func (r *Runtime) trySendEntityVitals(s *session.Session, entityID world.EntityID, hp, maxHP uint32, defeated bool, tick uint64, report *StepReport) error {
-	message := protocol.EntityVitalsState{EntityID: entityID, HP: hp, MaxHP: maxHP, Defeated: defeated}
+	message := protocol.EntityVitalsState{
+		EntityID: entityID,
+		HP: hp,
+		MaxHP: maxHP,
+		Defeated: defeated,
+		ReviveProtectionUntilTick: r.reviveProtectionUntilTick(entityID, tick),
+	}
 	envelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: message}
 	report.Metrics.OutboundMessages++
 	if err := s.Connection().TrySend(envelope); err != nil {

@@ -9,7 +9,7 @@ import (
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
 // v10: 新增 Reliable ActionStarted，讓 Server 完整接受的 action target spec 可先於 resolved outcome 廣播給 AOI observers。
-// ClientUseAction 的 point target、EntitySpawn archetype_id 與 CombatEvent additive metadata 仍採 Reliable JSON contract。
+// ClientUseAction 的 point target、EntitySpawn archetype_id、CombatEvent 與 EntityVitalsState additive metadata 仍採 Reliable JSON contract。
 const Version uint16 = 10
 
 const MaxSnapshotEntitiesPerChunk = 43
@@ -17,10 +17,10 @@ const MaxSnapshotEntitiesPerChunk = 43
 type MessageType uint16
 
 const (
-	MessageUnknown         MessageType = 0
-	MessageClientMoveInput MessageType = 1
-	MessageClientUseAction MessageType = 2
-	MessageSessionWelcome  MessageType = 10
+	MessageUnknown            MessageType = 0
+	MessageClientMoveInput    MessageType = 1
+	MessageClientUseAction    MessageType = 2
+	MessageSessionWelcome     MessageType = 10
 	MessageEntitySpawn        MessageType = 100
 	MessageEntityDespawn      MessageType = 101
 	MessageWorldSnapshot      MessageType = 102
@@ -33,6 +33,7 @@ const (
 )
 
 type Delivery uint8
+
 const (
 	DeliveryUnknown Delivery = iota
 	DeliveryReliableOrdered
@@ -40,7 +41,12 @@ const (
 )
 
 type Message interface{ Type() MessageType }
-type Envelope struct { Delivery Delivery; Sequence uint32; ServerTick uint64; Message Message }
+type Envelope struct {
+	Delivery   Delivery
+	Sequence   uint32
+	ServerTick uint64
+	Message    Message
+}
 func (e Envelope) MessageType() MessageType { if e.Message == nil { return MessageUnknown }; return e.Message.Type() }
 
 type WorldIdentity struct { WorldID string; Revision string; GameplaySHA256 string }
@@ -92,7 +98,15 @@ type WorldDynamicState struct { Revision uint64; Blockers []WorldBlockerState; G
 func (WorldDynamicState) Type() MessageType { return MessageWorldDynamicState }
 
 // EntityVitalsState 是單一 combatant 完整、可重送的 Reliable vitals snapshot。
-type EntityVitalsState struct { EntityID world.EntityID; HP uint32; MaxHP uint32; Defeated bool }
+// ReviveProtectionUntilTick=0 表示目前沒有 Server-authoritative revive protection；非 0 時
+// Client 只能以 Server tick 顯示剩餘保護時間，不得自行延長、取消或決定 gameplay protection。
+type EntityVitalsState struct {
+	EntityID                   world.EntityID
+	HP                         uint32
+	MaxHP                      uint32
+	Defeated                   bool
+	ReviveProtectionUntilTick  uint64
+}
 func (EntityVitalsState) Type() MessageType { return MessageEntityVitalsState }
 
 type CombatEventResult string
@@ -106,14 +120,14 @@ const (
 // event 供 animation/VFX/audio 等 presentation 對齊 stable ActionInstanceID。
 // CooldownReadyTick=0 表示沒有 additive cooldown metadata；非 0 時是 Server 會執行的 ready tick。
 type CombatEvent struct {
-	ActionInstanceID uint64
-	ActorEntityID    world.EntityID
-	ActionID         string
-	Result           CombatEventResult
-	TargetEntityID   world.EntityID
-	ImpactX          *float32
-	ImpactZ          *float32
-	Damage           uint32
+	ActionInstanceID  uint64
+	ActorEntityID     world.EntityID
+	ActionID          string
+	Result            CombatEventResult
+	TargetEntityID    world.EntityID
+	ImpactX           *float32
+	ImpactZ           *float32
+	Damage            uint32
 	CooldownReadyTick uint64
 }
 func (CombatEvent) Type() MessageType { return MessageCombatEvent }
