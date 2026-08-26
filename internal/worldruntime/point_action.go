@@ -23,8 +23,9 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 		return false
 	}
 	if !hit {
-		// A legal point action may miss. It still consumes cooldown in the caller and emits
-		// a Server-authored miss so presentation no longer has to infer the outcome.
+		// A legal point miss is still a fully accepted action: announce acceptance before the
+		// resolved miss so Reliable ordering gives observers the cast cue first.
+		r.emitActionStarted(actor.ID, prepared, tick, report)
 		x, z := prepared.Target.PointX, prepared.Target.PointZ
 		r.emitCombatEvent(protocol.CombatEvent{
 			ActionInstanceID: prepared.ActionInstanceID,
@@ -39,11 +40,10 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 	}
 
 	resolved := prepared
-	resolved.Target = combat.Target{
-		Kind: combat.TargetEntity,
-		ID:   strconv.FormatUint(uint64(targetID), 10),
-	}
-	return r.applyEntityAction(name, sessionID, actor, resolved, tick, cooldownReadyTick, report)
+	resolved.Target = combat.Target{Kind: combat.TargetEntity, ID: strconv.FormatUint(uint64(targetID), 10)}
+	// applyEntityAction performs the remaining entity/player-policy legality checks. It emits the
+	// start only after those pass, while startPrepared keeps the original point for presentation.
+	return r.applyEntityAction(name, sessionID, actor, resolved, prepared, tick, cooldownReadyTick, report)
 }
 
 func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared combat.PreparedAction) (world.EntityID, bool, error) {
@@ -52,24 +52,15 @@ func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared com
 	}
 
 	start := actor.Transform.Position
-	end := world.Position{
-		X:     prepared.Target.PointX,
-		Y:     start.Y,
-		Z:     prepared.Target.PointZ,
-		Layer: start.Layer,
-	}
+	end := world.Position{X: prepared.Target.PointX, Y: start.Y, Z: prepared.Target.PointZ, Layer: start.Layer}
 	dx := end.X - start.X
 	dz := end.Z - start.Z
 	lineLengthSq := dx*dx + dz*dz
 	if lineLengthSq > prepared.Definition.Range*prepared.Definition.Range {
 		return 0, false, ErrPointOutOfRange
 	}
-	if r.dynamic == nil {
-		return 0, false, ErrDynamicWorldUnavailable
-	}
-	if !r.dynamic.HasLineOfSight(start, end) {
-		return 0, false, ErrPointNoLineOfSight
-	}
+	if r.dynamic == nil { return 0, false, ErrDynamicWorldUnavailable }
+	if !r.dynamic.HasLineOfSight(start, end) { return 0, false, ErrPointNoLineOfSight }
 
 	switch prepared.Definition.PointResolution {
 	case "", combat.PointResolutionLineFirst:
@@ -82,77 +73,48 @@ func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared com
 }
 
 func (r *Runtime) resolveLineFirstPointTarget(actor world.EntityState, prepared combat.PreparedAction, start world.Position, dx, dz, lineLengthSq float32) (world.EntityID, bool, error) {
-	if lineLengthSq <= 0.000001 {
-		return 0, false, nil
-	}
-
+	if lineLengthSq <= 0.000001 { return 0, false, nil }
 	hitRadiusSq := prepared.Definition.HitRadius * prepared.Definition.HitRadius
-	candidates := r.world.QueryAOI(
-		start,
-		prepared.Definition.Range+prepared.Definition.HitRadius,
-		spatial.QueryOptions{SameLayer: true},
-	)
-
+	candidates := r.world.QueryAOI(start, prepared.Definition.Range+prepared.Definition.HitRadius, spatial.QueryOptions{SameLayer: true})
 	bestID := world.EntityID(0)
 	bestT := float32(2)
 	bestDistanceSq := float32(0)
 	for _, candidate := range candidates {
-		if candidate.ID == actor.ID || !combatantKind(candidate.Kind) {
-			continue
-		}
+		if candidate.ID == actor.ID || !combatantKind(candidate.Kind) { continue }
 		state, ok := r.combatantState(candidate.ID)
-		if !ok || state.Defeated {
-			continue
-		}
-
+		if !ok || state.Defeated { continue }
 		wx := candidate.Transform.Position.X - start.X
 		wz := candidate.Transform.Position.Z - start.Z
 		t := (wx*dx + wz*dz) / lineLengthSq
-		if t < 0 || t > 1 {
-			continue
-		}
+		if t < 0 || t > 1 { continue }
 		closestX := start.X + t*dx
 		closestZ := start.Z + t*dz
 		cx := candidate.Transform.Position.X - closestX
 		cz := candidate.Transform.Position.Z - closestZ
 		distanceSq := cx*cx + cz*cz
-		if distanceSq > hitRadiusSq {
-			continue
-		}
-
+		if distanceSq > hitRadiusSq { continue }
 		if bestID == 0 || t < bestT || (t == bestT && (distanceSq < bestDistanceSq || (distanceSq == bestDistanceSq && candidate.ID < bestID))) {
-			bestID = candidate.ID
-			bestT = t
-			bestDistanceSq = distanceSq
+			bestID = candidate.ID; bestT = t; bestDistanceSq = distanceSq
 		}
 	}
-
 	return bestID, bestID != 0, nil
 }
 
 func (r *Runtime) resolveEndpointNearestPointTarget(actor world.EntityState, prepared combat.PreparedAction, end world.Position) (world.EntityID, bool, error) {
 	hitRadiusSq := prepared.Definition.HitRadius * prepared.Definition.HitRadius
 	candidates := r.world.QueryAOI(end, prepared.Definition.HitRadius, spatial.QueryOptions{SameLayer: true})
-
 	bestID := world.EntityID(0)
 	bestDistanceSq := float32(0)
 	for _, candidate := range candidates {
-		if candidate.ID == actor.ID || !combatantKind(candidate.Kind) {
-			continue
-		}
+		if candidate.ID == actor.ID || !combatantKind(candidate.Kind) { continue }
 		state, ok := r.combatantState(candidate.ID)
-		if !ok || state.Defeated {
-			continue
-		}
+		if !ok || state.Defeated { continue }
 		dx := candidate.Transform.Position.X - end.X
 		dz := candidate.Transform.Position.Z - end.Z
 		distanceSq := dx*dx + dz*dz
-		if distanceSq > hitRadiusSq {
-			continue
-		}
+		if distanceSq > hitRadiusSq { continue }
 		if bestID == 0 || distanceSq < bestDistanceSq || (distanceSq == bestDistanceSq && candidate.ID < bestID) {
-			bestID = candidate.ID
-			bestDistanceSq = distanceSq
+			bestID = candidate.ID; bestDistanceSq = distanceSq
 		}
 	}
 	return bestID, bestID != 0, nil

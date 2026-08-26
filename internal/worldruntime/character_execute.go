@@ -10,7 +10,9 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
+// startPrepared preserves the accepted target spec used for ActionStarted. Point actions may resolve
+// to an entity for HP mutation while their presentation target must remain the original point.
+func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, startPrepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, err := r.validateEntityTarget(actor, prepared)
 	if err != nil {
 		if errors.Is(err, ErrDynamicWorldUnavailable) {
@@ -28,6 +30,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 
 	switch prepared.Definition.Effect {
 	case combat.EffectResurrect:
+		r.emitActionStarted(actor.ID, startPrepared, tick, report)
 		if _, err := r.characters.RevivePercent(targetID, prepared.Definition.ReviveHPPercent); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
@@ -55,6 +58,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, actor wor
 			report.Metrics.ReviveProtectionDamageBlocks++
 			return false
 		}
+		r.emitActionStarted(actor.ID, startPrepared, tick, report)
 		state, err := r.reduceCombatantHP(targetID, prepared.Damage.Amount)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})

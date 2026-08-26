@@ -8,9 +8,9 @@ import (
 )
 
 // Version 在 wire-incompatible contract 變更時必須遞增。
-// v9: ASTU realtime 不再攜帶 bearer token；改為 public routing ID + 128-bit HMAC trailer，並做 C2S/S2C domain separation。
-// ClientUseAction 的 point target、EntitySpawn archetype_id 與 CombatEvent 都採 Reliable JSON additive contract。
-const Version uint16 = 9
+// v10: 新增 Reliable ActionStarted，讓 Server 完整接受的 action target spec 可先於 resolved outcome 廣播給 AOI observers。
+// ClientUseAction 的 point target、EntitySpawn archetype_id 與 CombatEvent additive metadata 仍採 Reliable JSON contract。
+const Version uint16 = 10
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -29,6 +29,7 @@ const (
 	MessageEntityVitalsState  MessageType = 105
 	MessageSiegeMatchState    MessageType = 106
 	MessageCombatEvent        MessageType = 107
+	MessageActionStarted      MessageType = 108
 )
 
 type Delivery uint8
@@ -57,6 +58,20 @@ const (
 // TargetX/TargetZ are present only for point-target actions. Entity/gate callers keep using TargetID.
 type ClientUseAction struct { ActionID string; TargetKind ActionTargetKind; TargetID string; TargetX *float32; TargetZ *float32 }
 func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
+
+// ActionStarted means the Server has accepted the action far enough that it will consume gameplay
+// execution/cooldown. Target fields preserve the accepted target spec, not the later resolved hit target.
+// CombatEvent / EntityVitalsState remain the outcome and HP truth respectively.
+type ActionStarted struct {
+	ActionInstanceID uint64
+	ActorEntityID    world.EntityID
+	ActionID         string
+	TargetKind       ActionTargetKind
+	TargetID         string
+	TargetX          *float32
+	TargetZ          *float32
+}
+func (ActionStarted) Type() MessageType { return MessageActionStarted }
 
 type SessionWelcome struct { SessionID uint64; EntityID world.EntityID; RealtimePort uint16; RealtimeToken string; TickRateHz uint16; SnapshotRateHz uint16; World WorldIdentity }
 func (SessionWelcome) Type() MessageType { return MessageSessionWelcome }

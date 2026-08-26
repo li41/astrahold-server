@@ -9,6 +9,7 @@ type position struct { X float32 `json:"x"`; Y float32 `json:"y"`; Z float32 `js
 type entityTransform struct { EntityID uint64 `json:"entity_id"`; Tick uint64 `json:"tick"`; Position position `json:"position"`; Yaw float32 `json:"yaw"` }
 type clientMoveInput struct { DX float32 `json:"dx"`; DZ float32 `json:"dz"` }
 type clientUseAction struct { ActionID string `json:"action_id"`; TargetKind string `json:"target_kind"`; TargetID string `json:"target_id"`; TargetX *float32 `json:"target_x,omitempty"`; TargetZ *float32 `json:"target_z,omitempty"` }
+type actionStarted struct { ActionInstanceID uint64 `json:"action_instance_id"`; ActorEntityID uint64 `json:"actor_entity_id"`; ActionID string `json:"action_id"`; TargetKind string `json:"target_kind"`; TargetID string `json:"target_id"`; TargetX *float32 `json:"target_x,omitempty"`; TargetZ *float32 `json:"target_z,omitempty"` }
 type sessionWelcome struct { SessionID uint64 `json:"session_id"`; EntityID uint64 `json:"entity_id"`; RealtimePort uint16 `json:"realtime_port"`; RealtimeToken string `json:"realtime_token"`; TickRateHz uint16 `json:"tick_rate_hz"`; SnapshotRateHz uint16 `json:"snapshot_rate_hz"`; WorldID string `json:"world_id"`; WorldRevision string `json:"world_revision"`; GameplaySHA256 string `json:"gameplay_sha256"` }
 type entitySpawn struct { EntityID uint64 `json:"entity_id"`; Kind uint8 `json:"kind"`; Transform entityTransform `json:"transform"`; ArchetypeID string `json:"archetype_id,omitempty"` }
 type entityDespawn struct { EntityID uint64 `json:"entity_id"` }

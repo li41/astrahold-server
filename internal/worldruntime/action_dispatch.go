@@ -31,16 +31,17 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 			}
 			return
 		}
+		// ApplyActionDamage has completed all gate legality checks. Queue the v10 acceptance cue
+		// before the later dynamic-state replication makes the outcome observable to clients.
+		r.emitActionStarted(actor.ID, prepared, tick, report)
 		r.combat.Commit(prepared, tick, delta)
 		if prepared.Definition.Effect == combat.EffectDamage {
 			r.cancelReviveProtectionByDamageAction(actor.ID, report)
 		}
 		r.siege.ObserveGateState(gateState)
 		r.bumpDynamicRevision()
-		// Keep the established gate Reliable ordering unchanged: WorldDynamicState remains the
-		// first observable gate outcome. CombatEvent is currently scoped to entity combat only.
 	case combat.TargetEntity:
-		if r.applyEntityAction(name, sourceSessionID, actor, prepared, tick, cooldownReadyTick, report) {
+		if r.applyEntityAction(name, sourceSessionID, actor, prepared, prepared, tick, cooldownReadyTick, report) {
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage {
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)
