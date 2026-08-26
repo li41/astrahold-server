@@ -12,11 +12,11 @@ func TestCastleSandboxWorldIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFile(castle-sandbox) error = %v", err)
 	}
-	if loaded.Definition.Revision != "s3d-001" {
-		t.Fatalf("revision = %q, want s3d-001", loaded.Definition.Revision)
+	if loaded.Definition.Revision != "s5b-commercial-mpv-001" {
+		t.Fatalf("revision = %q, want s5b-commercial-mpv-001", loaded.Definition.Revision)
 	}
-	if len(loaded.Definition.Portals) != 4 || len(loaded.Definition.Blockers) != 6 || len(loaded.Definition.Gates) != 1 {
-		t.Fatalf("unexpected castle topology: portals=%d blockers=%d gates=%d", len(loaded.Definition.Portals), len(loaded.Definition.Blockers), len(loaded.Definition.Gates))
+	if len(loaded.Definition.Surfaces) != 7 || len(loaded.Definition.Portals) != 4 || len(loaded.Definition.Blockers) != 17 || len(loaded.Definition.Gates) != 1 {
+		t.Fatalf("unexpected castle topology: surfaces=%d portals=%d blockers=%d gates=%d", len(loaded.Definition.Surfaces), len(loaded.Definition.Portals), len(loaded.Definition.Blockers), len(loaded.Definition.Gates))
 	}
 	gate := loaded.Definition.Gates[0]
 	if gate.ID != "main-gate" || gate.BlockerID != "main-gate" || gate.MaxHP != 1000 {
