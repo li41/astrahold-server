@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "world_id": "castle-sandbox",
-  "revision": "s3d-001",
+  "revision": "s5b-commercial-mpv-001",
   "units": "meters",
   "agent": {
     "radius": 0.35,
@@ -12,7 +12,7 @@
     {
       "id": "ground",
       "layer": 0,
-      "bounds": { "min_x": -40, "max_x": 40, "min_z": -50, "max_z": 40 },
+      "bounds": { "min_x": -45, "max_x": 45, "min_z": -55, "max_z": 45 },
       "plane": { "origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0 }
     },
     {
@@ -31,6 +31,24 @@
       "id": "front-wall-walk",
       "layer": 2,
       "bounds": { "min_x": -30, "max_x": 30, "min_z": 8.5, "max_z": 12.5 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "west-wall-walk",
+      "layer": 2,
+      "bounds": { "min_x": -30, "max_x": -26, "min_z": 12.5, "max_z": 35 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "east-wall-walk",
+      "layer": 2,
+      "bounds": { "min_x": 26, "max_x": 30, "min_z": 12.5, "max_z": 35 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "rear-wall-walk",
+      "layer": 2,
+      "bounds": { "min_x": -26, "max_x": 26, "min_z": 31, "max_z": 35 },
       "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
     }
   ],
@@ -121,6 +139,116 @@
       "bounds": { "min_x": -30, "max_x": 30, "min_z": 34.5, "max_z": 35.5 },
       "min_y": 0,
       "max_y": 7.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "south-west-tower",
+      "layer": 0,
+      "bounds": { "min_x": -32, "max_x": -26, "min_z": 7.5, "max_z": 13.5 },
+      "min_y": 0,
+      "max_y": 11.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "south-east-tower",
+      "layer": 0,
+      "bounds": { "min_x": 26, "max_x": 32, "min_z": 7.5, "max_z": 13.5 },
+      "min_y": 0,
+      "max_y": 11.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "north-west-tower",
+      "layer": 0,
+      "bounds": { "min_x": -32, "max_x": -26, "min_z": 31.5, "max_z": 37.5 },
+      "min_y": 0,
+      "max_y": 11.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "north-east-tower",
+      "layer": 0,
+      "bounds": { "min_x": 26, "max_x": 32, "min_z": 31.5, "max_z": 37.5 },
+      "min_y": 0,
+      "max_y": 11.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-front-left",
+      "layer": 0,
+      "bounds": { "min_x": -14, "max_x": -3, "min_z": 23.5, "max_z": 24.5 },
+      "min_y": 0,
+      "max_y": 6.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-front-right",
+      "layer": 0,
+      "bounds": { "min_x": 3, "max_x": 14, "min_z": 23.5, "max_z": 24.5 },
+      "min_y": 0,
+      "max_y": 6.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-west-wall",
+      "layer": 0,
+      "bounds": { "min_x": -14.5, "max_x": -13.5, "min_z": 24.5, "max_z": 33.5 },
+      "min_y": 0,
+      "max_y": 6.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-east-wall",
+      "layer": 0,
+      "bounds": { "min_x": 13.5, "max_x": 14.5, "min_z": 24.5, "max_z": 33.5 },
+      "min_y": 0,
+      "max_y": 6.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-rear-wall",
+      "layer": 0,
+      "bounds": { "min_x": -14, "max_x": 14, "min_z": 32.5, "max_z": 33.5 },
+      "min_y": 0,
+      "max_y": 6.5,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "west-barracks",
+      "layer": 0,
+      "bounds": { "min_x": -23, "max_x": -17, "min_z": 17, "max_z": 24 },
+      "min_y": 0,
+      "max_y": 3.8,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "east-barracks",
+      "layer": 0,
+      "bounds": { "min_x": 17, "max_x": 23, "min_z": 17, "max_z": 24 },
+      "min_y": 0,
+      "max_y": 3.8,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
