@@ -8,6 +8,7 @@ import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
@@ -61,6 +62,8 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 	if err := rt.EnqueueAttackGate(1, 1, "main-gate"); err != nil { t.Fatal(err) }
 	first := rt.Step(2, 50*time.Millisecond)
 	if len(first.CommandErrors) != 0 || len(first.ActionRejections) != 0 { t.Fatalf("first report=%#v", first) }
+	started1 := nextActionStarted(t, conn)
+	if started1.ActionID != legacyGateActionID || started1.TargetKind != protocol.ActionTargetGate || started1.TargetID != "main-gate" { t.Fatalf("first start=%#v", started1) }
 	state2 := nextDynamicState(t, conn)
 	if state2.Revision != 2 || state2.Gates[0].HP != 100 || state2.Gates[0].Destroyed || !state2.Blockers[0].Enabled {
 		t.Fatalf("after first attack=%#v", state2)
@@ -75,11 +78,26 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 	if err := rt.EnqueueAttackGate(1, 3, "main-gate"); err != nil { t.Fatal(err) }
 	destroy := rt.Step(12, 50*time.Millisecond)
 	if len(destroy.CommandErrors) != 0 || len(destroy.ActionRejections) != 0 { t.Fatalf("destroy report=%#v", destroy) }
+	started2 := nextActionStarted(t, conn)
+	if started2.ActionID != legacyGateActionID || started2.TargetID != "main-gate" || started2.ActionInstanceID == started1.ActionInstanceID { t.Fatalf("destroy start=%#v first=%#v", started2, started1) }
 	state3 := nextDynamicState(t, conn)
 	if state3.Revision != 3 || state3.Gates[0].HP != 0 || !state3.Gates[0].Destroyed || state3.Blockers[0].Enabled {
 		t.Fatalf("destroyed state=%#v", state3)
 	}
 	if enabled, err := nav.BlockerEnabled("main-gate"); err != nil || enabled {
 		t.Fatalf("blocker enabled=%v err=%v", enabled, err)
+	}
+}
+
+func nextActionStarted(t *testing.T, conn *session.QueueConnection) protocol.ActionStarted {
+	t.Helper()
+	select {
+	case env := <-conn.Reliable():
+		started, ok := env.Message.(protocol.ActionStarted)
+		if !ok { t.Fatalf("expected ActionStarted, got %#v", env.Message) }
+		return started
+	default:
+		t.Fatal("missing ActionStarted")
+		return protocol.ActionStarted{}
 	}
 }

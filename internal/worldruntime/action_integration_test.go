@@ -33,6 +33,10 @@ func TestGenericActionUsesCombatCatalogInsteadOfLegacyGateProfile(t *testing.T) 
 	if err := rt.EnqueueUseAction(1,1,protocol.ClientUseAction{ActionID:"basic-attack",TargetKind:protocol.ActionTargetGate,TargetID:"main-gate"}); err != nil { t.Fatal(err) }
 	report := rt.Step(2,50*time.Millisecond)
 	if len(report.CommandErrors)!=0 || len(report.ActionRejections)!=0 { t.Fatalf("report=%#v",report) }
+	started := nextActionStarted(t, conn)
+	if started.ActorEntityID != 1 || started.ActionID != "basic-attack" || started.TargetKind != protocol.ActionTargetGate || started.TargetID != "main-gate" {
+		t.Fatalf("started=%#v", started)
+	}
 	state := nextDynamicState(t,conn)
 	if got:=state.Gates[0].HP; got!=400 { t.Fatalf("gate hp=%d, want 400 from Combat Catalog",got) }
 }
