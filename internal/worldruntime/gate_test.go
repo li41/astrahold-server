@@ -74,6 +74,10 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 	if len(cooldown.CommandErrors) != 0 || len(cooldown.ActionRejections) != 1 || !errors.Is(cooldown.ActionRejections[0].Err, siege.ErrGateAttackCooldown) {
 		t.Fatalf("cooldown report=%#v", cooldown)
 	}
+	rejected := nextActionRejected(t, conn)
+	if rejected.ClientActionSequence != 2 || rejected.ActionID != legacyGateActionID || rejected.TargetKind != protocol.ActionTargetGate || rejected.Reason != protocol.ActionRejectionCooldown || rejected.CooldownReadyTick != 12 {
+		t.Fatalf("cooldown rejection=%#v", rejected)
+	}
 
 	if err := rt.EnqueueAttackGate(1, 3, "main-gate"); err != nil { t.Fatal(err) }
 	destroy := rt.Step(12, 50*time.Millisecond)
@@ -99,5 +103,18 @@ func nextActionStarted(t *testing.T, conn *session.QueueConnection) protocol.Act
 	default:
 		t.Fatal("missing ActionStarted")
 		return protocol.ActionStarted{}
+	}
+}
+
+func nextActionRejected(t *testing.T, conn *session.QueueConnection) protocol.ActionRejected {
+	t.Helper()
+	select {
+	case env := <-conn.Reliable():
+		rejected, ok := env.Message.(protocol.ActionRejected)
+		if !ok { t.Fatalf("expected ActionRejected, got %#v", env.Message) }
+		return rejected
+	default:
+		t.Fatal("missing ActionRejected")
+		return protocol.ActionRejected{}
 	}
 }
