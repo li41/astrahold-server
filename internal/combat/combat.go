@@ -24,6 +24,13 @@ const (
 	TargetPoint  TargetKind = "point"
 )
 
+type PointResolution string
+
+const (
+	PointResolutionLineFirst       PointResolution = "line_first"
+	PointResolutionEndpointNearest PointResolution = "endpoint_nearest"
+)
+
 type ActionEffect string
 
 const (
@@ -46,15 +53,16 @@ var (
 )
 
 type ActionDefinition struct {
-	ID              string       `json:"id"`
-	Effect          ActionEffect `json:"effect,omitempty"`
-	Targets         []TargetKind `json:"targets"`
-	Range           float32      `json:"range"`
-	HitRadius       float32      `json:"hit_radius,omitempty"`
-	BaseDamage      uint32       `json:"base_damage,omitempty"`
-	DamageType      DamageType   `json:"damage_type,omitempty"`
-	ReviveHPPercent uint8        `json:"revive_hp_percent,omitempty"`
-	CooldownSeconds float32      `json:"cooldown_seconds"`
+	ID              string          `json:"id"`
+	Effect          ActionEffect    `json:"effect,omitempty"`
+	Targets         []TargetKind    `json:"targets"`
+	Range           float32         `json:"range"`
+	HitRadius       float32         `json:"hit_radius,omitempty"`
+	PointResolution PointResolution `json:"point_resolution,omitempty"`
+	BaseDamage      uint32          `json:"base_damage,omitempty"`
+	DamageType      DamageType      `json:"damage_type,omitempty"`
+	ReviveHPPercent uint8           `json:"revive_hp_percent,omitempty"`
+	CooldownSeconds float32         `json:"cooldown_seconds"`
 }
 
 type Definition struct {
@@ -175,6 +183,13 @@ func Validate(definition Definition) error {
 				hasPointTarget = true
 			}
 		}
+		if hasPointTarget {
+			if action.PointResolution != "" && !validPointResolution(action.PointResolution) {
+				return fmt.Errorf("%w: action %q point_resolution %q", ErrInvalidDefinition, action.ID, action.PointResolution)
+			}
+		} else if action.PointResolution != "" {
+			return fmt.Errorf("%w: non-point action %q has point_resolution", ErrInvalidDefinition, action.ID)
+		}
 
 		switch effectiveEffect(action.Effect) {
 		case EffectDamage:
@@ -185,7 +200,7 @@ func Validate(definition Definition) error {
 				return fmt.Errorf("%w: point damage action %q requires hit_radius", ErrInvalidDefinition, action.ID)
 			}
 		case EffectResurrect:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 {
+			if action.BaseDamage != 0 || action.DamageType != "" || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
 				return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID)
 			}
 			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
@@ -269,6 +284,9 @@ func (s *Service) Commit(action PreparedAction, tick uint64, delta time.Duration
 
 func normalizeAction(action ActionDefinition) ActionDefinition {
 	action.Effect = effectiveEffect(action.Effect)
+	if containsTarget(action.Targets, TargetPoint) && action.PointResolution == "" {
+		action.PointResolution = PointResolutionLineFirst
+	}
 	return action
 }
 
@@ -291,6 +309,15 @@ func containsTarget(targets []TargetKind, target TargetKind) bool {
 func validTargetKind(kind TargetKind) bool {
 	switch kind {
 	case TargetGate, TargetEntity, TargetPoint:
+		return true
+	default:
+		return false
+	}
+}
+
+func validPointResolution(resolution PointResolution) bool {
+	switch resolution {
+	case PointResolutionLineFirst, PointResolutionEndpointNearest:
 		return true
 	default:
 		return false

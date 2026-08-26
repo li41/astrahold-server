@@ -10,9 +10,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// applyPointAction resolves a selected endpoint into the first authoritative combatant
-// intersected by the cast line. The source chooses only the endpoint; range, LOS, hit
-// selection and damage remain Server-owned.
+// applyPointAction resolves a selected endpoint according to the Server-owned action definition.
+// The source chooses only the endpoint; range, LOS, target selection and damage remain Server-owned.
 func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor world.EntityState, prepared combat.PreparedAction, tick uint64, report *StepReport) bool {
 	targetID, hit, err := r.resolvePointActionTarget(actor, prepared)
 	if err != nil {
@@ -24,7 +23,7 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, actor worl
 		return false
 	}
 	if !hit {
-		// A legal skillshot may miss. It still consumes cooldown in the caller and emits
+		// A legal point action may miss. It still consumes cooldown in the caller and emits
 		// a Server-authored miss so presentation no longer has to infer the outcome.
 		x, z := prepared.Target.PointX, prepared.Target.PointZ
 		r.emitCombatEvent(protocol.CombatEvent{
@@ -70,6 +69,18 @@ func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared com
 	if !r.dynamic.HasLineOfSight(start, end) {
 		return 0, false, ErrPointNoLineOfSight
 	}
+
+	switch prepared.Definition.PointResolution {
+	case "", combat.PointResolutionLineFirst:
+		return r.resolveLineFirstPointTarget(actor, prepared, start, dx, dz, lineLengthSq)
+	case combat.PointResolutionEndpointNearest:
+		return r.resolveEndpointNearestPointTarget(actor, prepared, end)
+	default:
+		return 0, false, combat.ErrInvalidDefinition
+	}
+}
+
+func (r *Runtime) resolveLineFirstPointTarget(actor world.EntityState, prepared combat.PreparedAction, start world.Position, dx, dz, lineLengthSq float32) (world.EntityID, bool, error) {
 	if lineLengthSq <= 0.000001 {
 		return 0, false, nil
 	}
@@ -115,5 +126,33 @@ func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared com
 		}
 	}
 
+	return bestID, bestID != 0, nil
+}
+
+func (r *Runtime) resolveEndpointNearestPointTarget(actor world.EntityState, prepared combat.PreparedAction, end world.Position) (world.EntityID, bool, error) {
+	hitRadiusSq := prepared.Definition.HitRadius * prepared.Definition.HitRadius
+	candidates := r.world.QueryAOI(end, prepared.Definition.HitRadius, spatial.QueryOptions{SameLayer: true})
+
+	bestID := world.EntityID(0)
+	bestDistanceSq := float32(0)
+	for _, candidate := range candidates {
+		if candidate.ID == actor.ID || !combatantKind(candidate.Kind) {
+			continue
+		}
+		state, ok := r.combatantState(candidate.ID)
+		if !ok || state.Defeated {
+			continue
+		}
+		dx := candidate.Transform.Position.X - end.X
+		dz := candidate.Transform.Position.Z - end.Z
+		distanceSq := dx*dx + dz*dz
+		if distanceSq > hitRadiusSq {
+			continue
+		}
+		if bestID == 0 || distanceSq < bestDistanceSq || (distanceSq == bestDistanceSq && candidate.ID < bestID) {
+			bestID = candidate.ID
+			bestDistanceSq = distanceSq
+		}
+	}
 	return bestID, bestID != 0, nil
 }
