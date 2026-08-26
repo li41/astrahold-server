@@ -193,9 +193,14 @@ Login through the normal product login UI as `playtest-attacker` with the passwo
 | `F` | attack the authoritative `main-gate` objective |
 | `Tab` | cycle/select a remote character in AOI |
 | `G` | basic attack the selected/nearest remote character |
-| `Esc` | clear the current combat target |
+| `1` | arm Fireball point/line skillshot aiming |
+| mouse movement | move the armed Fireball endpoint/line preview on the ground |
+| left click | confirm and submit the armed Fireball endpoint |
+| `Esc` | cancel armed Fireball aiming; otherwise clear the current combat target |
 
-Damage, death, respawn, Gate HP/destruction, throne presence/capture/contest, winner, ownership, and next-round state remain Server authoritative.
+Fireball is not Client-authoritative projectile collision. The Client submits only a point endpoint. The Server owns the 12m range, LOS, 0.9m hit radius, cooldown, first intersected combatant, hit/miss and damage. A legal miss is also a Server-authored result. See [`SKILL_PRESENTATION_AUTHORITY_BOUNDARY.md`](SKILL_PRESENTATION_AUTHORITY_BOUNDARY.md).
+
+Damage, death, respawn, Gate HP/destruction, Fireball hit/miss/damage, throne presence/capture/contest, winner, ownership, and next-round state remain Server authoritative.
 
 ## 7. MVP manual acceptance checklist
 
@@ -220,6 +225,15 @@ Damage, death, respawn, Gate HP/destruction, throne presence/capture/contest, wi
 6. Remove/defeat the defender and complete the capture.
 7. Verify attacker sees `VICTORY`, defender sees `DEFEAT`, and both agree on the same winner/owner.
 8. Verify next-round Gate restoration and ownership-derived role rotation.
+
+### Fireball skillshot smoke test
+
+1. With a live character, press `1` and verify the local targeting preview arms without mutating Server state.
+2. Aim at empty ground within 12m and left-click. Verify the action is accepted as a legal Server-authored miss rather than the Client inventing a hit.
+3. With a second live combatant, aim the actor→endpoint line through that combatant and left-click. Verify the Server selects the first authoritative combatant intersecting the configured hit radius.
+4. Verify resulting HP/defeated state comes from `EntityVitalsState`; the visual projectile/impact does not overwrite gameplay truth.
+5. Verify repeated immediate casts are constrained by the Server-owned Fireball cooldown rather than the Client indicator.
+6. Press `Esc` while Fireball is armed and verify only local aiming is cancelled; no gameplay action is submitted.
 
 ## Non-goals
 
