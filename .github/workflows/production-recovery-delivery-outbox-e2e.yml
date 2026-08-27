@@ -293,7 +293,7 @@ jobs:
               -death-outcome-checkpoint "$data_root/death-outcomes.checkpoint.json" \
               -siege-ownership-dir "$data_root/siege-ownership" >"$log_file" 2>&1 &
             server_pid=$!
-            wait_for_marker "$log_file" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+            wait_for_marker "$log_file" "Astrahold worldd ready: protocol=11" "$server_pid" 300
             wait_for_marker "$log_file" "session recovery: enabled=true provider=hmac-sha256-generation-delivery revision=s4f15-provider-001" "$server_pid" 300
           }
 
@@ -439,7 +439,7 @@ jobs:
             fi
           done
 
-          echo "ASTRAHOLD_F15_E2E_OK durable_enqueue=true restart_replay=true challenge_restored=true stable_idempotency=true scrub_after_delivery=true consume_delete=true schema=4 protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F15_E2E_OK durable_enqueue=true restart_replay=true challenge_restored=true stable_idempotency=true scrub_after_delivery=true consume_delete=true schema=4 protocol=11 tls=1.3"
 
       - name: Upload F.15 outbox logs
         if: always()
