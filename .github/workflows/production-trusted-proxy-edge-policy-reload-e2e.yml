@@ -366,7 +366,7 @@ jobs:
             -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
           server_pid=$!
 
-          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=11" "$server_pid"
           wait_for_marker "$server_log" "source_attribution=edge-policy/x-forwarded-for trusted_proxy_prefixes=3 forwarded_max_hops=16 proxy_auth=edge-policy-mtls-v1 proxy_trust_generation=1 proxy_trust_revision=edge-001 proxy_identity_count=3 edge_policy_generation=1 edge_policy_revision=edge-001 edge_policy_bindings=3" "$server_pid"
 
           login_body="$(printf '{"login_id":"holder","login_secret":"%s"}' "$wrong_password")"
@@ -524,7 +524,7 @@ jobs:
             fi
           done
 
-          echo "ASTRAHOLD_F19_E2E_OK atomic_edge_generation=true network_identity_binding=true header_rotation=true prefix_rotation=true old_connection_pinned=true new_handshake_cutover=true invalid_lkg=true tls_reload_independent=true direct_client_unchanged=true recovery_unchanged=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F19_E2E_OK atomic_edge_generation=true network_identity_binding=true header_rotation=true prefix_rotation=true old_connection_pinned=true new_handshake_cutover=true invalid_lkg=true tls_reload_independent=true direct_client_unchanged=true recovery_unchanged=true protocol=11 tls=1.3"
 
       - name: Upload F.19 edge policy logs
         if: always()

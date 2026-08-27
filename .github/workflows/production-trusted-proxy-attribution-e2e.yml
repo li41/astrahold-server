@@ -199,7 +199,7 @@ jobs:
             -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
           server_pid=$!
 
-          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=11" "$server_pid"
           wait_for_marker "$server_log" "source_attribution=trusted-proxy/x-forwarded-for trusted_proxy_prefixes=2 forwarded_max_hops=16" "$server_pid"
           wait_for_marker "$server_log" "session recovery: enabled=true" "$server_pid"
 
@@ -294,7 +294,7 @@ jobs:
             fi
           done
 
-          echo "ASTRAHOLD_F17_E2E_OK direct_header_ignored=true trusted_proxy_attributed=true multi_hop=true malformed_fail_closed=true ipv4_mapped_normalized=true recovery_attributed=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F17_E2E_OK direct_header_ignored=true trusted_proxy_attributed=true multi_hop=true malformed_fail_closed=true ipv4_mapped_normalized=true recovery_attributed=true protocol=11 tls=1.3"
 
       - name: Upload F.17 attribution logs
         if: always()

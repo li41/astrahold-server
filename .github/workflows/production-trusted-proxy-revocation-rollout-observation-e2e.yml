@@ -93,4 +93,4 @@ jobs:
           assert [x['instance_id'] for x in wait3['observation']['acks']] == ['instance-a', 'instance-b']
           PY
 
-          echo "ASTRAHOLD_F27_ROLLOUT_OBSERVATION_OK controller_timing=true staggered_ack_observed=true incomplete_timing=true required_ack_gate=true delayed_member_blocks_convergence=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F27_ROLLOUT_OBSERVATION_OK controller_timing=true staggered_ack_observed=true incomplete_timing=true required_ack_gate=true delayed_member_blocks_convergence=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=11 tls=1.3"

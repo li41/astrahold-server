@@ -196,8 +196,8 @@ jobs:
 
           wait_marker "$a_log" "session trusted proxy leaf revocation distribution: enabled=true instance_id=instance-a epoch=1" "$a_pid"
           wait_marker "$b_log" "session trusted proxy leaf revocation distribution: enabled=true instance_id=instance-b epoch=1" "$b_pid"
-          wait_marker "$a_log" "Astrahold worldd ready: protocol=9" "$a_pid"
-          wait_marker "$b_log" "Astrahold worldd ready: protocol=9" "$b_pid"
+          wait_marker "$a_log" "Astrahold worldd ready: protocol=11" "$a_pid"
+          wait_marker "$b_log" "Astrahold worldd ready: protocol=11" "$b_pid"
           "$REVOCATIONCTL" wait -plan "$root/plan-epoch1.json" >"$root/wait1.json"
           python3 - "$root/wait1.json" <<'PY'
           import json,sys
@@ -319,4 +319,4 @@ jobs:
           if grep -Fq 'BEGIN PRIVATE KEY' "$a_log" "$b_log"; then
             echo 'private key material leaked to server log'; exit 1
           fi
-          echo "ASTRAHOLD_F26_REVOCATION_ROLLOUT_OK required_ack_gate=true delayed_member_blocks_convergence=true timeout_incomplete=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F26_REVOCATION_ROLLOUT_OK required_ack_gate=true delayed_member_blocks_convergence=true timeout_incomplete=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=11 tls=1.3"

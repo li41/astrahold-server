@@ -346,7 +346,7 @@ jobs:
             -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
           server_pid=$!
 
-          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=11" "$server_pid"
           wait_for_marker "$server_log" "source_attribution=trusted-proxy/x-forwarded-for trusted_proxy_prefixes=1 forwarded_max_hops=16 proxy_auth=mtls-v1 proxy_trust_generation=1 proxy_trust_revision=f18-proxy-001 proxy_identity_count=1" "$server_pid"
 
           login_body="$(printf '{"login_id":"holder","login_secret":"%s"}' "$wrong_password")"
@@ -472,7 +472,7 @@ jobs:
             fi
           done
 
-          echo "ASTRAHOLD_F18_E2E_OK direct_client_unchanged=true proxy_mtls_required=true exact_dns_identity=true ca_rotation=true old_connection_survives=true invalid_lkg=true tls_reload_independent=true recovery_unchanged=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F18_E2E_OK direct_client_unchanged=true proxy_mtls_required=true exact_dns_identity=true ca_rotation=true old_connection_survives=true invalid_lkg=true tls_reload_independent=true recovery_unchanged=true protocol=11 tls=1.3"
 
       - name: Upload F.18 mTLS logs
         if: always()

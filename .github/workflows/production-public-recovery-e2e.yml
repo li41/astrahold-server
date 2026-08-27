@@ -226,7 +226,7 @@ jobs:
             -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
           server_pid=$!
 
-          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=11" "$server_pid" 300
           wait_for_marker "$server_log" "session login issuance: enabled=true revision=durable-3" "$server_pid" 300
           wait_for_marker "$server_log" "session recovery: enabled=true provider=sha256-high-entropy-recovery-code revision=f10-ci-recovery-provider-001" "$server_pid" 300
 
@@ -344,7 +344,7 @@ jobs:
             exit 1
           fi
 
-          echo "ASTRAHOLD_F10_E2E_OK public_request_enumeration_shape=true invalid_recovery_uniform=true challenge_one_time=true immediate_live_revocation=true no_sighup=true old_password_rejected=true product_reauth=true legacy_recovery_invalidated=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F10_E2E_OK public_request_enumeration_shape=true invalid_recovery_uniform=true challenge_one_time=true immediate_live_revocation=true no_sighup=true old_password_rejected=true product_reauth=true legacy_recovery_invalidated=true protocol=11 tls=1.3"
 
       - name: Upload F.10 public recovery E2E logs
         if: always()
