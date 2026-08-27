@@ -375,7 +375,7 @@ jobs:
             -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
           server_pid=$!
 
-          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid" 300
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=11" "$server_pid" 300
           wait_for_marker "$server_log" "session login issuance: enabled=true revision=durable-3" "$server_pid" 300
           wait_for_marker "$server_log" "session recovery: enabled=true provider=hmac-sha256-generation-delivery revision=s4f13-provider-001" "$server_pid" 300
 
@@ -513,7 +513,7 @@ jobs:
             exit 1
           fi
 
-          echo "ASTRAHOLD_F13_E2E_OK https_relay=true tls=1.3 bearer_credential_file=true idempotent_retry=true transient_retry=true permanent_no_retry=true unknown_no_delivery=true delivery_failure_generic=true inactive_challenge=true product_main=true fresh_login=true secret_safe_observability=true protocol=9"
+          echo "ASTRAHOLD_F13_E2E_OK https_relay=true tls=1.3 bearer_credential_file=true idempotent_retry=true transient_retry=true permanent_no_retry=true unknown_no_delivery=true delivery_failure_generic=true inactive_challenge=true product_main=true fresh_login=true secret_safe_observability=true protocol=11"
 
       - name: Upload F.13 recovery delivery provider logs
         if: always()
