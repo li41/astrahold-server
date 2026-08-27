@@ -283,7 +283,7 @@ jobs:
             -siege-ownership-dir "$data_root/siege-ownership" >"$server_log" 2>&1 &
           server_pid=$!
 
-          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=9" "$server_pid"
+          wait_for_marker "$server_log" "Astrahold worldd ready: protocol=11" "$server_pid"
           wait_for_marker "$server_log" "edge_policy_generation=1 edge_policy_revision=edge-001 edge_policy_bindings=1 edge_policy_connection_cutover=retire-old" "$server_pid"
 
           python3 "$holder_script" "$tls_dir/server-ca.crt" "$tls_dir/edge-a.crt" "$tls_dir/edge-a.key" \
@@ -348,7 +348,7 @@ jobs:
             fi
           done
 
-          echo "ASTRAHOLD_F21_E2E_OK noop_generation_stable=true noop_connection_survives=true tls_reload_independent=true authority_change_generation_advances=true changed_connection_retired=true new_handshake_uses_new_authority=true direct_client_unchanged=true protocol=9 tls=1.3"
+          echo "ASTRAHOLD_F21_E2E_OK noop_generation_stable=true noop_connection_survives=true tls_reload_independent=true authority_change_generation_advances=true changed_connection_retired=true new_handshake_uses_new_authority=true direct_client_unchanged=true protocol=11 tls=1.3"
 
       - name: Upload F.21 edge no-op reload logs
         if: always()
