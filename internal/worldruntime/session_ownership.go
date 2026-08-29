@@ -109,8 +109,11 @@ func (r *Runtime) EnqueueFencedUseAction(fence SessionOwnershipFence, sequence u
 	if !fence.Valid() {
 		return ErrCharacterOwnershipFenceInvalid
 	}
-	if sequence == 0 || action.ActionID == "" || action.TargetKind == "" || action.TargetID == "" {
+	if sequence == 0 {
 		return errors.New("worldruntime: invalid action intent")
+	}
+	if err := validateActionIntent(action); err != nil {
+		return err
 	}
 	return r.queue.tryPush(useActionCommand{sessionID: fence.SessionID, sequence: sequence, action: action, ownership: fence})
 }
