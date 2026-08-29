@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"errors"
+	"math"
 
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -75,8 +76,29 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 }
 
 func validAction(action protocol.ClientUseAction) bool {
-	return action.ActionID != "" && action.TargetKind != "" && action.TargetID != ""
+	if action.ActionID == "" {
+		return false
+	}
+
+	switch action.TargetKind {
+	case protocol.ActionTargetGate, protocol.ActionTargetEntity:
+		return action.TargetID != "" && action.TargetX == nil && action.TargetZ == nil
+	case protocol.ActionTargetPoint:
+		if action.TargetID != "" || action.TargetX == nil || action.TargetZ == nil {
+			return false
+		}
+		return finiteFloat32(*action.TargetX) && finiteFloat32(*action.TargetZ)
+	default:
+		return false
+	}
 }
+
+func finiteFloat32(value float32) bool {
+	return !float32NaN(value) && !float32Inf(value)
+}
+
+func float32NaN(value float32) bool { return math.IsNaN(float64(value)) }
+func float32Inf(value float32) bool { return math.IsInf(float64(value), 0) }
 
 func (g *Ingress) enqueueUseAction(sessionID session.ID, sequence uint32, action protocol.ClientUseAction) error {
 	sink, ok := g.sink.(ActionCommandSink)
