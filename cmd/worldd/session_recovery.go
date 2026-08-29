@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	sessionRecoveryPasswordMinBytes    = 12
+	sessionRecoveryPasswordMinBytes    = 6
 	sessionRecoveryChallengeMinTTL     = time.Minute
 	sessionRecoveryChallengeMaxTTL     = time.Hour
 	sessionRecoveryDefaultChallengeTTL = 10 * time.Minute
