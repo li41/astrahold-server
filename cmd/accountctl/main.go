@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	passwordMinBytes = 12
+	passwordMinBytes = 6
 	passwordMaxBytes = 256
 
 	argon2Version              = 19
