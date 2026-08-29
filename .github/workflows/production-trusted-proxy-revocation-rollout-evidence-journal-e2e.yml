@@ -135,4 +135,4 @@ jobs:
           chmod 700 "$evidence"
           "$REVOCATIONCTL" report -evidence-dir "$evidence" >/dev/null
 
-          echo "ASTRAHOLD_F28_ROLLOUT_EVIDENCE_JOURNAL_OK durable_records=true strict_report=true controller_timing=true timeout_preserved=true descriptive_only=true owner_only=true raw_spki_absent=true required_ack_gate=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=11 tls=1.3"
+          echo "ASTRAHOLD_F28_ROLLOUT_EVIDENCE_JOURNAL_OK durable_records=true strict_report=true controller_timing=true timeout_preserved=true descriptive_only=true owner_only=true raw_spki_absent=true required_ack_gate=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=12 tls=1.3"
