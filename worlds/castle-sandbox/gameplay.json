@@ -194,7 +194,7 @@
     {
       "id": "outer-south-west-tower",
       "layer": 0,
-      "bounds": { "min_x": -128, "max_x": -112, "min_z": -2, "max_z": 22 },
+      "bounds": { "min_x": -126, "max_x": -108, "min_z": -2, "max_z": 22 },
       "min_y": 0,
       "max_y": 19,
       "blocks_movement": true,
@@ -204,7 +204,7 @@
     {
       "id": "outer-south-east-tower",
       "layer": 0,
-      "bounds": { "min_x": 112, "max_x": 128, "min_z": -2, "max_z": 22 },
+      "bounds": { "min_x": 108, "max_x": 126, "min_z": -2, "max_z": 22 },
       "min_y": 0,
       "max_y": 19,
       "blocks_movement": true,
