@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "world_id": "castle-sandbox",
-  "revision": "s5b-commercial-mpv-001",
+  "revision": "s5c-large-castle-001",
   "units": "meters",
   "agent": {
     "radius": 0.35,
@@ -10,75 +10,123 @@
   },
   "surfaces": [
     {
-      "id": "ground",
+      "id": "great-field",
       "layer": 0,
-      "bounds": { "min_x": -45, "max_x": 45, "min_z": -55, "max_z": 45 },
+      "bounds": { "min_x": -150, "max_x": 150, "min_z": -180, "max_z": 160 },
       "plane": { "origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0 }
     },
     {
-      "id": "west-stair",
+      "id": "outer-west-ramp",
       "layer": 1,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 12, "max_z": 20 },
-      "plane": { "origin_x": -25, "origin_z": 20, "base_y": 0, "slope_x": 0, "slope_z": -1 }
+      "bounds": { "min_x": -105, "max_x": -96, "min_z": 13.5, "max_z": 48 },
+      "plane": { "origin_x": -100.5, "origin_z": 13.5, "base_y": 0, "slope_x": 0, "slope_z": 0.32 }
     },
     {
-      "id": "east-stair",
+      "id": "outer-east-ramp",
       "layer": 1,
-      "bounds": { "min_x": 23, "max_x": 27, "min_z": 12, "max_z": 20 },
-      "plane": { "origin_x": 25, "origin_z": 20, "base_y": 0, "slope_x": 0, "slope_z": -1 }
+      "bounds": { "min_x": 96, "max_x": 105, "min_z": 13.5, "max_z": 48 },
+      "plane": { "origin_x": 100.5, "origin_z": 13.5, "base_y": 0, "slope_x": 0, "slope_z": 0.32 }
     },
     {
-      "id": "front-wall-walk",
+      "id": "outer-front-wallwalk-west",
       "layer": 2,
-      "bounds": { "min_x": -30, "max_x": 30, "min_z": 8.5, "max_z": 12.5 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+      "bounds": { "min_x": -106, "max_x": -14, "min_z": 9, "max_z": 13.5 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
     },
     {
-      "id": "west-wall-walk",
+      "id": "outer-front-wallwalk-east",
       "layer": 2,
-      "bounds": { "min_x": -30, "max_x": -26, "min_z": 12.5, "max_z": 35 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+      "bounds": { "min_x": 14, "max_x": 106, "min_z": 9, "max_z": 13.5 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
     },
     {
-      "id": "east-wall-walk",
+      "id": "outer-west-wallwalk",
       "layer": 2,
-      "bounds": { "min_x": 26, "max_x": 30, "min_z": 12.5, "max_z": 35 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+      "bounds": { "min_x": -110, "max_x": -106, "min_z": 15, "max_z": 114 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
     },
     {
-      "id": "rear-wall-walk",
+      "id": "outer-west-wallwalk-landing",
       "layer": 2,
-      "bounds": { "min_x": -26, "max_x": 26, "min_z": 31, "max_z": 35 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
+      "bounds": { "min_x": -104, "max_x": -100, "min_z": 47.5, "max_z": 114 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "outer-east-wallwalk",
+      "layer": 2,
+      "bounds": { "min_x": 106, "max_x": 110, "min_z": 15, "max_z": 114 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "outer-east-wallwalk-landing",
+      "layer": 2,
+      "bounds": { "min_x": 100, "max_x": 104, "min_z": 47.5, "max_z": 114 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "outer-rear-wallwalk",
+      "layer": 2,
+      "bounds": { "min_x": -106, "max_x": 106, "min_z": 114, "max_z": 118 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 11.04, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "inner-front-wallwalk-west",
+      "layer": 3,
+      "bounds": { "min_x": -80, "max_x": -18, "min_z": 39, "max_z": 43 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 13, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "inner-front-wallwalk-east",
+      "layer": 3,
+      "bounds": { "min_x": 18, "max_x": 80, "min_z": 39, "max_z": 43 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 13, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "inner-west-wallwalk",
+      "layer": 3,
+      "bounds": { "min_x": -84, "max_x": -80, "min_z": 43, "max_z": 111 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 13, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "inner-east-wallwalk",
+      "layer": 3,
+      "bounds": { "min_x": 80, "max_x": 84, "min_z": 43, "max_z": 111 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 13, "slope_x": 0, "slope_z": 0 }
+    },
+    {
+      "id": "inner-rear-wallwalk",
+      "layer": 3,
+      "bounds": { "min_x": -80, "max_x": 80, "min_z": 111, "max_z": 115 },
+      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 13, "slope_x": 0, "slope_z": 0 }
     }
   ],
   "portals": [
     {
-      "id": "ground-to-west-stair",
+      "id": "ground-to-outer-west-ramp",
       "from_layer": 0,
       "to_layer": 1,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 19.5, "max_z": 20 },
+      "bounds": { "min_x": -104, "max_x": -98, "min_z": 13.5, "max_z": 15 },
       "bidirectional": true
     },
     {
-      "id": "west-stair-to-front-wall",
+      "id": "outer-west-ramp-to-wallwalk",
       "from_layer": 1,
       "to_layer": 2,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 12, "max_z": 12.5 },
+      "bounds": { "min_x": -104, "max_x": -100, "min_z": 47.5, "max_z": 48 },
       "bidirectional": true
     },
     {
-      "id": "ground-to-east-stair",
+      "id": "ground-to-outer-east-ramp",
       "from_layer": 0,
       "to_layer": 1,
-      "bounds": { "min_x": 23, "max_x": 27, "min_z": 19.5, "max_z": 20 },
+      "bounds": { "min_x": 98, "max_x": 104, "min_z": 13.5, "max_z": 15 },
       "bidirectional": true
     },
     {
-      "id": "east-stair-to-front-wall",
+      "id": "outer-east-ramp-to-wallwalk",
       "from_layer": 1,
       "to_layer": 2,
-      "bounds": { "min_x": 23, "max_x": 27, "min_z": 12, "max_z": 12.5 },
+      "bounds": { "min_x": 100, "max_x": 104, "min_z": 47.5, "max_z": 48 },
       "bidirectional": true
     }
   ],
@@ -86,119 +134,249 @@
     {
       "id": "main-gate",
       "layer": 0,
-      "bounds": { "min_x": -3, "max_x": 3, "min_z": 9.5, "max_z": 10.5 },
+      "bounds": { "min_x": -14, "max_x": 14, "min_z": 9.5, "max_z": 13.5 },
       "min_y": 0,
-      "max_y": 6,
+      "max_y": 15,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "front-wall-left",
+      "id": "outer-front-wall-west",
       "layer": 0,
-      "bounds": { "min_x": -30, "max_x": -3, "min_z": 9.5, "max_z": 10.5 },
+      "bounds": { "min_x": -106, "max_x": -14, "min_z": 9.5, "max_z": 13.5 },
       "min_y": 0,
-      "max_y": 7.5,
+      "max_y": 12,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "front-wall-right",
+      "id": "outer-front-wall-east",
       "layer": 0,
-      "bounds": { "min_x": 3, "max_x": 30, "min_z": 9.5, "max_z": 10.5 },
+      "bounds": { "min_x": 14, "max_x": 106, "min_z": 9.5, "max_z": 13.5 },
       "min_y": 0,
-      "max_y": 7.5,
+      "max_y": 12,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "west-side-wall",
+      "id": "outer-west-wall",
       "layer": 0,
-      "bounds": { "min_x": -30.5, "max_x": -29.5, "min_z": 10.5, "max_z": 35.5 },
+      "bounds": { "min_x": -110, "max_x": -106, "min_z": 13.5, "max_z": 114 },
       "min_y": 0,
-      "max_y": 7.5,
+      "max_y": 12,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "east-side-wall",
+      "id": "outer-east-wall",
       "layer": 0,
-      "bounds": { "min_x": 29.5, "max_x": 30.5, "min_z": 10.5, "max_z": 35.5 },
+      "bounds": { "min_x": 106, "max_x": 110, "min_z": 13.5, "max_z": 114 },
       "min_y": 0,
-      "max_y": 7.5,
+      "max_y": 12,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "rear-wall",
+      "id": "outer-rear-wall",
       "layer": 0,
-      "bounds": { "min_x": -30, "max_x": 30, "min_z": 34.5, "max_z": 35.5 },
+      "bounds": { "min_x": -106, "max_x": 106, "min_z": 114, "max_z": 118 },
       "min_y": 0,
-      "max_y": 7.5,
+      "max_y": 12,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "south-west-tower",
+      "id": "outer-south-west-tower",
       "layer": 0,
-      "bounds": { "min_x": -32, "max_x": -26, "min_z": 7.5, "max_z": 13.5 },
+      "bounds": { "min_x": -128, "max_x": -112, "min_z": -2, "max_z": 22 },
       "min_y": 0,
-      "max_y": 11.5,
+      "max_y": 19,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "south-east-tower",
+      "id": "outer-south-east-tower",
       "layer": 0,
-      "bounds": { "min_x": 26, "max_x": 32, "min_z": 7.5, "max_z": 13.5 },
+      "bounds": { "min_x": 112, "max_x": 128, "min_z": -2, "max_z": 22 },
       "min_y": 0,
-      "max_y": 11.5,
+      "max_y": 19,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "north-west-tower",
+      "id": "outer-north-west-tower",
       "layer": 0,
-      "bounds": { "min_x": -32, "max_x": -26, "min_z": 31.5, "max_z": 37.5 },
+      "bounds": { "min_x": -120, "max_x": -100, "min_z": 104, "max_z": 128 },
       "min_y": 0,
-      "max_y": 11.5,
+      "max_y": 19,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "north-east-tower",
+      "id": "outer-north-east-tower",
       "layer": 0,
-      "bounds": { "min_x": 26, "max_x": 32, "min_z": 31.5, "max_z": 37.5 },
+      "bounds": { "min_x": 100, "max_x": 120, "min_z": 104, "max_z": 128 },
       "min_y": 0,
-      "max_y": 11.5,
+      "max_y": 19,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "keep-front-left",
+      "id": "inner-front-wall-west",
       "layer": 0,
-      "bounds": { "min_x": -14, "max_x": -3, "min_z": 23.5, "max_z": 24.5 },
+      "bounds": { "min_x": -80, "max_x": -18, "min_z": 39, "max_z": 43 },
       "min_y": 0,
-      "max_y": 6.5,
+      "max_y": 13,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "keep-front-right",
+      "id": "inner-front-wall-east",
       "layer": 0,
-      "bounds": { "min_x": 3, "max_x": 14, "min_z": 23.5, "max_z": 24.5 },
+      "bounds": { "min_x": 18, "max_x": 80, "min_z": 39, "max_z": 43 },
       "min_y": 0,
-      "max_y": 6.5,
+      "max_y": 13,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-west-wall",
+      "layer": 0,
+      "bounds": { "min_x": -84, "max_x": -80, "min_z": 43, "max_z": 111 },
+      "min_y": 0,
+      "max_y": 13,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-east-wall",
+      "layer": 0,
+      "bounds": { "min_x": 80, "max_x": 84, "min_z": 43, "max_z": 111 },
+      "min_y": 0,
+      "max_y": 13,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-rear-wall",
+      "layer": 0,
+      "bounds": { "min_x": -80, "max_x": 80, "min_z": 111, "max_z": 115 },
+      "min_y": 0,
+      "max_y": 13,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-south-west-tower",
+      "layer": 0,
+      "bounds": { "min_x": -94, "max_x": -70, "min_z": 27, "max_z": 52 },
+      "min_y": 0,
+      "max_y": 21,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-south-east-tower",
+      "layer": 0,
+      "bounds": { "min_x": 70, "max_x": 94, "min_z": 27, "max_z": 52 },
+      "min_y": 0,
+      "max_y": 21,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-north-west-tower",
+      "layer": 0,
+      "bounds": { "min_x": -94, "max_x": -70, "min_z": 101, "max_z": 126 },
+      "min_y": 0,
+      "max_y": 21,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-north-east-tower",
+      "layer": 0,
+      "bounds": { "min_x": 70, "max_x": 94, "min_z": 101, "max_z": 126 },
+      "min_y": 0,
+      "max_y": 21,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "outer-courtyard-west-barracks",
+      "layer": 0,
+      "bounds": { "min_x": -82, "max_x": -48, "min_z": 20, "max_z": 34 },
+      "min_y": 0,
+      "max_y": 8,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "outer-courtyard-east-barracks",
+      "layer": 0,
+      "bounds": { "min_x": 48, "max_x": 82, "min_z": 20, "max_z": 34 },
+      "min_y": 0,
+      "max_y": 8,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-market-west",
+      "layer": 0,
+      "bounds": { "min_x": -70, "max_x": -38, "min_z": 49, "max_z": 64 },
+      "min_y": 0,
+      "max_y": 7,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "inner-market-east",
+      "layer": 0,
+      "bounds": { "min_x": 38, "max_x": 70, "min_z": 49, "max_z": 64 },
+      "min_y": 0,
+      "max_y": 7,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-front-wall-west",
+      "layer": 0,
+      "bounds": { "min_x": -46, "max_x": -12, "min_z": 72, "max_z": 77 },
+      "min_y": 0,
+      "max_y": 20,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-front-wall-east",
+      "layer": 0,
+      "bounds": { "min_x": 12, "max_x": 46, "min_z": 72, "max_z": 77 },
+      "min_y": 0,
+      "max_y": 20,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
@@ -206,9 +384,9 @@
     {
       "id": "keep-west-wall",
       "layer": 0,
-      "bounds": { "min_x": -14.5, "max_x": -13.5, "min_z": 24.5, "max_z": 33.5 },
+      "bounds": { "min_x": -50, "max_x": -46, "min_z": 77, "max_z": 113 },
       "min_y": 0,
-      "max_y": 6.5,
+      "max_y": 20,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
@@ -216,9 +394,9 @@
     {
       "id": "keep-east-wall",
       "layer": 0,
-      "bounds": { "min_x": 13.5, "max_x": 14.5, "min_z": 24.5, "max_z": 33.5 },
+      "bounds": { "min_x": 46, "max_x": 50, "min_z": 77, "max_z": 113 },
       "min_y": 0,
-      "max_y": 6.5,
+      "max_y": 20,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
@@ -226,29 +404,59 @@
     {
       "id": "keep-rear-wall",
       "layer": 0,
-      "bounds": { "min_x": -14, "max_x": 14, "min_z": 32.5, "max_z": 33.5 },
+      "bounds": { "min_x": -46, "max_x": 46, "min_z": 113, "max_z": 118 },
       "min_y": 0,
-      "max_y": 6.5,
+      "max_y": 20,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "west-barracks",
+      "id": "keep-south-west-tower",
       "layer": 0,
-      "bounds": { "min_x": -23, "max_x": -17, "min_z": 17, "max_z": 24 },
+      "bounds": { "min_x": -56, "max_x": -38, "min_z": 62, "max_z": 84 },
       "min_y": 0,
-      "max_y": 3.8,
+      "max_y": 28,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true
     },
     {
-      "id": "east-barracks",
+      "id": "keep-south-east-tower",
       "layer": 0,
-      "bounds": { "min_x": 17, "max_x": 23, "min_z": 17, "max_z": 24 },
+      "bounds": { "min_x": 38, "max_x": 56, "min_z": 62, "max_z": 84 },
       "min_y": 0,
-      "max_y": 3.8,
+      "max_y": 28,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-north-west-tower",
+      "layer": 0,
+      "bounds": { "min_x": -56, "max_x": -38, "min_z": 106, "max_z": 128 },
+      "min_y": 0,
+      "max_y": 28,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-north-east-tower",
+      "layer": 0,
+      "bounds": { "min_x": 38, "max_x": 56, "min_z": 106, "max_z": 128 },
+      "min_y": 0,
+      "max_y": 28,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "keep-throne-hall",
+      "layer": 0,
+      "bounds": { "min_x": -24, "max_x": 24, "min_z": 106, "max_z": 111 },
+      "min_y": 0,
+      "max_y": 24,
       "blocks_movement": true,
       "blocks_los": true,
       "enabled": true

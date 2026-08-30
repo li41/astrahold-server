@@ -24,8 +24,8 @@ const (
 )
 
 var (
-	ErrUnknownScenario              = errors.New("loadlab: unknown scenario")
-	s3e9MixedMovementEnabled        = os.Getenv("ASTRAHOLD_S3E9_MIXED_MOVEMENT") == "1"
+	ErrUnknownScenario       = errors.New("loadlab: unknown scenario")
+	s3e9MixedMovementEnabled = os.Getenv("ASTRAHOLD_S3E9_MIXED_MOVEMENT") == "1"
 )
 
 func ParseScenario(value string) (Scenario, error) {
@@ -83,7 +83,7 @@ func buildLayout(def gameplayworld.Definition, scenario Scenario) (scenarioLayou
 	if _, err := ParseScenario(string(scenario)); err != nil {
 		return scenarioLayout{}, err
 	}
-	ground, ok := surfaceByID(def, "ground")
+	ground, ok := firstSurfaceByID(def, "great-field", "ground")
 	if !ok {
 		return scenarioLayout{}, errors.New("loadlab: ground surface is required")
 	}
@@ -95,13 +95,13 @@ func buildLayout(def gameplayworld.Definition, scenario Scenario) (scenarioLayou
 	if scenario != ScenarioVerticalSiege {
 		return layout, nil
 	}
-	if layout.west, ok = surfaceByID(def, "west-stair"); !ok {
+	if layout.west, ok = firstSurfaceByID(def, "outer-west-ramp", "west-stair"); !ok {
 		return scenarioLayout{}, errors.New("loadlab: west-stair surface is required for vertical-siege")
 	}
-	if layout.east, ok = surfaceByID(def, "east-stair"); !ok {
+	if layout.east, ok = firstSurfaceByID(def, "outer-east-ramp", "east-stair"); !ok {
 		return scenarioLayout{}, errors.New("loadlab: east-stair surface is required for vertical-siege")
 	}
-	if layout.wall, ok = surfaceByID(def, "front-wall-walk"); !ok {
+	if layout.wall, ok = firstSurfaceByID(def, "outer-west-wallwalk", "front-wall-walk"); !ok {
 		return scenarioLayout{}, errors.New("loadlab: front-wall-walk surface is required for vertical-siege")
 	}
 	return layout, nil
@@ -199,16 +199,16 @@ func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gamepla
 	// 西南群放在城外開放地；東北群放在城內、但避開 x=29.5 side wall 與 z=34.5 rear wall。
 	// castle-sandbox 的兩個 box 最近距離 sqrt(42^2 + 58^2) ~= 71.6m > 64m AOI radius。
 	return gameplayworld.BoundsXZ{
-		MinX: ground.MinX + 2,
-		MaxX: ground.MinX + 14,
-		MinZ: ground.MinZ + 2,
-		MaxZ: ground.MinZ + 14,
-	}, gameplayworld.BoundsXZ{
-		MinX: ground.MaxX - 24,
-		MaxX: ground.MaxX - 12,
-		MinZ: ground.MaxZ - 18,
-		MaxZ: ground.MaxZ - 6,
-	}
+			MinX: ground.MinX + 2,
+			MaxX: ground.MinX + 14,
+			MinZ: ground.MinZ + 2,
+			MaxZ: ground.MinZ + 14,
+		}, gameplayworld.BoundsXZ{
+			MinX: ground.MaxX - 24,
+			MaxX: ground.MaxX - 12,
+			MinZ: ground.MaxZ - 18,
+			MaxZ: ground.MaxZ - 6,
+		}
 }
 
 type xzPoint struct{ x, z float32 }
@@ -300,6 +300,15 @@ func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.
 func surfaceByID(def gameplayworld.Definition, id string) (gameplayworld.Surface, bool) {
 	for _, surface := range def.Surfaces {
 		if surface.ID == id {
+			return surface, true
+		}
+	}
+	return gameplayworld.Surface{}, false
+}
+
+func firstSurfaceByID(def gameplayworld.Definition, ids ...string) (gameplayworld.Surface, bool) {
+	for _, id := range ids {
+		if surface, ok := surfaceByID(def, id); ok {
 			return surface, true
 		}
 	}

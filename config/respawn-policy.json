@@ -7,7 +7,7 @@
       "class": "safe",
       "x": 0,
       "y": 0,
-      "z": -35,
+      "z": -145,
       "layer": 0,
       "checkpoint_activation_radius": 0
     },
@@ -16,16 +16,16 @@
       "class": "checkpoint",
       "x": 0,
       "y": 0,
-      "z": 25,
+      "z": 58,
       "layer": 0,
       "checkpoint_activation_radius": 4
     },
     {
       "id": "siege-rally",
       "class": "siege",
-      "x": 20,
+      "x": 36,
       "y": 0,
-      "z": -35,
+      "z": -145,
       "layer": 0,
       "checkpoint_activation_radius": 0
     }

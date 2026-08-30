@@ -9,10 +9,10 @@
   "throne_zone": {
     "layer": 0,
     "bounds": {
-      "min_x": -4,
-      "max_x": 4,
-      "min_z": 27,
-      "max_z": 33
+      "min_x": -12,
+      "max_x": 12,
+      "min_z": 90,
+      "max_z": 105
     }
   },
   "throne_capture_seconds": 10,

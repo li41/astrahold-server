@@ -29,8 +29,8 @@ func TestVerticalSiegePlayerFactoryUsesAllLayers(t *testing.T) {
 		t.Fatalf("ramp layer = %d, want 1", ramp.Entity.Transform.Position.Layer)
 	}
 	wall := factory(session.ID(8), world.EntityID(8))
-	if wall.Entity.Transform.Position.Layer != 2 || wall.Entity.Transform.Position.Y != 8 {
-		t.Fatalf("wall position = %+v, want layer=2 y=8", wall.Entity.Transform.Position)
+	if wall.Entity.Transform.Position.Layer != 2 || wall.Entity.Transform.Position.Y != 11.04 {
+		t.Fatalf("wall position = %+v, want layer=2 y=11.04", wall.Entity.Transform.Position)
 	}
 }
 

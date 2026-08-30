@@ -61,7 +61,7 @@ func TestCastleSandboxFreshSpawnCanReachMainGateApproach(t *testing.T) {
 	start := spawn.Position()
 	pos := start
 	const approachZ float32 = 8.0
-	for stepIndex := 0; stepIndex < 200 && pos.Z < approachZ-0.001; stepIndex++ {
+	for stepIndex := 0; stepIndex < 340 && pos.Z < approachZ-0.001; stepIndex++ {
 		stepZ := float32(0.5)
 		if remaining := approachZ - pos.Z; remaining < stepZ {
 			stepZ = remaining
@@ -82,7 +82,40 @@ func TestCastleSandboxFreshSpawnCanReachMainGateApproach(t *testing.T) {
 	if math.Abs(float64(pos.Z-approachZ)) > 0.01 {
 		t.Fatalf("gate approach z=%g, want %g", pos.Z, approachZ)
 	}
-	if traveled := pos.Z - start.Z; traveled < 40 {
+	if traveled := pos.Z - start.Z; traveled < 140 {
 		t.Fatalf("fresh-spawn route traveled only %gm; expected full castle approach from spawn=%+v to pos=%+v", traveled, start, pos)
+	}
+}
+
+func TestCastleSandboxOpenedGateCanReachThroneApproach(t *testing.T) {
+	gameplay, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nav, err := NewGameplayNavigator(gameplay.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.SetBlockerEnabled("main-gate", false); err != nil {
+		t.Fatal(err)
+	}
+
+	pos := world.Position{X: 0, Y: 0, Z: -145, Layer: 0}
+	const throneApproachZ float32 = 100.0
+	for stepIndex := 0; stepIndex < 520 && pos.Z < throneApproachZ-0.001; stepIndex++ {
+		next, moveErr := nav.ResolveMove(pos, world.Vec3{Z: 0.5}, Agent{
+			Radius:        gameplay.Definition.Agent.Radius,
+			MaxStepHeight: gameplay.Definition.Agent.MaxStepHeight,
+		})
+		if moveErr != nil {
+			t.Fatalf("opened-gate route blocked step=%d pos=%+v err=%v", stepIndex, pos, moveErr)
+		}
+		if next.Z <= pos.Z+0.001 {
+			t.Fatalf("opened-gate route made no forward progress step=%d pos=%+v next=%+v", stepIndex, pos, next)
+		}
+		pos = next
+	}
+	if pos.Layer != 0 || math.Abs(float64(pos.Z-throneApproachZ)) > 0.01 {
+		t.Fatalf("opened-gate route stopped at %+v, want ground z=%g before throne hall", pos, throneApproachZ)
 	}
 }

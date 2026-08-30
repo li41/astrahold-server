@@ -27,8 +27,8 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spawn.ID != "field-camp" || spawn.Layer != 0 || spawn.Z != -35 {
-		t.Fatalf("fresh spawn=%#v; want field-camp on layer 0 at z=-35", spawn)
+	if spawn.ID != "field-camp" || spawn.Layer != 0 || spawn.Z != -145 {
+		t.Fatalf("fresh spawn=%#v; want field-camp on layer 0 at z=-145", spawn)
 	}
 
 	factory := newWorldPlayerFactory(spawn, loadedWorld.Definition.Agent)
@@ -50,7 +50,7 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 	}
 
 	const gateFrontZ = float32(8.5)
-	for step := 0; step < 100 && state.Position.Z < gateFrontZ; step++ {
+	for step := 0; step < 320 && state.Position.Z < gateFrontZ; step++ {
 		before := state.Position.Z
 		if _, err := move.Step(&state, 0.1); err != nil {
 			t.Fatalf("step %d from z=%g: %v", step, before, err)

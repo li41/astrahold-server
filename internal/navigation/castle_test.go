@@ -10,9 +10,13 @@ import (
 
 func TestCastleSandboxGateAndStairTraversal(t *testing.T) {
 	loaded, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	nav, err := NewGameplayNavigator(loaded.Definition)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	agent := Agent{Radius: loaded.Definition.Agent.Radius, MaxStepHeight: loaded.Definition.Agent.MaxStepHeight}
 
 	outside := world.Position{X: 0, Y: 0, Z: 8, Layer: 0}
@@ -29,38 +33,52 @@ func TestCastleSandboxGateAndStairTraversal(t *testing.T) {
 		t.Fatal("gate interaction LOS = false, target gate should not occlude itself")
 	}
 
-	if err := nav.SetBlockerEnabled("main-gate", false); err != nil { t.Fatal(err) }
+	if err := nav.SetBlockerEnabled("main-gate", false); err != nil {
+		t.Fatal(err)
+	}
 	inside, err := nav.ResolveMove(outside, world.Vec3{Z: 3}, agent)
-	if err != nil { t.Fatalf("open gate move error = %v", err) }
-	if inside.Layer != 0 || inside.Z != 11 { t.Fatalf("open gate position = %+v", inside) }
+	if err != nil {
+		t.Fatalf("open gate move error = %v", err)
+	}
+	if inside.Layer != 0 || inside.Z != 11 {
+		t.Fatalf("open gate position = %+v", inside)
+	}
 	if !nav.HasLineOfSight(world.Position{X: 0, Y: 1, Z: 0, Layer: 0}, insideTarget) {
 		t.Fatal("open gate LOS = false, want true")
 	}
 
-	pos := world.Position{X: -25, Y: 0, Z: 20.4, Layer: 0}
+	pos := world.Position{X: -102, Y: 0, Z: 15.4, Layer: 0}
 	pos, err = nav.ResolveMove(pos, world.Vec3{Z: -0.6}, agent)
-	if err != nil { t.Fatalf("ground -> stair error = %v", err) }
-	if pos.Layer != 1 || pos.Y < 0.19 || pos.Y > 0.21 {
+	if err != nil {
+		t.Fatalf("ground -> stair error = %v", err)
+	}
+	if pos.Layer != 1 || pos.Y < 0.39 || pos.Y > 0.44 {
 		t.Fatalf("ground -> stair position = %+v", pos)
 	}
 
-	for i := 0; i < 30 && pos.Layer != 2; i++ {
-		pos, err = nav.ResolveMove(pos, world.Vec3{Z: -0.3}, agent)
-		if err != nil { t.Fatalf("stair traversal step=%d pos=%+v err=%v", i, pos, err) }
+	for i := 0; i < 120 && pos.Layer != 2; i++ {
+		pos, err = nav.ResolveMove(pos, world.Vec3{Z: 0.3}, agent)
+		if err != nil {
+			t.Fatalf("stair traversal step=%d pos=%+v err=%v", i, pos, err)
+		}
 	}
-	if pos.Layer != 2 || pos.Y != 8 {
-		t.Fatalf("stair -> wall position = %+v, want layer=2 y=8", pos)
+	if pos.Layer != 2 || pos.Y != 11.04 {
+		t.Fatalf("stair -> wall position = %+v, want layer=2 y=11.04", pos)
 	}
 
 	for i := 0; i < 3; i++ {
-		pos, err = nav.ResolveMove(pos, world.Vec3{Z: -0.3}, agent)
-		if err != nil { t.Fatalf("walk onto wall step=%d: %v", i, err) }
-	}
-	for i := 0; i < 6 && pos.Layer != 1; i++ {
 		pos, err = nav.ResolveMove(pos, world.Vec3{Z: 0.3}, agent)
-		if err != nil { t.Fatalf("wall -> stair step=%d pos=%+v err=%v", i, pos, err) }
+		if err != nil {
+			t.Fatalf("walk onto wall step=%d: %v", i, err)
+		}
 	}
-	if pos.Layer != 1 || pos.Y >= 8 {
+	for i := 0; i < 8 && pos.Layer != 1; i++ {
+		pos, err = nav.ResolveMove(pos, world.Vec3{Z: -0.3}, agent)
+		if err != nil {
+			t.Fatalf("wall -> stair step=%d pos=%+v err=%v", i, pos, err)
+		}
+	}
+	if pos.Layer != 1 || pos.Y >= 11.04 {
 		t.Fatalf("wall -> stair position = %+v", pos)
 	}
 }
