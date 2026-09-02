@@ -16,5 +16,6 @@ func (r *Runtime) EnqueueFencedEquipmentCommand(fence SessionOwnershipFence, seq
 	if err := validateEquipmentIntent(equipment); err != nil {
 		return err
 	}
-	return r.queue.tryPush(equipmentCommand{sessionID: fence.SessionID, sequence: sequence, equipment: equipment, ownership: fence})
+	payload := equipment
+	return r.queue.tryPush(equipmentCommand{sessionID: fence.SessionID, sequence: sequence, equipment: &payload, ownership: fence})
 }
