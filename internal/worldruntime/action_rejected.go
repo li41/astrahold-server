@@ -66,6 +66,8 @@ func actionRejectionReason(err error) protocol.ActionRejectionReason {
 	switch {
 	case errors.Is(err, combat.ErrActionCooldown), errors.Is(err, siege.ErrGateAttackCooldown):
 		return protocol.ActionRejectionCooldown
+	case errors.Is(err, character.ErrInsufficientResource):
+		return protocol.ActionRejectionInsufficientResource
 	case errors.Is(err, ErrEntityOutOfRange), errors.Is(err, ErrPointOutOfRange), errors.Is(err, siege.ErrGateOutOfRange):
 		return protocol.ActionRejectionOutOfRange
 	case errors.Is(err, ErrEntityWrongLayer), errors.Is(err, siege.ErrGateWrongLayer):
