@@ -15,6 +15,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in clientUseAction
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
 		return protocol.ClientUseAction{ActionID:in.ActionID,TargetKind:protocol.ActionTargetKind(in.TargetKind),TargetID:in.TargetID,TargetX:in.TargetX,TargetZ:in.TargetZ},nil
+	case protocol.MessageClientEquipmentCommand:
+		var in clientEquipmentCommand
+		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
+		return protocol.ClientEquipmentCommand{Operation:protocol.EquipmentOperation(in.Operation),Slot:protocol.EquipmentSlot(in.Slot),ItemArchetypeID:in.ItemArchetypeID},nil
 	case protocol.MessageActionStarted:
 		var in actionStarted
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
@@ -59,6 +63,11 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
 		items:=make([]protocol.InventoryItemStack,len(in.Items));for i,item:=range in.Items{items[i]=protocol.InventoryItemStack{ArchetypeID:item.ArchetypeID,Quantity:item.Quantity}}
 		return protocol.InventorySnapshot{Revision:in.Revision,Items:items},nil
+	case protocol.MessageEquipmentSnapshot:
+		var in equipmentSnapshot
+		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
+		slots:=make([]protocol.EquipmentSlotState,len(in.Slots));for i,slot:=range in.Slots{slots[i]=protocol.EquipmentSlotState{Slot:protocol.EquipmentSlot(slot.Slot),ItemArchetypeID:slot.ItemArchetypeID}}
+		return protocol.EquipmentSnapshot{Revision:in.Revision,Slots:slots},nil
 	case protocol.MessageSiegeMatchState:
 		var in siegeMatchState
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
