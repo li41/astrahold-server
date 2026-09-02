@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	grayWolfArchetypeID      = "wolf-gray-01"
-	grayWolfPeltArchetypeID  = "item_gray_wolf_pelt"
-	itemPickupRangeMeters    = float32(2.5)
+	grayWolfArchetypeID       = "wolf-gray-01"
+	grayWolfPeltArchetypeID   = "item_gray_wolf_pelt"
+	itemPickupRangeMeters     = float32(2.5)
 	itemDropSpawnOffsetMeters = float32(0.75)
-	firstItemDropEntityID    = world.EntityID(1 << 63)
+	firstItemDropEntityID     = world.EntityID(1 << 63)
 )
 
 var (
@@ -23,11 +23,6 @@ var (
 	ErrItemDropOutOfRange  = errors.New("worldruntime: item drop out of range")
 	ErrItemDropIDExhausted = errors.New("worldruntime: item drop entity id exhausted")
 )
-
-type itemDropState struct {
-	ItemArchetypeID string
-	Quantity        uint32
-}
 
 func validatePickupIntent(intent protocol.ClientPickupItem) error {
 	if intent.DropEntityID == 0 {
@@ -47,16 +42,20 @@ func (r *Runtime) EnqueuePickupItem(id session.ID, sequence uint32, intent proto
 	return r.queue.tryPush(useActionCommand{sessionID: id, sequence: sequence, pickup: &payload})
 }
 
-func (r *Runtime) spawnMonsterItemDrop(monster world.EntityState, report *StepReport) {
+func (r *Runtime) spawnMonsterItemDrop(monster world.EntityState, actionInstanceID uint64, report *StepReport) {
 	if monster.Kind != world.EntityMonster || monster.ArchetypeID != grayWolfArchetypeID {
 		return
 	}
-
-	dropID, err := r.allocateItemDropEntityID()
-	if err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: err})
+	if actionInstanceID == 0 || actionInstanceID >= uint64(firstItemDropEntityID) {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: ErrItemDropIDExhausted})
 		return
 	}
+	dropID := firstItemDropEntityID + world.EntityID(actionInstanceID)
+	if _, exists := r.world.Entity(dropID); exists {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: ErrItemDropIDExhausted})
+		return
+	}
+
 	position := monster.Transform.Position
 	position.X += itemDropSpawnOffsetMeters
 	entity := world.EntityState{
@@ -67,26 +66,7 @@ func (r *Runtime) spawnMonsterItemDrop(monster world.EntityState, report *StepRe
 	}
 	if err := r.world.Spawn(entity, 0, 0.15, 0); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: err})
-		return
 	}
-	r.itemDrops[dropID] = itemDropState{ItemArchetypeID: grayWolfPeltArchetypeID, Quantity: 1}
-}
-
-func (r *Runtime) allocateItemDropEntityID() (world.EntityID, error) {
-	if r.nextItemDropEntityID == 0 {
-		r.nextItemDropEntityID = firstItemDropEntityID
-	}
-	for attempts := 0; attempts < 1024; attempts++ {
-		candidate := r.nextItemDropEntityID
-		r.nextItemDropEntityID++
-		if r.nextItemDropEntityID == 0 {
-			return 0, ErrItemDropIDExhausted
-		}
-		if _, exists := r.world.Entity(candidate); !exists {
-			return candidate, nil
-		}
-	}
-	return 0, ErrItemDropIDExhausted
 }
 
 func (r *Runtime) applyPickupItem(name string, command useActionCommand, report *StepReport) {
@@ -118,14 +98,8 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		return
 	}
 	request := *command.pickup
-	drop, ok := r.itemDrops[request.DropEntityID]
-	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropNotFound})
-		return
-	}
 	dropEntity, ok := r.world.Entity(request.DropEntityID)
-	if !ok || dropEntity.Kind != world.EntityItemDrop {
-		delete(r.itemDrops, request.DropEntityID)
+	if !ok || dropEntity.Kind != world.EntityItemDrop || dropEntity.ArchetypeID == "" {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropNotFound})
 		return
 	}
@@ -143,13 +117,12 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
 		return
 	}
-	// Inventory.Add validates stack capacity/overflow before any drop removal. World.Remove is an
-	// infallible world-owner mutation, so success cannot leave a half-applied pickup transaction.
-	if err := inv.Add(drop.ItemArchetypeID, drop.Quantity); err != nil {
+	// First slice drops exactly one unit. Add validates stack capacity/overflow before any world
+	// removal; World.Remove is infallible inside the single world owner, so no half-state remains.
+	if err := inv.Add(dropEntity.ArchetypeID, 1); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
 	r.world.Remove(request.DropEntityID)
-	delete(r.itemDrops, request.DropEntityID)
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
