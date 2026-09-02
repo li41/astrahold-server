@@ -36,6 +36,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		out:=worldDynamicState{Revision:m.Revision,Blockers:make([]worldBlockerState,len(m.Blockers)),Gates:make([]worldGateState,len(m.Gates))};for i,b:=range m.Blockers{out.Blockers[i]=worldBlockerState{ID:b.ID,Enabled:b.Enabled}};for i,g:=range m.Gates{out.Gates[i]=worldGateState{ID:g.ID,HP:g.HP,MaxHP:g.MaxHP,Destroyed:g.Destroyed}};return json.Marshal(out)
 	case protocol.EntityVitalsState:
 		return json.Marshal(entityVitalsState{EntityID:uint64(m.EntityID),HP:m.HP,MaxHP:m.MaxHP,MP:m.MP,MaxMP:m.MaxMP,Defeated:m.Defeated,ReviveProtectionUntilTick:m.ReviveProtectionUntilTick})
+	case protocol.InventorySnapshot:
+		out:=inventorySnapshot{Revision:m.Revision,Items:make([]inventoryItemStack,len(m.Items))};for i,item:=range m.Items{out.Items[i]=inventoryItemStack{ArchetypeID:item.ArchetypeID,Quantity:item.Quantity}};return json.Marshal(out)
 	case protocol.SiegeMatchState:
 		return json.Marshal(siegeMatchState{Revision:m.Revision,Round:m.Round,MatchID:m.MatchID,AttackerID:m.AttackerID,DefenderID:m.DefenderID,YourTeam:string(m.YourTeam),Phase:string(m.Phase),BreachGateID:m.BreachGateID,ThroneObjectiveID:m.ThroneObjectiveID,GateBreached:m.GateBreached,WinnerTeam:string(m.WinnerTeam),WinnerID:m.WinnerID,CastleOwnerID:m.CastleOwnerID})
 	case protocol.CombatEvent:
