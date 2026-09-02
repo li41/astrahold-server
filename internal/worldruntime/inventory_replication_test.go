@@ -42,27 +42,32 @@ func TestJoinEmitsAuthoritativeInventorySnapshot(t *testing.T) {
 		t.Fatalf("join errors: %#v", report.CommandErrors)
 	}
 
-	select {
-	case envelope := <-connection.Reliable():
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			t.Fatalf("delivery = %v, want reliable ordered", envelope.Delivery)
-		}
-		snapshot, ok := envelope.Message.(protocol.InventorySnapshot)
-		if !ok {
-			t.Fatalf("message = %T, want protocol.InventorySnapshot", envelope.Message)
-		}
-		want := protocol.InventorySnapshot{
-			Revision: 3,
-			Items: []protocol.InventoryItemStack{
-				{ArchetypeID: "item_minor_healing_potion", Quantity: 5},
-				{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
-				{ArchetypeID: "item_training_blade", Quantity: 1},
-			},
-		}
-		if !reflect.DeepEqual(snapshot, want) {
-			t.Fatalf("snapshot = %#v, want %#v", snapshot, want)
-		}
-	default:
-		t.Fatal("expected reliable inventory snapshot")
+	inventoryEnvelope := <-connection.Reliable()
+	if inventoryEnvelope.Delivery != protocol.DeliveryReliableOrdered {
+		t.Fatalf("delivery = %v, want reliable ordered", inventoryEnvelope.Delivery)
+	}
+	snapshot, ok := inventoryEnvelope.Message.(protocol.InventorySnapshot)
+	if !ok {
+		t.Fatalf("message = %T, want protocol.InventorySnapshot", inventoryEnvelope.Message)
+	}
+	want := protocol.InventorySnapshot{
+		Revision: 3,
+		Items: []protocol.InventoryItemStack{
+			{ArchetypeID: "item_minor_healing_potion", Quantity: 5},
+			{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
+			{ArchetypeID: "item_training_blade", Quantity: 1},
+		},
+	}
+	if !reflect.DeepEqual(snapshot, want) {
+		t.Fatalf("snapshot = %#v, want %#v", snapshot, want)
+	}
+
+	equipmentEnvelope := <-connection.Reliable()
+	equipment, ok := equipmentEnvelope.Message.(protocol.EquipmentSnapshot)
+	if !ok {
+		t.Fatalf("message = %T, want protocol.EquipmentSnapshot", equipmentEnvelope.Message)
+	}
+	if equipment.Revision != 0 || len(equipment.Slots) != 0 {
+		t.Fatalf("equipment bootstrap = %#v, want revision 0 empty slots", equipment)
 	}
 }
