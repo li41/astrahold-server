@@ -41,6 +41,9 @@ func (r *Runtime) removeSessionInventoryDelivery(id session.ID) {
 	delete(r.sessionInventoryPending, id)
 }
 
+// replicatePendingInventories sends the paired authoritative Inventory + Equipment view.
+// If Equipment delivery backpressures after Inventory succeeds, the pending marker remains and
+// the next tick safely resends the same Inventory revision before retrying Equipment.
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 	if len(r.sessionInventoryPending) == 0 {
 		return
@@ -54,27 +57,46 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 			delete(r.sessionInventoryPending, s.ID)
 			continue
 		}
+
 		stacks := inv.Snapshot()
 		items := make([]protocol.InventoryItemStack, 0, len(stacks))
 		for _, stack := range stacks {
 			items = append(items, protocol.InventoryItemStack{ArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity})
 		}
-		message := protocol.InventorySnapshot{Revision: inv.Revision(), Items: items}
-		envelope := protocol.Envelope{
+		inventoryMessage := protocol.InventorySnapshot{Revision: inv.Revision(), Items: items}
+		inventoryEnvelope := protocol.Envelope{
 			Delivery:   protocol.DeliveryReliableOrdered,
 			Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
 			ServerTick: tick,
-			Message:    message,
+			Message:    inventoryMessage,
 		}
 		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(envelope); err != nil {
+		if err := s.Connection().TrySend(inventoryEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) {
-				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-					SessionID: s.ID, Delivery: envelope.Delivery, MessageType: message.Type(), Err: err,
-				})
+				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: inventoryEnvelope.Delivery, MessageType: inventoryMessage.Type(), Err: err})
 			}
 			continue
 		}
+
+		slots := make([]protocol.EquipmentSlotState, 0, 1)
+		if mainHand := inv.MainHand(); mainHand != "" {
+			slots = append(slots, protocol.EquipmentSlotState{Slot: protocol.EquipmentSlotMainHand, ItemArchetypeID: mainHand})
+		}
+		equipmentMessage := protocol.EquipmentSnapshot{Revision: inv.EquipmentRevision(), Slots: slots}
+		equipmentEnvelope := protocol.Envelope{
+			Delivery:   protocol.DeliveryReliableOrdered,
+			Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
+			ServerTick: tick,
+			Message:    equipmentMessage,
+		}
+		report.Metrics.OutboundMessages++
+		if err := s.Connection().TrySend(equipmentEnvelope); err != nil {
+			if !errors.Is(err, session.ErrBackpressure) {
+				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentEnvelope.Delivery, MessageType: equipmentMessage.Type(), Err: err})
+			}
+			continue
+		}
+
 		delete(r.sessionInventoryPending, s.ID)
 	}
 	for id := range r.sessionInventoryPending {
