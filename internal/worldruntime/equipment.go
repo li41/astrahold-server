@@ -38,10 +38,15 @@ func (r *Runtime) EnqueueEquipmentCommand(id session.ID, sequence uint32, equipm
 	if err := validateEquipmentIntent(equipment); err != nil {
 		return err
 	}
-	return r.queue.tryPush(equipmentCommand{sessionID: id, sequence: sequence, equipment: equipment})
+	payload := equipment
+	return r.queue.tryPush(equipmentCommand{sessionID: id, sequence: sequence, equipment: &payload})
 }
 
 func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, report *StepReport) {
+	if command.equipment == nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: equipment payload missing")})
+		return
+	}
 	if command.ownership.Valid() {
 		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
@@ -67,13 +72,14 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 		return
 	}
 
+	request := *command.equipment
 	var err error
-	switch command.equipment.Operation {
+	switch request.Operation {
 	case protocol.EquipmentOperationEquip:
-		if command.equipment.ItemArchetypeID != trainingBladeArchetypeID {
+		if request.ItemArchetypeID != trainingBladeArchetypeID {
 			err = ErrEquipmentItemNotAllowed
 		} else {
-			err = inv.EquipMainHand(command.equipment.ItemArchetypeID)
+			err = inv.EquipMainHand(request.ItemArchetypeID)
 		}
 	case protocol.EquipmentOperationUnequip:
 		_, err = inv.UnequipMainHand()
