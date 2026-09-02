@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
+	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -38,6 +40,8 @@ type Config struct {
 	PostReviveProtectionTicks            uint64
 	CharacterStateAutosaveEveryTicks     uint64
 	MaxCharacterStateAutosavesPerTick    int
+	InventoryMaxStacks                   int
+	StarterInventory                     []inventory.Stack
 	SiegeCompletedMinHold                time.Duration
 	SiegeCompletedMaxHold                time.Duration
 	AOIOptions                           spatial.QueryOptions
@@ -60,6 +64,12 @@ func DefaultConfig() Config {
 		SnapshotEveryTicks:                   2,
 		CharacterMaxHP:                       1000,
 		MaxCharacterStateAutosavesPerTick:    32,
+		InventoryMaxStacks:                   32,
+		StarterInventory: []inventory.Stack{
+			{ArchetypeID: "item_minor_healing_potion", Quantity: 5},
+			{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
+			{ArchetypeID: "item_training_blade", Quantity: 1},
+		},
 		SiegeCompletedMinHold:                2 * time.Second,
 		SiegeCompletedMaxHold:                10 * time.Second,
 		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
@@ -196,6 +206,8 @@ type Runtime struct {
 	characterStateAutosaveLastTick  map[world.EntityID]uint64
 	characterStateAutosaveCursor    int
 	characterStateAutosaveNextTick  uint64
+	inventories                     map[characteridentity.ID]*inventory.Inventory
+	sessionInventoryPending         map[session.ID]struct{}
 	replication                     *replication.Service
 	replicationFrameBuilder         *simulation.ReplicationFrameBuilder
 	replicationVisibleScratch       []int
@@ -251,6 +263,12 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	if config.CharacterStateAutosaveEveryTicks > 0 && config.MaxCharacterStateAutosavesPerTick <= 0 {
 		config.MaxCharacterStateAutosavesPerTick = 32
 	}
+	if config.InventoryMaxStacks <= 0 {
+		config.InventoryMaxStacks = 32
+	}
+	if err := validateStarterInventory(config.InventoryMaxStacks, config.StarterInventory); err != nil {
+		panic(err)
+	}
 	if config.SiegeCompletedMinHold < 0 || config.SiegeCompletedMaxHold < 0 || (config.SiegeCompletedMaxHold == 0 && config.SiegeCompletedMinHold > 0) || (config.SiegeCompletedMaxHold > 0 && config.SiegeCompletedMinHold > config.SiegeCompletedMaxHold) {
 		panic("worldruntime: invalid siege completed hold policy")
 	}
@@ -287,6 +305,8 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		sessions:                       session.NewRegistry(),
 		characterIdentities:            newCharacterIdentityRegistry(),
 		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
+		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
+		sessionInventoryPending:        make(map[session.ID]struct{}),
 		replication:                    replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),
 		characters:                     characters,
