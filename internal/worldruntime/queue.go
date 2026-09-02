@@ -19,10 +19,7 @@ func (registerSessionCommand) name() string { return "register_session" }
 type unregisterSessionCommand struct{ id session.ID }
 func (unregisterSessionCommand) name() string { return "unregister_session" }
 
-type characterAdmissionCommand struct {
-	identity   characterAdmissionOperation
-	completion chan error
-}
+type characterAdmissionCommand struct { identity characterAdmissionOperation; completion chan error }
 func (c characterAdmissionCommand) name() string {
 	if c.identity.release { return "release_character_admission" }
 	if c.identity.ownership != nil { return "plan_character_connection" }
@@ -53,11 +50,22 @@ func (teleportBatchCommand) name() string { return "teleport_batch" }
 type spawnEntityCommand struct{ request SpawnEntityRequest }
 func (spawnEntityCommand) name() string { return "spawn_entity" }
 
-type useActionCommand struct { sessionID session.ID; sequence uint32; action protocol.ClientUseAction; ownership SessionOwnershipFence }
-func (useActionCommand) name() string { return "use_action" }
+// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment keeps its
+// own typed protocol payload and is routed before combat preparation; it is never represented as a skill/action ID.
+type useActionCommand struct {
+	sessionID session.ID
+	sequence  uint32
+	action    protocol.ClientUseAction
+	equipment *protocol.ClientEquipmentCommand
+	ownership SessionOwnershipFence
+}
+func (c useActionCommand) name() string {
+	if c.equipment != nil { return "equipment_command" }
+	return "use_action"
+}
 
-type equipmentCommand struct { sessionID session.ID; sequence uint32; equipment protocol.ClientEquipmentCommand; ownership SessionOwnershipFence }
-func (equipmentCommand) name() string { return "equipment_command" }
+// Alias keeps equipment enqueue code explicit while Step continues to dispatch the one bounded Reliable carrier.
+type equipmentCommand = useActionCommand
 
 // setBlockerCommand remains the existing Step dispatch carrier for DynamicWorld mutations.
 // D.3C uses the explicit discriminator below for the Server-only round-reset control command
