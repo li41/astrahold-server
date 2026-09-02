@@ -85,6 +85,10 @@ type teleportBatchCommand struct{ requests []TeleportRequest }
 
 func (teleportBatchCommand) name() string { return "teleport_batch" }
 
+type spawnEntityCommand struct{ request SpawnEntityRequest }
+
+func (spawnEntityCommand) name() string { return "spawn_entity" }
+
 type useActionCommand struct {
 	sessionID session.ID
 	sequence  uint32

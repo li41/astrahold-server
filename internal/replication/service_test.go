@@ -15,7 +15,7 @@ func TestBuildProducesReliableSpawnBeforeRemoteSnapshot(t *testing.T) {
 	svc.Register(sid)
 	visible := []world.EntityState{
 		{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: 1}}},
-		{ID: 2, Kind: world.EntityMonster, Transform: world.Transform{Position: world.Position{X: 2}}},
+		{ID: 2, Kind: world.EntityMonster, ArchetypeID: "wolf-gray-01", Transform: world.Transform{Position: world.Position{X: 2}}},
 	}
 
 	first := svc.Build(sid, 1, 12, 20, visible)
@@ -24,6 +24,9 @@ func TestBuildProducesReliableSpawnBeforeRemoteSnapshot(t *testing.T) {
 		switch message := outbound.Message.(type) {
 		case protocol.EntitySpawn:
 			spawn++
+			if message.EntityID == 2 && message.ArchetypeID != "wolf-gray-01" {
+				t.Fatalf("monster archetype=%q want wolf-gray-01", message.ArchetypeID)
+			}
 			if svc.Knows(sid, message.EntityID) {
 				t.Fatalf("entity %d became known before delivery confirmation", message.EntityID)
 			}

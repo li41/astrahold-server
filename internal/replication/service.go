@@ -366,7 +366,7 @@ func (s *Service) buildFrame(state *viewState, selfID world.EntityID, lastProces
 				tr := protocol.EntityTransform{EntityID: e.ID, Tick: tick, Position: e.Transform.Position, Yaw: e.Transform.Yaw}
 				batch.Messages = append(batch.Messages, Outbound{
 					Delivery: protocol.DeliveryReliableOrdered,
-					Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, Transform: tr},
+					Message:  protocol.EntitySpawn{EntityID: e.ID, Kind: e.Kind, ArchetypeID: e.ArchetypeID, Transform: tr},
 				})
 				batch.Stats.SpawnSelected++
 			} else {

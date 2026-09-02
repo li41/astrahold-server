@@ -302,8 +302,9 @@ func (s *Service) buildBootstrapLifecycleFrame(state *viewState, selfID world.En
 		batch.Messages = append(batch.Messages, Outbound{
 			Delivery: protocol.DeliveryReliableOrdered,
 			Message: protocol.EntitySpawn{
-				EntityID: e.ID,
-				Kind:     e.Kind,
+				EntityID:    e.ID,
+				Kind:        e.Kind,
+				ArchetypeID: e.ArchetypeID,
 				Transform: protocol.EntityTransform{
 					EntityID: e.ID,
 					Tick:     frame.Tick,

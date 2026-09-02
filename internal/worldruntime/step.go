@@ -67,6 +67,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyTeleport(cmd.name(), c, &report)
 		case teleportBatchCommand:
 			r.applyTeleportBatch(cmd.name(), c, &report)
+		case spawnEntityCommand:
+			r.applySpawnEntity(cmd.name(), c.request, &report)
 		case respawnCommand:
 			r.applyRespawn(cmd.name(), c.request, &report)
 		case setRespawnCheckpointCommand:
