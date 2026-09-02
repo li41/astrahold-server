@@ -18,6 +18,11 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case *protocol.ClientUseAction:
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientUseAction{ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID,TargetX:m.TargetX,TargetZ:m.TargetZ})
+	case protocol.ClientEquipmentCommand:
+		return json.Marshal(clientEquipmentCommand{Operation:string(m.Operation),Slot:string(m.Slot),ItemArchetypeID:m.ItemArchetypeID})
+	case *protocol.ClientEquipmentCommand:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientEquipmentCommand{Operation:string(m.Operation),Slot:string(m.Slot),ItemArchetypeID:m.ItemArchetypeID})
 	case protocol.ActionStarted:
 		return json.Marshal(actionStarted{ActionInstanceID:m.ActionInstanceID,ActorEntityID:uint64(m.ActorEntityID),ActionID:m.ActionID,TargetKind:string(m.TargetKind),TargetID:m.TargetID,TargetX:m.TargetX,TargetZ:m.TargetZ})
 	case protocol.ActionRejected:
@@ -38,6 +43,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(entityVitalsState{EntityID:uint64(m.EntityID),HP:m.HP,MaxHP:m.MaxHP,MP:m.MP,MaxMP:m.MaxMP,Defeated:m.Defeated,ReviveProtectionUntilTick:m.ReviveProtectionUntilTick})
 	case protocol.InventorySnapshot:
 		out:=inventorySnapshot{Revision:m.Revision,Items:make([]inventoryItemStack,len(m.Items))};for i,item:=range m.Items{out.Items[i]=inventoryItemStack{ArchetypeID:item.ArchetypeID,Quantity:item.Quantity}};return json.Marshal(out)
+	case protocol.EquipmentSnapshot:
+		out:=equipmentSnapshot{Revision:m.Revision,Slots:make([]equipmentSlotState,len(m.Slots))};for i,slot:=range m.Slots{out.Slots[i]=equipmentSlotState{Slot:string(slot.Slot),ItemArchetypeID:slot.ItemArchetypeID}};return json.Marshal(out)
 	case protocol.SiegeMatchState:
 		return json.Marshal(siegeMatchState{Revision:m.Revision,Round:m.Round,MatchID:m.MatchID,AttackerID:m.AttackerID,DefenderID:m.DefenderID,YourTeam:string(m.YourTeam),Phase:string(m.Phase),BreachGateID:m.BreachGateID,ThroneObjectiveID:m.ThroneObjectiveID,GateBreached:m.GateBreached,WinnerTeam:string(m.WinnerTeam),WinnerID:m.WinnerID,CastleOwnerID:m.CastleOwnerID})
 	case protocol.CombatEvent:
