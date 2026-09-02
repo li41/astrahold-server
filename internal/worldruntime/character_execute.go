@@ -73,8 +73,11 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			}
-			if target.Kind == world.EntityPlayer {
+			switch target.Kind {
+			case world.EntityPlayer:
 				r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report)
+			case world.EntityMonster:
+				r.spawnMonsterItemDrop(target, prepared.ActionInstanceID, report)
 			}
 		}
 		r.markEntityVitalsDirty(targetID)
