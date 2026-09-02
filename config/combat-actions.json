@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-mp-001",
+  "revision": "vertical-slice-ground-fireball-001",
   "actions": [
     {
       "id": "basic-attack",
@@ -30,6 +30,7 @@
       "point_resolution": "line_first",
       "base_damage": 150,
       "damage_type": "physical",
+      "mp_cost": 60,
       "cooldown_seconds": 2.0
     },
     {
