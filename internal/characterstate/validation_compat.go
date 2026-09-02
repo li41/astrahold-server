@@ -4,5 +4,5 @@ package characterstate
 // Outbox. New intents must satisfy the current writer schema even though Store.Load
 // remains backward-compatible with legacy v1 records.
 func validateSnapshot(snapshot Snapshot) error {
-	return validateSnapshotV2(snapshot)
+	return validateSnapshotV3(snapshot)
 }

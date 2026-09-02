@@ -24,8 +24,8 @@ func TestJoinRestoresDefeatedRespawnAtRemainingTickBoundary(t *testing.T) {
 	restore := defeatedRestoreFixture(identity.ID, 2)
 	request := JoinRequest{
 		Session: sess,
-		Entity: world.EntityState{ID: 77, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: -40, Layer: 4}}},
-		Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore,
+		Entity:  world.EntityState{ID: 77, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: -40, Layer: 4}}},
+		Speed:   6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore,
 	}
 	if err := rt.EnqueueJoin(request); err != nil {
 		t.Fatal(err)
@@ -112,13 +112,13 @@ func TestJoinRejectsDurableRespawnBindingDriftBeforeSpawn(t *testing.T) {
 func defeatedRestoreFixture(characterID characteridentity.ID, remaining uint64) CharacterRestore {
 	return CharacterRestore{
 		SchemaVersion: characterstate.SchemaVersion,
-		CharacterID: characterID,
-		Revision: 3,
-		World: characterRestoreWorld,
-		HP: 0, MaxHP: 1000, Defeated: true,
+		CharacterID:   characterID,
+		Revision:      3,
+		World:         characterRestoreWorld,
+		HP:            0, MaxHP: 1000, MP: 100, MaxMP: 100, Defeated: true,
 		Transform: world.Transform{Position: world.Position{X: 3, Y: 0, Z: 4, Layer: 4}, Yaw: 0.5},
 		Respawn: characterstate.DefeatedRespawn{
-			Context: respawnpolicy.DeathContextPvP,
+			Context:      respawnpolicy.DeathContextPvP,
 			SpawnPointID: "safe", SpawnClass: respawnpolicy.SpawnClassSafe,
 			Position: world.Position{X: 12, Y: 0, Z: -6, Layer: 4}, RemainingTicks: remaining,
 			CheckpointID: "checkpoint",
@@ -132,7 +132,7 @@ func makeDefeatedRestoreRuntime(t *testing.T) *Runtime {
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, 0.1))
 	policy, err := respawnpolicy.NewService(respawnpolicy.Definition{
 		SchemaVersion: respawnpolicy.SchemaVersion,
-		Revision: "restore-test",
+		Revision:      "restore-test",
 		SpawnPoints: []respawnpolicy.SpawnPoint{
 			{ID: "safe", Class: respawnpolicy.SpawnClassSafe, X: 12, Y: 0, Z: -6, Layer: 4},
 			{ID: "checkpoint", Class: respawnpolicy.SpawnClassCheckpoint, X: 5, Y: 0, Z: 5, Layer: 4, CheckpointActivationRadius: 3},
