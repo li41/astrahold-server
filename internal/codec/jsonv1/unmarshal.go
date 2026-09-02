@@ -25,6 +25,12 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperation(in.Operation), Slot: protocol.EquipmentSlot(in.Slot), ItemArchetypeID: in.ItemArchetypeID}, nil
+	case protocol.MessageClientPickupItem:
+		var in clientPickupItem
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		return protocol.ClientPickupItem{DropEntityID: world.EntityID(in.DropEntityID)}, nil
 	case protocol.MessageActionStarted:
 		var in actionStarted
 		if err := decodeStrict(data, &in); err != nil {
