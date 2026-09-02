@@ -20,6 +20,8 @@ type worldBlockerState struct { ID string `json:"id"`; Enabled bool `json:"enabl
 type worldGateState struct { ID string `json:"id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; Destroyed bool `json:"destroyed"` }
 type worldDynamicState struct { Revision uint64 `json:"revision"`; Blockers []worldBlockerState `json:"blockers"`; Gates []worldGateState `json:"gates"` }
 type entityVitalsState struct { EntityID uint64 `json:"entity_id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; MP uint32 `json:"mp"`; MaxMP uint32 `json:"max_mp"`; Defeated bool `json:"defeated"`; ReviveProtectionUntilTick uint64 `json:"revive_protection_until_tick,omitempty"` }
+type inventoryItemStack struct { ArchetypeID string `json:"archetype_id"`; Quantity uint32 `json:"quantity"` }
+type inventorySnapshot struct { Revision uint64 `json:"revision"`; Items []inventoryItemStack `json:"items"` }
 type combatEvent struct {
 	ActionInstanceID  uint64   `json:"action_instance_id"`
 	ActorEntityID     uint64   `json:"actor_entity_id"`
