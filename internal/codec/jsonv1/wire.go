@@ -9,6 +9,7 @@ type position struct { X float32 `json:"x"`; Y float32 `json:"y"`; Z float32 `js
 type entityTransform struct { EntityID uint64 `json:"entity_id"`; Tick uint64 `json:"tick"`; Position position `json:"position"`; Yaw float32 `json:"yaw"` }
 type clientMoveInput struct { DX float32 `json:"dx"`; DZ float32 `json:"dz"` }
 type clientUseAction struct { ActionID string `json:"action_id"`; TargetKind string `json:"target_kind"`; TargetID string `json:"target_id"`; TargetX *float32 `json:"target_x,omitempty"`; TargetZ *float32 `json:"target_z,omitempty"` }
+type clientEquipmentCommand struct { Operation string `json:"operation"`; Slot string `json:"slot"`; ItemArchetypeID string `json:"item_archetype_id,omitempty"` }
 type actionStarted struct { ActionInstanceID uint64 `json:"action_instance_id"`; ActorEntityID uint64 `json:"actor_entity_id"`; ActionID string `json:"action_id"`; TargetKind string `json:"target_kind"`; TargetID string `json:"target_id"`; TargetX *float32 `json:"target_x,omitempty"`; TargetZ *float32 `json:"target_z,omitempty"` }
 type actionRejected struct { ClientActionSequence uint32 `json:"client_action_sequence"`; ActorEntityID uint64 `json:"actor_entity_id"`; ActionID string `json:"action_id"`; TargetKind string `json:"target_kind"`; Reason string `json:"reason"`; CooldownReadyTick uint64 `json:"cooldown_ready_tick,omitempty"` }
 type sessionWelcome struct { SessionID uint64 `json:"session_id"`; EntityID uint64 `json:"entity_id"`; RealtimePort uint16 `json:"realtime_port"`; RealtimeToken string `json:"realtime_token"`; TickRateHz uint16 `json:"tick_rate_hz"`; SnapshotRateHz uint16 `json:"snapshot_rate_hz"`; WorldID string `json:"world_id"`; WorldRevision string `json:"world_revision"`; GameplaySHA256 string `json:"gameplay_sha256"` }
@@ -22,6 +23,8 @@ type worldDynamicState struct { Revision uint64 `json:"revision"`; Blockers []wo
 type entityVitalsState struct { EntityID uint64 `json:"entity_id"`; HP uint32 `json:"hp"`; MaxHP uint32 `json:"max_hp"`; MP uint32 `json:"mp"`; MaxMP uint32 `json:"max_mp"`; Defeated bool `json:"defeated"`; ReviveProtectionUntilTick uint64 `json:"revive_protection_until_tick,omitempty"` }
 type inventoryItemStack struct { ArchetypeID string `json:"archetype_id"`; Quantity uint32 `json:"quantity"` }
 type inventorySnapshot struct { Revision uint64 `json:"revision"`; Items []inventoryItemStack `json:"items"` }
+type equipmentSlotState struct { Slot string `json:"slot"`; ItemArchetypeID string `json:"item_archetype_id"` }
+type equipmentSnapshot struct { Revision uint64 `json:"revision"`; Slots []equipmentSlotState `json:"slots"` }
 type combatEvent struct {
 	ActionInstanceID  uint64   `json:"action_instance_id"`
 	ActorEntityID     uint64   `json:"actor_entity_id"`
