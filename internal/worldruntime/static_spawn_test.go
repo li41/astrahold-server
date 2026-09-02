@@ -16,7 +16,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestQueuedMonsterSpawnUsesAOIAndGenericCombatPaths(t *testing.T) {
+func TestQueuedMonsterSpawnUsesAOIAndSkillCombatPaths(t *testing.T) {
 	nav := navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100, Layer: 0}
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, 0.1))
 	if err := sim.Spawn(world.EntityState{
@@ -26,8 +26,8 @@ func TestQueuedMonsterSpawnUsesAOIAndGenericCombatPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	actions, err := combat.NewService([]combat.ActionDefinition{{
-		ID: "basic-attack", Targets: []combat.TargetKind{combat.TargetEntity}, Range: 4.5,
-		BaseDamage: 100, DamageType: combat.DamagePhysical, CooldownSeconds: 0.5,
+		ID: "shatter-strike", Targets: []combat.TargetKind{combat.TargetEntity}, Range: 4.5,
+		BaseDamage: 150, DamageType: combat.DamagePhysical, CooldownSeconds: 2.5,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestQueuedMonsterSpawnUsesAOIAndGenericCombatPaths(t *testing.T) {
 	}
 
 	if err := runtime.EnqueueUseAction(1, 1, protocol.ClientUseAction{
-		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: fmt.Sprint(monsterID),
+		ActionID: "shatter-strike", TargetKind: protocol.ActionTargetEntity, TargetID: fmt.Sprint(monsterID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -104,13 +104,13 @@ func TestQueuedMonsterSpawnUsesAOIAndGenericCombatPaths(t *testing.T) {
 		t.Fatalf("first attack report=%#v", first)
 	}
 	state, _ = runtime.characters.State(monsterID)
-	if state.HP != 100 || state.Defeated {
+	if state.HP != 50 || state.Defeated {
 		t.Fatalf("after first attack vitals=%+v", state)
 	}
-	assertStaticSpawnCombatMessages(t, drainStaticSpawnReliable(connection), monsterID, 100, false, true, false)
+	assertStaticSpawnCombatMessages(t, drainStaticSpawnReliable(connection), monsterID, "shatter-strike", 150, 50, false, true, false)
 
 	if err := runtime.EnqueueUseAction(1, 2, protocol.ClientUseAction{
-		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: fmt.Sprint(monsterID),
+		ActionID: "shatter-strike", TargetKind: protocol.ActionTargetEntity, TargetID: fmt.Sprint(monsterID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -119,17 +119,17 @@ func TestQueuedMonsterSpawnUsesAOIAndGenericCombatPaths(t *testing.T) {
 		t.Fatalf("cooldown report=%#v", cooldown.ActionRejections)
 	}
 	state, _ = runtime.characters.State(monsterID)
-	if state.HP != 100 || state.Defeated {
+	if state.HP != 50 || state.Defeated {
 		t.Fatalf("cooldown changed vitals=%+v", state)
 	}
-	assertStaticSpawnCombatMessages(t, drainStaticSpawnReliable(connection), monsterID, 0, false, false, true)
+	assertStaticSpawnCombatMessages(t, drainStaticSpawnReliable(connection), monsterID, "shatter-strike", 150, 50, false, false, true)
 
 	if err := runtime.EnqueueUseAction(1, 3, protocol.ClientUseAction{
-		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: fmt.Sprint(monsterID),
+		ActionID: "shatter-strike", TargetKind: protocol.ActionTargetEntity, TargetID: fmt.Sprint(monsterID),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	defeat := runtime.Step(12, 50*time.Millisecond)
+	defeat := runtime.Step(52, 50*time.Millisecond)
 	if len(defeat.CommandErrors) != 0 || len(defeat.ActionRejections) != 0 {
 		t.Fatalf("defeat attack report=%#v", defeat)
 	}
@@ -137,7 +137,7 @@ func TestQueuedMonsterSpawnUsesAOIAndGenericCombatPaths(t *testing.T) {
 	if state.HP != 0 || !state.Defeated {
 		t.Fatalf("defeated monster vitals=%+v", state)
 	}
-	assertStaticSpawnCombatMessages(t, drainStaticSpawnReliable(connection), monsterID, 0, true, true, false)
+	assertStaticSpawnCombatMessages(t, drainStaticSpawnReliable(connection), monsterID, "shatter-strike", 150, 0, true, true, false)
 }
 
 func drainStaticSpawnReliable(connection *session.QueueConnection) []protocol.Message {
@@ -152,7 +152,7 @@ func drainStaticSpawnReliable(connection *session.QueueConnection) []protocol.Me
 	}
 }
 
-func assertStaticSpawnCombatMessages(t *testing.T, messages []protocol.Message, monsterID world.EntityID, hp uint32, defeated, wantStarted, wantRejected bool) {
+func assertStaticSpawnCombatMessages(t *testing.T, messages []protocol.Message, monsterID world.EntityID, actionID string, damage, hp uint32, defeated, wantStarted, wantRejected bool) {
 	t.Helper()
 	var sawStarted, sawCombat, sawVitals, sawRejected bool
 	for _, message := range messages {
@@ -160,13 +160,19 @@ func assertStaticSpawnCombatMessages(t *testing.T, messages []protocol.Message, 
 		case protocol.ActionStarted:
 			if value.ActorEntityID == 1 {
 				sawStarted = true
+				if value.ActionID != actionID {
+					t.Fatalf("ActionStarted action=%q want=%q", value.ActionID, actionID)
+				}
 			}
 		case protocol.ActionRejected:
 			if value.ActorEntityID == 1 {
 				sawRejected = true
+				if value.ActionID != actionID || value.Reason != protocol.ActionRejectionCooldown {
+					t.Fatalf("ActionRejected=%+v want action=%q reason=%q", value, actionID, protocol.ActionRejectionCooldown)
+				}
 			}
 		case protocol.CombatEvent:
-			if value.TargetEntityID == monsterID && value.Result == protocol.CombatEventHit && value.Damage == 100 {
+			if value.TargetEntityID == monsterID && value.ActionID == actionID && value.Result == protocol.CombatEventHit && value.Damage == damage {
 				sawCombat = true
 			}
 		case protocol.EntityVitalsState:
