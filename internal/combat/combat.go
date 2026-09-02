@@ -14,7 +14,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 2
+const SchemaVersion uint16 = 3
 
 type TargetKind string
 
@@ -62,6 +62,7 @@ type ActionDefinition struct {
 	BaseDamage      uint32          `json:"base_damage,omitempty"`
 	DamageType      DamageType      `json:"damage_type,omitempty"`
 	ReviveHPPercent uint8           `json:"revive_hp_percent,omitempty"`
+	MPCost          uint32          `json:"mp_cost,omitempty"`
 	CooldownSeconds float32         `json:"cooldown_seconds"`
 }
 
@@ -171,6 +172,7 @@ func Validate(definition Definition) error {
 
 		targets := make(map[TargetKind]struct{}, len(action.Targets))
 		hasPointTarget := false
+		hasGateTarget := false
 		for _, target := range action.Targets {
 			if !validTargetKind(target) {
 				return fmt.Errorf("%w: action %q target %q", ErrInvalidDefinition, action.ID, target)
@@ -182,6 +184,15 @@ func Validate(definition Definition) error {
 			if target == TargetPoint {
 				hasPointTarget = true
 			}
+			if target == TargetGate {
+				hasGateTarget = true
+			}
+		}
+		// The current siege gate path validates and mutates in one operation. Until that path has a
+		// separate validation phase, resource-cost actions stay on entity/point targets so rejected
+		// gate intents can never consume MP.
+		if action.MPCost > 0 && hasGateTarget {
+			return fmt.Errorf("%w: resource-cost action %q cannot target gate", ErrInvalidDefinition, action.ID)
 		}
 		if hasPointTarget {
 			if action.PointResolution != "" && !validPointResolution(action.PointResolution) {
@@ -342,6 +353,10 @@ func cooldownTicks(seconds float32, delta time.Duration) uint64 {
 		return 1
 	}
 	return ticks
+}
+
+func CooldownReadyTick(action ActionDefinition, tick uint64, delta time.Duration) uint64 {
+	return tick + cooldownTicks(action.CooldownSeconds, delta)
 }
 
 func positiveFinite(value float32) bool {
