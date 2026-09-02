@@ -11,12 +11,12 @@ import (
 const DefaultMaxMP uint32 = 100
 
 var (
-	ErrInvalidMaxHP        = errors.New("character: invalid max hp")
-	ErrInvalidMaxMP        = errors.New("character: invalid max mp")
-	ErrInvalidState        = errors.New("character: invalid state")
-	ErrCharacterExists     = errors.New("character: character already exists")
-	ErrCharacterNotFound   = errors.New("character: character not found")
-	ErrCharacterDefeated   = errors.New("character: character defeated")
+	ErrInvalidMaxHP         = errors.New("character: invalid max hp")
+	ErrInvalidMaxMP         = errors.New("character: invalid max mp")
+	ErrInvalidState         = errors.New("character: invalid state")
+	ErrCharacterExists      = errors.New("character: character already exists")
+	ErrCharacterNotFound    = errors.New("character: character not found")
+	ErrCharacterDefeated    = errors.New("character: character defeated")
 	ErrInsufficientResource = errors.New("character: insufficient resource")
 )
 
@@ -35,8 +35,8 @@ type Service struct {
 	states       map[world.EntityID]State
 }
 
-// NewService remains for focused character tests and legacy callers. Runtime code should use
-// NewServiceWithResources so gameplay defaults are explicit in worldruntime.Config.
+// NewService remains for focused character tests and legacy callers. Runtime code may use
+// NewServiceWithResources when a different authored default MP pool is introduced.
 func NewService(defaultMaxHP uint32) (*Service, error) {
 	return NewServiceWithResources(defaultMaxHP, DefaultMaxMP)
 }
@@ -56,14 +56,18 @@ func (s *Service) Register(id world.EntityID) error {
 }
 
 // RegisterState installs an already-authoritative character vitals state for a newly
-// spawned world incarnation. It is intentionally registration-only: callers cannot use
-// it to mutate an existing character and bypass normal gameplay transitions.
+// spawned world incarnation. A legacy caller that supplies neither MP nor MaxMP is migrated
+// to the service default at this boundary; partially specified MP state is rejected.
 func (s *Service) RegisterState(state State) error {
 	if state.EntityID == 0 {
 		return ErrCharacterNotFound
 	}
 	if _, exists := s.states[state.EntityID]; exists {
 		return ErrCharacterExists
+	}
+	if state.MP == 0 && state.MaxMP == 0 {
+		state.MP = s.defaultMaxMP
+		state.MaxMP = s.defaultMaxMP
 	}
 	if err := validateState(state); err != nil {
 		return err
@@ -86,9 +90,7 @@ func validateState(state State) error {
 	return nil
 }
 
-func (s *Service) Remove(id world.EntityID) {
-	delete(s.states, id)
-}
+func (s *Service) Remove(id world.EntityID) { delete(s.states, id) }
 
 func (s *Service) State(id world.EntityID) (State, bool) {
 	state, ok := s.states[id]
