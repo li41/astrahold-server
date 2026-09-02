@@ -23,6 +23,9 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, clientActi
 		return false
 	}
 	if !hit {
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, prepared, protocol.ActionTargetPoint, tick, report) {
+			return false
+		}
 		r.emitActionStarted(actor.ID, prepared, tick, report)
 		x, z := prepared.Target.PointX, prepared.Target.PointZ
 		r.emitCombatEvent(protocol.CombatEvent{
