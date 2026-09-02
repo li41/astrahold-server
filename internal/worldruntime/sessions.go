@@ -44,9 +44,7 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 		return
 	}
 	if err := r.sessions.Add(c.session); err != nil {
-		if siegeAssigned {
-			r.removeSiegeParticipant(c.session)
-		}
+		if siegeAssigned { r.removeSiegeParticipant(c.session) }
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.session.ID, Err: err})
 		return
 	}
@@ -105,6 +103,8 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			EntityID: request.Entity.ID,
 			HP:       request.Restore.HP,
 			MaxHP:    request.Restore.MaxHP,
+			MP:       request.Restore.MP,
+			MaxMP:    request.Restore.MaxMP,
 			Defeated: request.Restore.Defeated,
 		}
 		restoredState = &state
@@ -122,11 +122,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
-	if restoredState != nil {
-		err = r.characters.RegisterState(*restoredState)
-	} else {
-		err = r.characters.Register(request.Entity.ID)
-	}
+	if restoredState != nil { err = r.characters.RegisterState(*restoredState) } else { err = r.characters.Register(request.Entity.ID) }
 	if err != nil {
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
@@ -143,9 +139,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	r.ensureEntityVitalsRevision(request.Entity.ID)
 	siegeAssigned, err := r.assignSiegeParticipant(request.Session)
 	if err != nil {
-		if r.respawnPolicy != nil {
-			r.respawnPolicy.Remove(request.Entity.ID)
-		}
+		if r.respawnPolicy != nil { r.respawnPolicy.Remove(request.Entity.ID) }
 		r.removeEntityVitals(request.Entity.ID)
 		r.characters.Remove(request.Entity.ID)
 		r.world.Remove(request.Entity.ID)
@@ -153,12 +147,8 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	if err := r.sessions.Add(request.Session); err != nil {
-		if siegeAssigned {
-			r.removeSiegeParticipant(request.Session)
-		}
-		if r.respawnPolicy != nil {
-			r.respawnPolicy.Remove(request.Entity.ID)
-		}
+		if siegeAssigned { r.removeSiegeParticipant(request.Session) }
+		if r.respawnPolicy != nil { r.respawnPolicy.Remove(request.Entity.ID) }
 		r.removeEntityVitals(request.Entity.ID)
 		r.characters.Remove(request.Entity.ID)
 		r.world.Remove(request.Entity.ID)
@@ -166,13 +156,9 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 	r.characterIdentities.bindSession(request.Session)
-	if request.AdmissionLease != nil {
-		r.characterIdentities.consumeAdmission(*request.AdmissionLease)
-	}
+	if request.AdmissionLease != nil { r.characterIdentities.consumeAdmission(*request.AdmissionLease) }
 	r.characterIdentities.activateOwnership(ownership)
-	if request.OwnershipFence != nil {
-		*request.OwnershipFence = ownership
-	}
+	if request.OwnershipFence != nil { *request.OwnershipFence = ownership }
 	r.markCharacterStateAutosaveBaseline(request.Entity.ID, report.Tick)
 	r.replication.Register(request.Session.ID)
 }
@@ -190,8 +176,6 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 		return
 	}
 	r.removeSiegeParticipant(s)
-	// Capture authoritative trusted-character state before any leave cleanup mutates or
-	// removes character/world truth. Persistence itself runs outside the world owner.
 	r.enqueueCharacterStateSave(c.id, s.EntityID, report)
 	r.characterIdentities.removeOwnershipBySession(s.ID)
 	r.forgetCharacterStateAutosave(s.EntityID)
@@ -200,9 +184,7 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 	r.removeEntityVitals(s.EntityID)
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
-	if r.respawnPolicy != nil {
-		r.respawnPolicy.Remove(s.EntityID)
-	}
+	if r.respawnPolicy != nil { r.respawnPolicy.Remove(s.EntityID) }
 	r.characters.Remove(s.EntityID)
 	r.characterIdentities.removeEntity(s.EntityID)
 	r.world.Remove(s.EntityID)
@@ -231,8 +213,6 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 		return
 	}
 	if state.Defeated {
-		// Defeated is normal gameplay state, not a command fault. Consume the sequence
-		// while keeping authoritative movement input zero.
 		if err := r.world.SetMoveInput(s.EntityID, movement.Input{}); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
 			return
@@ -248,15 +228,10 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 }
 
 func (r *Runtime) applyTeleport(name string, c teleportCommand, report *StepReport) {
-	if err := r.world.Teleport(c.entityID, c.position); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err})
-	}
+	if err := r.world.Teleport(c.entityID, c.position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
 }
-
 func (r *Runtime) applyTeleportBatch(name string, c teleportBatchCommand, report *StepReport) {
 	for _, request := range c.requests {
-		if err := r.world.Teleport(request.EntityID, request.Position); err != nil {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err})
-		}
+		if err := r.world.Teleport(request.EntityID, request.Position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
 	}
 }
