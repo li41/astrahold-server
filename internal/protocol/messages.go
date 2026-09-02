@@ -8,11 +8,12 @@ import (
 )
 
 // Version 在 wire-incompatible contract 或會造成舊 Client/Server 行為歧義的 gameplay protocol 語意變更時必須遞增。
+// v13: EntityVitalsState 新增 MP/MaxMP authoritative resource truth，並新增 insufficient_resource action rejection。
 // v12: valid point-target ClientUseAction ingress semantics 納入 compatibility fence；舊版會把合法 point intent
-// 當 malformed transport message 關閉連線，不能再與新 Client 成功握手後延遲到第一次施法才失敗。
+// 當 malformed transport message關閉連線，不能再與新 Client 成功握手後延遲到第一次施法才失敗。
 // v11: 新增 Reliable ActionRejected，讓 Server 對已處理的 action intent 明確回覆 authoritative rejection reason。
-// ActionStarted 仍只代表 Server accepted；CombatEvent / EntityVitalsState 仍分別是 resolved outcome / HP life-state truth。
-const Version uint16 = 12
+// ActionStarted 仍只代表 Server accepted；CombatEvent / EntityVitalsState 仍分別是 resolved outcome / vitals truth。
+const Version uint16 = 13
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -99,8 +100,8 @@ type ClientUseAction struct {
 func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
 
 // ActionStarted means the Server has accepted the action far enough that it will consume gameplay
-// execution/cooldown. Target fields preserve the accepted target spec, not the later resolved hit target.
-// CombatEvent / EntityVitalsState remain the outcome and HP truth respectively.
+// execution/cooldown/resource cost. Target fields preserve the accepted target spec, not the later resolved hit target.
+// CombatEvent / EntityVitalsState remain the outcome and vitals truth respectively.
 type ActionStarted struct {
 	ActionInstanceID uint64
 	ActorEntityID    world.EntityID
@@ -116,15 +117,16 @@ func (ActionStarted) Type() MessageType { return MessageActionStarted }
 type ActionRejectionReason string
 
 const (
-	ActionRejectionCooldown        ActionRejectionReason = "cooldown"
-	ActionRejectionInvalidTarget   ActionRejectionReason = "invalid_target"
-	ActionRejectionOutOfRange      ActionRejectionReason = "out_of_range"
-	ActionRejectionWrongLayer      ActionRejectionReason = "wrong_layer"
-	ActionRejectionLineOfSight     ActionRejectionReason = "line_of_sight"
-	ActionRejectionDefeated        ActionRejectionReason = "defeated"
-	ActionRejectionReviveProtected ActionRejectionReason = "revive_protected"
-	ActionRejectionUnknownAction   ActionRejectionReason = "unknown_action"
-	ActionRejectionServerRejected  ActionRejectionReason = "server_rejected"
+	ActionRejectionCooldown             ActionRejectionReason = "cooldown"
+	ActionRejectionInsufficientResource ActionRejectionReason = "insufficient_resource"
+	ActionRejectionInvalidTarget        ActionRejectionReason = "invalid_target"
+	ActionRejectionOutOfRange           ActionRejectionReason = "out_of_range"
+	ActionRejectionWrongLayer           ActionRejectionReason = "wrong_layer"
+	ActionRejectionLineOfSight          ActionRejectionReason = "line_of_sight"
+	ActionRejectionDefeated             ActionRejectionReason = "defeated"
+	ActionRejectionReviveProtected      ActionRejectionReason = "revive_protected"
+	ActionRejectionUnknownAction        ActionRejectionReason = "unknown_action"
+	ActionRejectionServerRejected       ActionRejectionReason = "server_rejected"
 )
 
 // ActionRejected is source-session-only authoritative legality feedback. ClientActionSequence is
@@ -218,12 +220,15 @@ type WorldDynamicState struct {
 func (WorldDynamicState) Type() MessageType { return MessageWorldDynamicState }
 
 // EntityVitalsState 是單一 combatant 完整、可重送的 Reliable vitals snapshot。
+// HP/MP 均是 Server truth；Client 不得由 CombatEvent damage 或 local skill cost 自行推導。
 // ReviveProtectionUntilTick=0 表示目前沒有 Server-authoritative revive protection；非 0 時
 // Client 只能以 Server tick 顯示剩餘保護時間，不得自行延長、取消或決定 gameplay protection。
 type EntityVitalsState struct {
 	EntityID                  world.EntityID
 	HP                        uint32
 	MaxHP                     uint32
+	MP                        uint32
+	MaxMP                     uint32
 	Defeated                  bool
 	ReviveProtectionUntilTick uint64
 }
@@ -238,7 +243,7 @@ const (
 	CombatEventResurrect CombatEventResult = "resurrect"
 )
 
-// CombatEvent 描述 Server 已 resolve 的 action outcome。EntityVitalsState 仍是 HP truth；
+// CombatEvent 描述 Server 已 resolve 的 action outcome。EntityVitalsState 仍是 HP/MP truth；
 // event 供 animation/VFX/audio 等 presentation 對齊 stable ActionInstanceID。
 // CooldownReadyTick=0 表示沒有 additive cooldown metadata；非 0 時是 Server 會執行的 ready tick。
 type CombatEvent struct {
