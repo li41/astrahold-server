@@ -36,6 +36,8 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 		World:       characterRestoreWorld,
 		HP:          640,
 		MaxHP:       1200,
+		MP:          100,
+		MaxMP:       100,
 		Transform: world.Transform{
 			Position: world.Position{X: 21, Y: 0, Z: -8, Layer: 4},
 			Yaw:      1.5,
@@ -76,6 +78,8 @@ func TestJoinRejectsRestoreWorldMismatchBeforeSpawn(t *testing.T) {
 		World:       protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "other", GameplaySHA256: characterRestoreTestSHA},
 		HP:          500,
 		MaxHP:       1000,
+		MP:          100,
+		MaxMP:       100,
 		Transform:   world.Transform{Position: world.Position{Layer: 4}},
 	}
 	request := JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}
@@ -100,6 +104,8 @@ func TestJoinRejectsDefeatedRestoreBeforeSpawn(t *testing.T) {
 		World:       characterRestoreWorld,
 		HP:          0,
 		MaxHP:       1000,
+		MP:          100,
+		MaxMP:       100,
 		Defeated:    true,
 		Transform:   world.Transform{Position: world.Position{Layer: 4}},
 	}
@@ -116,7 +122,7 @@ func TestJoinRejectsDefeatedRestoreBeforeSpawn(t *testing.T) {
 
 func TestValidateCharacterRestoreRequiresTrustedMatchingIdentity(t *testing.T) {
 	trusted, _ := characteridentity.NewTrusted("character:trusted")
-	restore := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, HP: 1, MaxHP: 1}
+	restore := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, HP: 1, MaxHP: 1, MP: 100, MaxMP: 100}
 	if err := ValidateCharacterRestore(trusted, restore, characterRestoreWorld); err != nil {
 		t.Fatal(err)
 	}

@@ -100,7 +100,7 @@ func TestCharacterStateOutboxFailureDoesNotRollbackLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 	blockerSnapshot := characterstate.Snapshot{
-		World: characterStateTestWorld, HP: 1000, MaxHP: 1000,
+		World: characterStateTestWorld, HP: 1000, MaxHP: 1000, MP: 100, MaxMP: 100,
 		Position: world.Position{Layer: 0},
 	}
 	if _, err := outbox.Enqueue(blocker, blockerSnapshot); err != nil {

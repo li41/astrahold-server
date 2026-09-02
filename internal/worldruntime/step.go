@@ -79,6 +79,9 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
 	}
+	// Inventory bootstrap is world-owned just like character/vitals state. Delivery uses the
+	// existing bounded Reliable queue; backpressure leaves the session pending for a later tick.
+	r.replicatePendingInventories(tick, &report)
 	// Policy due 在 queued Client intents 之後、simulation 前執行。若同一 tick 有 move，
 	// 它仍先以 Defeated 規則 consume 並清零，respawn 後不會沿用該 input。
 	r.applyDueRespawns(tick, &report)

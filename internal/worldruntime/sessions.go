@@ -51,6 +51,7 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 	r.characterIdentities.bindSession(c.session)
 	r.markCharacterStateAutosaveBaseline(c.session.EntityID, report.Tick)
 	r.replication.Register(c.session.ID)
+	r.ensureSessionInventory(c.session)
 }
 
 func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, report *StepReport) {
@@ -64,6 +65,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
+	r.removeSessionInventoryDelivery(c.id)
 	_ = s.Connection().Close()
 }
 
@@ -161,6 +163,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	if request.OwnershipFence != nil { *request.OwnershipFence = ownership }
 	r.markCharacterStateAutosaveBaseline(request.Entity.ID, report.Tick)
 	r.replication.Register(request.Session.ID)
+	r.ensureSessionInventory(request.Session)
 }
 
 func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
@@ -181,6 +184,7 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
+	r.removeSessionInventoryDelivery(c.id)
 	r.removeEntityVitals(s.EntityID)
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)

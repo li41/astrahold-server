@@ -91,6 +91,8 @@ type saveJournalWireSnapshot struct {
 	GameplaySHA256  string               `json:"gameplay_sha256"`
 	HP              uint32               `json:"hp"`
 	MaxHP           uint32               `json:"max_hp"`
+	MP              uint32               `json:"mp,omitempty"`
+	MaxMP           uint32               `json:"max_mp,omitempty"`
 	Defeated        bool                 `json:"defeated"`
 	X               float32              `json:"x"`
 	Y               float32              `json:"y"`
@@ -572,7 +574,7 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 	wire := saveJournalWireSnapshot{
 		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
-		HP: snapshot.HP, MaxHP: snapshot.MaxHP, Defeated: snapshot.Defeated,
+		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated,
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
 	}
 	if snapshot.Defeated {
@@ -587,15 +589,19 @@ func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 }
 
 func saveJournalWireToSnapshot(wire saveJournalWireSnapshot) Snapshot {
+	mp, maxMP := wire.MP, wire.MaxMP
+	if maxMP == 0 {
+		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
+	}
 	snapshot := Snapshot{
 		World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
-		HP: wire.HP, MaxHP: wire.MaxHP, Defeated: wire.Defeated,
+		HP:    wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 		Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
 	}
 	if wire.DefeatedRespawn != nil {
 		snapshot.Respawn = DefeatedRespawn{
 			Context: wire.DefeatedRespawn.Context, SpawnPointID: wire.DefeatedRespawn.SpawnPointID, SpawnClass: wire.DefeatedRespawn.SpawnClass,
-			Position: world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
+			Position:       world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
 			RemainingTicks: wire.DefeatedRespawn.RemainingTicks, CheckpointID: wire.DefeatedRespawn.CheckpointID,
 		}
 	}
@@ -609,7 +615,7 @@ func validateSaveIntent(intent SaveIntent) error {
 	if err := validateTrustedIdentity(intent.Identity); err != nil {
 		return err
 	}
-	return validateSnapshotV2(intent.Snapshot)
+	return validateSnapshotV3(intent.Snapshot)
 }
 
 func makeSaveJournalFrame(payload []byte) []byte {
