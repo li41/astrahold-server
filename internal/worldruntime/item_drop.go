@@ -13,7 +13,10 @@ const (
 	grayWolfPeltArchetypeID   = "item_gray_wolf_pelt"
 	itemPickupRangeMeters     = float32(2.5)
 	itemDropSpawnOffsetMeters = float32(0.75)
-	firstItemDropEntityID     = world.EntityID(1 << 63)
+	// Existing JSON EntitySpawn encodes entity_id as a number. Keep generated drop IDs below
+	// IEEE-754's exact integer ceiling so Unreal JSON parsing never rounds authoritative identity.
+	firstItemDropEntityID = world.EntityID(8_000_000_000_000_000)
+	maxJsonExactEntityID  = world.EntityID((1 << 53) - 1)
 )
 
 var (
@@ -46,7 +49,7 @@ func (r *Runtime) spawnMonsterItemDrop(monster world.EntityState, actionInstance
 	if monster.Kind != world.EntityMonster || monster.ArchetypeID != grayWolfArchetypeID {
 		return
 	}
-	if actionInstanceID == 0 || actionInstanceID >= uint64(firstItemDropEntityID) {
+	if actionInstanceID == 0 || actionInstanceID > uint64(maxJsonExactEntityID-firstItemDropEntityID) {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: ErrItemDropIDExhausted})
 		return
 	}
