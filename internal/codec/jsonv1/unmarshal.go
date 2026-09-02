@@ -54,6 +54,11 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in entityVitalsState
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
 		return protocol.EntityVitalsState{EntityID:world.EntityID(in.EntityID),HP:in.HP,MaxHP:in.MaxHP,MP:in.MP,MaxMP:in.MaxMP,Defeated:in.Defeated,ReviveProtectionUntilTick:in.ReviveProtectionUntilTick},nil
+	case protocol.MessageInventorySnapshot:
+		var in inventorySnapshot
+		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
+		items:=make([]protocol.InventoryItemStack,len(in.Items));for i,item:=range in.Items{items[i]=protocol.InventoryItemStack{ArchetypeID:item.ArchetypeID,Quantity:item.Quantity}}
+		return protocol.InventorySnapshot{Revision:in.Revision,Items:items},nil
 	case protocol.MessageSiegeMatchState:
 		var in siegeMatchState
 		if err:=decodeStrict(data,&in);err!=nil{return nil,err}
