@@ -74,33 +74,19 @@ func (r *Runtime) ensureSessionVitalsDelivered(sessionID session.ID) map[world.E
 	return delivered
 }
 
-// staggeredWorkBudget 把原本每個 world tick 的 work budget 搬離 snapshot tick，同時保留
-// 一個完整 snapshot cycle 的理論 capacity。snapshotEvery=2 時，base 2500 -> [0,5000]。
 func staggeredWorkBudget(base int, tick, snapshotEvery uint64) int {
-	if base <= 0 {
-		return 0
-	}
-	if snapshotEvery <= 1 {
-		return base
-	}
-	if tick%snapshotEvery == 0 {
-		return 0
-	}
+	if base <= 0 { return 0 }
+	if snapshotEvery <= 1 { return base }
+	if tick%snapshotEvery == 0 { return 0 }
 	numerator := base * int(snapshotEvery)
 	denominator := int(snapshotEvery - 1)
 	return (numerator + denominator - 1) / denominator
 }
 
-// Initial Vitals 與 lifecycle 使用 phase-sensitive budgeting，並與 snapshot tick 錯峰。
-// Global 與 per-session budget 都套同一比例，否則雖然 global cycle capacity 不變，單一
-// Session 仍會從每50ms最多32筆退化成每100ms最多32筆，拖長 semantic convergence。
-// Dirty gameplay Vitals 使用另一個 global budget，保留 latest full-state retry semantics。
 func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	sessions := r.sessions.List()
 	baseGlobalBudget := r.config.MaxInitialVitalsPerTick
-	if r.lifecycleChurnActive {
-		baseGlobalBudget = r.config.MaxChurnInitialVitalsPerTick
-	}
+	if r.lifecycleChurnActive { baseGlobalBudget = r.config.MaxChurnInitialVitalsPerTick }
 	globalBudget := staggeredWorkBudget(baseGlobalBudget, tick, r.config.SnapshotEveryTicks)
 	perSessionBudget := staggeredWorkBudget(maxInitialVitalsPerSessionTick, tick, r.config.SnapshotEveryTicks)
 	report.Metrics.InitialVitalsGlobalBudget = globalBudget
@@ -108,9 +94,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	startIndex := 0
 	if len(sessions) > 0 {
 		startIndex = r.vitalsSessionCursor % len(sessions)
-		if startIndex < 0 {
-			startIndex = 0
-		}
+		if startIndex < 0 { startIndex = 0 }
 	}
 	budgetExhaustedNextCursor := -1
 
@@ -119,42 +103,23 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 		s := sessions[index]
 		sessionID := s.ID
 		pending := r.sessionVitalsPending[sessionID]
-		if len(pending) == 0 {
-			continue
-		}
+		if len(pending) == 0 { continue }
 		delivered := r.ensureSessionVitalsDelivered(sessionID)
 		selected := 0
 		for entityID := range pending {
 			phase := r.respawnVitalsPhases[entityID]
-			if phase == respawnVitalsAwaitingAOI {
-				continue
-			}
-			if phase == respawnVitalsDesiredOnly && !r.replication.Wants(sessionID, entityID) {
-				continue
-			}
+			if phase == respawnVitalsAwaitingAOI { continue }
+			if phase == respawnVitalsDesiredOnly && !r.replication.Wants(sessionID, entityID) { continue }
 			if !r.replication.Knows(sessionID, entityID) {
-				delete(pending, entityID)
-				delete(delivered, entityID)
-				continue
+				delete(pending, entityID); delete(delivered, entityID); continue
 			}
 			state, ok := r.characters.State(entityID)
-			if !ok {
-				delete(pending, entityID)
-				delete(delivered, entityID)
-				continue
-			}
+			if !ok { delete(pending, entityID); delete(delivered, entityID); continue }
 			revision := r.entityVitalsRevision[entityID]
-			if revision == 0 || delivered[entityID] >= revision {
-				delete(pending, entityID)
-				continue
-			}
-			if selected >= perSessionBudget || globalRemaining <= 0 {
-				break
-			}
+			if revision == 0 || delivered[entityID] >= revision { delete(pending, entityID); continue }
+			if selected >= perSessionBudget || globalRemaining <= 0 { break }
 			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
-				if errors.Is(err, session.ErrBackpressure) {
-					break
-				}
+				if errors.Is(err, session.ErrBackpressure) { break }
 				continue
 			}
 			selected++
@@ -163,9 +128,7 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 			delivered[entityID] = revision
 			delete(pending, entityID)
 		}
-		if len(pending) == 0 {
-			delete(r.sessionVitalsPending, sessionID)
-		}
+		if len(pending) == 0 { delete(r.sessionVitalsPending, sessionID) }
 		if globalRemaining <= 0 {
 			report.Metrics.InitialVitalsGlobalBudgetExhausted = true
 			budgetExhaustedNextCursor = (index + 1) % len(sessions)
@@ -174,35 +137,18 @@ func (r *Runtime) replicateEntityVitals(tick uint64, report *StepReport) {
 	}
 
 	if len(sessions) > 0 {
-		if budgetExhaustedNextCursor >= 0 {
-			r.vitalsSessionCursor = budgetExhaustedNextCursor
-		} else {
-			r.vitalsSessionCursor = (startIndex + 1) % len(sessions)
-		}
+		if budgetExhaustedNextCursor >= 0 { r.vitalsSessionCursor = budgetExhaustedNextCursor } else { r.vitalsSessionCursor = (startIndex + 1) % len(sessions) }
 	}
-
 	for sessionID := range r.sessionVitalsPending {
-		if _, ok := r.sessions.Get(sessionID); !ok {
-			delete(r.sessionVitalsPending, sessionID)
-			delete(r.sessionVitalsRevision, sessionID)
-		}
+		if _, ok := r.sessions.Get(sessionID); !ok { delete(r.sessionVitalsPending, sessionID); delete(r.sessionVitalsRevision, sessionID) }
 	}
-
-	// 只在 snapshot tick 判斷 churn phase 是否完成，避免兩個 snapshot 之間 lifecycle metrics 為 0 時誤清。
 	if r.lifecycleChurnActive && tick%r.config.SnapshotEveryTicks == 0 &&
-		report.Metrics.LifecycleGlobalSelected == 0 && report.Metrics.SpawnDeferred == 0 && report.Metrics.DespawnDeferred == 0 &&
-		len(r.sessionVitalsPending) == 0 {
+		report.Metrics.LifecycleGlobalSelected == 0 && report.Metrics.SpawnDeferred == 0 && report.Metrics.DespawnDeferred == 0 && len(r.sessionVitalsPending) == 0 {
 		r.lifecycleChurnActive = false
 	}
-
 	r.replicateDirtyEntityVitals(tick, sessions, report)
 }
 
-// replicateDirtyEntityVitals 將 gameplay HP dirty fan-out限制在固定 world-tick work quantum。
-// 每個 Session 的 delivered revision 仍是唯一進度 truth：budget 用完時未送出的關係不前進，
-// 下一 tick 直接重試 latest full state。Entity 起點按 stable ID 輪轉；每個 dirty Entity 也記住
-// 自己下一個 Session 起點，避免 hot Entity 在 revision 持續增加時每 tick 都從最低 SessionID 重掃。
-// fairness telemetry 只為目前 dirty Entity 保留一筆 progress，不建立 per-session age map。
 func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Session, report *StepReport) {
 	budget := r.config.MaxDirtyVitalsPerTick
 	report.Metrics.DirtyVitalsGlobalBudget = budget
@@ -210,34 +156,21 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 	if budget <= 0 || len(r.dirtyVitalsEntities) == 0 {
 		if len(r.dirtyVitalsEntities) == 0 {
 			r.dirtyVitalsNextEntity = 0
-			for entityID := range r.dirtyVitalsNextSession {
-				delete(r.dirtyVitalsNextSession, entityID)
-			}
-			for entityID := range r.dirtyVitalsProgress {
-				delete(r.dirtyVitalsProgress, entityID)
-			}
+			for entityID := range r.dirtyVitalsNextSession { delete(r.dirtyVitalsNextSession, entityID) }
+			for entityID := range r.dirtyVitalsProgress { delete(r.dirtyVitalsProgress, entityID) }
 		}
 		return
 	}
 
 	r.dirtyVitalsScratch = r.dirtyVitalsScratch[:0]
-	for entityID := range r.dirtyVitalsEntities {
-		r.dirtyVitalsScratch = append(r.dirtyVitalsScratch, entityID)
-	}
+	for entityID := range r.dirtyVitalsEntities { r.dirtyVitalsScratch = append(r.dirtyVitalsScratch, entityID) }
 	sort.Slice(r.dirtyVitalsScratch, func(i, j int) bool { return r.dirtyVitalsScratch[i] < r.dirtyVitalsScratch[j] })
-	if len(r.dirtyVitalsScratch) == 0 {
-		r.dirtyVitalsNextEntity = 0
-		return
-	}
+	if len(r.dirtyVitalsScratch) == 0 { r.dirtyVitalsNextEntity = 0; return }
 
 	start := 0
 	if r.dirtyVitalsNextEntity != 0 {
-		start = sort.Search(len(r.dirtyVitalsScratch), func(i int) bool {
-			return r.dirtyVitalsScratch[i] >= r.dirtyVitalsNextEntity
-		})
-		if start >= len(r.dirtyVitalsScratch) {
-			start = 0
-		}
+		start = sort.Search(len(r.dirtyVitalsScratch), func(i int) bool { return r.dirtyVitalsScratch[i] >= r.dirtyVitalsNextEntity })
+		if start >= len(r.dirtyVitalsScratch) { start = 0 }
 	}
 
 	remaining := budget
@@ -245,79 +178,41 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 	for order := 0; order < len(r.dirtyVitalsScratch); order++ {
 		index := (start + order) % len(r.dirtyVitalsScratch)
 		entityID := r.dirtyVitalsScratch[index]
-		if _, dirty := r.dirtyVitalsEntities[entityID]; !dirty {
-			delete(r.dirtyVitalsNextSession, entityID)
-			delete(r.dirtyVitalsProgress, entityID)
-			continue
-		}
+		if _, dirty := r.dirtyVitalsEntities[entityID]; !dirty { delete(r.dirtyVitalsNextSession, entityID); delete(r.dirtyVitalsProgress, entityID); continue }
 		state, ok := r.characters.State(entityID)
 		if !ok {
-			delete(r.dirtyVitalsEntities, entityID)
-			delete(r.dirtyVitalsNextSession, entityID)
-			delete(r.dirtyVitalsProgress, entityID)
-			delete(r.respawnVitalsPhases, entityID)
-			continue
+			delete(r.dirtyVitalsEntities, entityID); delete(r.dirtyVitalsNextSession, entityID); delete(r.dirtyVitalsProgress, entityID); delete(r.respawnVitalsPhases, entityID); continue
 		}
 		revision := r.entityVitalsRevision[entityID]
 		if revision == 0 {
-			delete(r.dirtyVitalsEntities, entityID)
-			delete(r.dirtyVitalsNextSession, entityID)
-			delete(r.dirtyVitalsProgress, entityID)
-			delete(r.respawnVitalsPhases, entityID)
-			continue
+			delete(r.dirtyVitalsEntities, entityID); delete(r.dirtyVitalsNextSession, entityID); delete(r.dirtyVitalsProgress, entityID); delete(r.respawnVitalsPhases, entityID); continue
 		}
-
 		progress := r.dirtyVitalsProgress[entityID]
-		if progress.FirstTick == 0 {
-			progress.FirstTick = tick
-		}
-		if progress.Revision != revision {
-			progress.Revision = revision
-			progress.RevisionTick = tick
-		}
+		if progress.FirstTick == 0 { progress.FirstTick = tick }
+		if progress.Revision != revision { progress.Revision = revision; progress.RevisionTick = tick }
 		r.dirtyVitalsProgress[entityID] = progress
 		dirtyAge := tick - progress.FirstTick
-		if dirtyAge > report.Metrics.DirtyVitalsOldestDirtyAgeTicks {
-			report.Metrics.DirtyVitalsOldestDirtyAgeTicks = dirtyAge
-		}
-
+		if dirtyAge > report.Metrics.DirtyVitalsOldestDirtyAgeTicks { report.Metrics.DirtyVitalsOldestDirtyAgeTicks = dirtyAge }
 		phase := r.respawnVitalsPhases[entityID]
-		if phase == respawnVitalsAwaitingAOI {
-			// Respawn 可跨 AOI。下一次 normal snapshot 尚未 rebuild desired membership 前，
-			// 不讓任何 initial/dirty Vitals 使用舊 known relationship fan-out。
-			continue
-		}
+		if phase == respawnVitalsAwaitingAOI { continue }
 
 		sessionStart := 0
 		if nextSessionID := r.dirtyVitalsNextSession[entityID]; nextSessionID != 0 && len(sessions) > 0 {
 			sessionStart = sort.Search(len(sessions), func(i int) bool { return sessions[i].ID >= nextSessionID })
-			if sessionStart >= len(sessions) {
-				sessionStart = 0
-			}
+			if sessionStart >= len(sessions) { sessionStart = 0 }
 		}
 
 		allDelivered := true
 		for sessionOrder := 0; sessionOrder < len(sessions); sessionOrder++ {
 			sessionIndex := (sessionStart + sessionOrder) % len(sessions)
 			s := sessions[sessionIndex]
-			if phase == respawnVitalsDesiredOnly && !r.replication.Wants(s.ID, entityID) {
-				continue
-			}
-
-			// ConfirmSpawn 一定會先 queue Initial Vitals；成功送過任一 Vitals 後則會留下
-			// delivered revision。ConfirmDespawn 同步移除兩者，因此 pending ∪ delivered正好是
-			// Dirty Vitals需要的 known-relationship mirror。一般 gameplay hot path 仍直接讀 mirror；
-			// 只有短暫 respawn desired-only phase 才額外查 Wants，避免 stale-known observer leak。
+			if phase == respawnVitalsDesiredOnly && !r.replication.Wants(s.ID, entityID) { continue }
 			delivered := r.sessionVitalsRevision[s.ID]
 			deliveredRevision, hasDelivered := delivered[entityID]
 			pending := r.sessionVitalsPending[s.ID]
 			_, hasPending := pending[entityID]
-			if !hasDelivered && !hasPending {
-				continue
-			}
-			if hasDelivered && deliveredRevision >= revision {
-				continue
-			}
+			if !hasDelivered && !hasPending { continue }
+			if hasDelivered && deliveredRevision >= revision { continue }
 			pendingAge := tick - progress.RevisionTick
 			if pendingAge > report.Metrics.DirtyVitalsOldestPendingRevisionAgeTicks || report.Metrics.DirtyVitalsOldestPendingEntityID == 0 {
 				report.Metrics.DirtyVitalsOldestPendingRevisionAgeTicks = pendingAge
@@ -326,45 +221,25 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			}
 			if remaining <= 0 {
 				allDelivered = false
-				if r.dirtyVitalsNextSession[entityID] != s.ID {
-					report.Metrics.DirtyVitalsSessionCursorAdvances++
-				}
-				if sessionIndex < sessionStart {
-					report.Metrics.DirtyVitalsSessionCursorWraps++
-				}
+				if r.dirtyVitalsNextSession[entityID] != s.ID { report.Metrics.DirtyVitalsSessionCursorAdvances++ }
+				if sessionIndex < sessionStart { report.Metrics.DirtyVitalsSessionCursorWraps++ }
 				r.dirtyVitalsNextSession[entityID] = s.ID
 				break
 			}
-			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil {
-				allDelivered = false
-				continue
-			}
+			if err := r.trySendEntityVitals(s, state.EntityID, state.HP, state.MaxHP, state.Defeated, tick, report); err != nil { allDelivered = false; continue }
 			report.Metrics.DirtyVitalsSelected++
 			remaining--
-			if delivered == nil {
-				delivered = r.ensureSessionVitalsDelivered(s.ID)
-			}
+			if delivered == nil { delivered = r.ensureSessionVitalsDelivered(s.ID) }
 			delivered[entityID] = revision
-			if hasPending {
-				delete(pending, entityID)
-				if len(pending) == 0 {
-					delete(r.sessionVitalsPending, s.ID)
-				}
-			}
+			if hasPending { delete(pending, entityID); if len(pending) == 0 { delete(r.sessionVitalsPending, s.ID) } }
 		}
 		if allDelivered {
 			report.Metrics.DirtyVitalsEntityCompletions++
 			entityCompletion := tick - progress.FirstTick
-			if entityCompletion > report.Metrics.DirtyVitalsMaxEntityCompletionTicks {
-				report.Metrics.DirtyVitalsMaxEntityCompletionTicks = entityCompletion
-			}
+			if entityCompletion > report.Metrics.DirtyVitalsMaxEntityCompletionTicks { report.Metrics.DirtyVitalsMaxEntityCompletionTicks = entityCompletion }
 			revisionCompletion := tick - progress.RevisionTick
-			if revisionCompletion > report.Metrics.DirtyVitalsMaxRevisionCompletionTicks {
-				report.Metrics.DirtyVitalsMaxRevisionCompletionTicks = revisionCompletion
-			}
-			delete(r.dirtyVitalsEntities, entityID)
-			delete(r.dirtyVitalsNextSession, entityID)
-			delete(r.dirtyVitalsProgress, entityID)
+			if revisionCompletion > report.Metrics.DirtyVitalsMaxRevisionCompletionTicks { report.Metrics.DirtyVitalsMaxRevisionCompletionTicks = revisionCompletion }
+			delete(r.dirtyVitalsEntities, entityID); delete(r.dirtyVitalsNextSession, entityID); delete(r.dirtyVitalsProgress, entityID)
 		}
 		if remaining <= 0 {
 			report.Metrics.DirtyVitalsGlobalBudgetExhausted = true
@@ -373,16 +248,21 @@ func (r *Runtime) replicateDirtyEntityVitals(tick uint64, sessions []*session.Se
 			break
 		}
 	}
-
 	r.dirtyVitalsNextEntity = nextEntity
 	report.Metrics.DirtyVitalsEntities = len(r.dirtyVitalsEntities)
 }
 
 func (r *Runtime) trySendEntityVitals(s *session.Session, entityID world.EntityID, hp, maxHP uint32, defeated bool, tick uint64, report *StepReport) error {
+	state, ok := r.characters.State(entityID)
+	if !ok {
+		return ErrSessionEntityNotFound
+	}
 	message := protocol.EntityVitalsState{
 		EntityID: entityID,
 		HP: hp,
 		MaxHP: maxHP,
+		MP: state.MP,
+		MaxMP: state.MaxMP,
 		Defeated: defeated,
 		ReviveProtectionUntilTick: r.reviveProtectionUntilTick(entityID, tick),
 	}
