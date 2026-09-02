@@ -30,6 +30,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 
 	switch prepared.Definition.Effect {
 	case combat.EffectResurrect:
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
+			return false
+		}
 		r.emitActionStarted(actor.ID, startPrepared, tick, report)
 		if _, err := r.characters.RevivePercent(targetID, prepared.Definition.ReviveHPPercent); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
@@ -55,6 +58,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if target.Kind == world.EntityPlayer && r.isReviveProtected(targetID, tick) {
 			r.rejectClientAction(name, sessionID, clientActionSequence, actor.ID, startPrepared.Definition.ID, protocol.ActionTargetKind(startPrepared.Target.Kind), ErrEntityReviveProtected, tick, report)
 			report.Metrics.ReviveProtectionDamageBlocks++
+			return false
+		}
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 			return false
 		}
 		r.emitActionStarted(actor.ID, startPrepared, tick, report)
