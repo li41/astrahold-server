@@ -13,11 +13,11 @@ import (
 )
 
 var (
-	ErrCharacterRestoreRequiresTrustedIdentity = errors.New("worldruntime: character restore requires trusted identity")
-	ErrCharacterRestoreIdentityMismatch        = errors.New("worldruntime: character restore identity mismatch")
-	ErrCharacterRestoreWorldMismatch           = errors.New("worldruntime: character restore gameplay world mismatch")
-	ErrCharacterRestoreInvalid                 = errors.New("worldruntime: invalid character restore")
-	ErrCharacterRestoreDefeatedUnsupported     = errors.New("worldruntime: legacy defeated character restore is not supported")
+	ErrCharacterRestoreRequiresTrustedIdentity  = errors.New("worldruntime: character restore requires trusted identity")
+	ErrCharacterRestoreIdentityMismatch         = errors.New("worldruntime: character restore identity mismatch")
+	ErrCharacterRestoreWorldMismatch            = errors.New("worldruntime: character restore gameplay world mismatch")
+	ErrCharacterRestoreInvalid                  = errors.New("worldruntime: invalid character restore")
+	ErrCharacterRestoreDefeatedUnsupported      = errors.New("worldruntime: legacy defeated character restore is not supported")
 	ErrCharacterRestoreRespawnPolicyUnavailable = errors.New("worldruntime: defeated character restore requires respawn policy")
 )
 
@@ -30,6 +30,8 @@ type CharacterRestore struct {
 	World         protocol.WorldIdentity
 	HP            uint32
 	MaxHP         uint32
+	MP            uint32
+	MaxMP         uint32
 	Defeated      bool
 	Transform     world.Transform
 	Respawn       characterstate.DefeatedRespawn
@@ -47,16 +49,14 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		},
 		HP:        record.Snapshot.HP,
 		MaxHP:     record.Snapshot.MaxHP,
+		MP:        record.Snapshot.MP,
+		MaxMP:     record.Snapshot.MaxMP,
 		Defeated:  record.Snapshot.Defeated,
 		Transform: world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
 		Respawn:   record.Snapshot.Respawn,
 	}
 }
 
-// ValidateCharacterRestore is shared by the transport pre-welcome boundary and the
-// world-owner join transaction. It accepts exact Gameplay World provenance only.
-// Policy-specific destination validation is repeated by Runtime because transport does
-// not own respawnpolicy.Service.
 func ValidateCharacterRestore(identity characteridentity.Binding, restore CharacterRestore, currentWorld protocol.WorldIdentity) error {
 	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted {
 		return ErrCharacterRestoreRequiresTrustedIdentity
@@ -70,7 +70,7 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if restore.World != currentWorld {
 		return ErrCharacterRestoreWorldMismatch
 	}
-	if restore.MaxHP == 0 || restore.HP > restore.MaxHP {
+	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
 		return ErrCharacterRestoreInvalid
 	}
 	for _, value := range []float32{
@@ -84,7 +84,9 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		}
 	}
 	if restore.Defeated {
-		if restore.SchemaVersion < characterstate.SchemaVersion {
+		// v2 introduced durable defeated-respawn truth; v3 only adds MP and must not invalidate
+		// already-restorable v2 defeated characters.
+		if restore.SchemaVersion < characterstate.RespawnSchemaVersion {
 			return ErrCharacterRestoreDefeatedUnsupported
 		}
 		if restore.HP != 0 || !validRestoreDeathContext(restore.Respawn.Context) || restore.Respawn.SpawnPointID == "" || !validRestoreSpawnClass(restore.Respawn.SpawnClass) {
