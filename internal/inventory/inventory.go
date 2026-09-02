@@ -1,4 +1,4 @@
-// Package inventory owns authoritative character item-stack state.
+// Package inventory owns authoritative character item-stack and minimal equipment state.
 // Presentation metadata (mesh/icon/name) stays outside the Server; the Server stores stable item archetype IDs only.
 package inventory
 
@@ -10,11 +10,13 @@ import (
 )
 
 var (
-	ErrInvalidArchetype = errors.New("inventory: invalid archetype")
-	ErrInvalidQuantity  = errors.New("inventory: invalid quantity")
-	ErrFull             = errors.New("inventory: full")
-	ErrInsufficient     = errors.New("inventory: insufficient quantity")
-	ErrQuantityOverflow = errors.New("inventory: quantity overflow")
+	ErrInvalidArchetype      = errors.New("inventory: invalid archetype")
+	ErrInvalidQuantity       = errors.New("inventory: invalid quantity")
+	ErrFull                  = errors.New("inventory: full")
+	ErrInsufficient          = errors.New("inventory: insufficient quantity")
+	ErrQuantityOverflow      = errors.New("inventory: quantity overflow")
+	ErrEquipmentSlotOccupied = errors.New("inventory: equipment slot occupied")
+	ErrEquipmentSlotEmpty    = errors.New("inventory: equipment slot empty")
 )
 
 // Stack is an authoritative aggregate for one stackable item archetype.
@@ -23,12 +25,15 @@ type Stack struct {
 	Quantity    uint32
 }
 
-// Inventory intentionally starts small: one stack per archetype and a bounded number of unique stacks.
-// Equipment, instance IDs, durability and non-stackable items can extend the model when their slice is implemented.
+// Inventory intentionally starts small: one stack per archetype plus the first MainHand equipment slot.
+// The aggregate owns inventory/equipment transfer atomically so no caller can commit only half of an equip transaction.
 type Inventory struct {
 	maxStacks int
 	stacks    map[string]uint32
 	revision  uint64
+
+	mainHand          string
+	equipmentRevision uint64
 }
 
 func New(maxStacks int) *Inventory {
@@ -43,6 +48,20 @@ func (i *Inventory) Revision() uint64 {
 		return 0
 	}
 	return i.revision
+}
+
+func (i *Inventory) EquipmentRevision() uint64 {
+	if i == nil {
+		return 0
+	}
+	return i.equipmentRevision
+}
+
+func (i *Inventory) MainHand() string {
+	if i == nil {
+		return ""
+	}
+	return i.mainHand
 }
 
 func (i *Inventory) Add(archetypeID string, quantity uint32) error {
@@ -94,6 +113,55 @@ func (i *Inventory) Remove(archetypeID string, quantity uint32) error {
 	}
 	i.revision++
 	return nil
+}
+
+// EquipMainHand atomically moves one item from Inventory into MainHand.
+func (i *Inventory) EquipMainHand(archetypeID string) error {
+	if i == nil {
+		return ErrInsufficient
+	}
+	archetypeID = strings.TrimSpace(archetypeID)
+	if archetypeID == "" {
+		return ErrInvalidArchetype
+	}
+	if i.mainHand != "" {
+		return ErrEquipmentSlotOccupied
+	}
+	current := i.stacks[archetypeID]
+	if current == 0 {
+		return ErrInsufficient
+	}
+
+	if current == 1 {
+		delete(i.stacks, archetypeID)
+	} else {
+		i.stacks[archetypeID] = current - 1
+	}
+	i.mainHand = archetypeID
+	i.revision++
+	i.equipmentRevision++
+	return nil
+}
+
+// UnequipMainHand atomically moves the equipped MainHand item back into Inventory.
+func (i *Inventory) UnequipMainHand() (string, error) {
+	if i == nil || i.mainHand == "" {
+		return "", ErrEquipmentSlotEmpty
+	}
+	archetypeID := i.mainHand
+	current, exists := i.stacks[archetypeID]
+	if !exists && len(i.stacks) >= i.maxStacks {
+		return "", ErrFull
+	}
+	if current == math.MaxUint32 {
+		return "", ErrQuantityOverflow
+	}
+
+	i.stacks[archetypeID] = current + 1
+	i.mainHand = ""
+	i.revision++
+	i.equipmentRevision++
+	return archetypeID, nil
 }
 
 func (i *Inventory) Quantity(archetypeID string) uint32 {
