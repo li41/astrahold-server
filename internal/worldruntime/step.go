@@ -75,6 +75,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applySetRespawnCheckpoint(cmd.name(), c, &report)
 		case useActionCommand:
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
+		case npcCommand:
+			r.applyInteractNPC(cmd.name(), c, tick, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
