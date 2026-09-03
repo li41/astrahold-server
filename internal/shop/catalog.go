@@ -1,11 +1,15 @@
 package shop
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 )
+
+//go:embed default.json
+var defaultCatalogJSON []byte
 
 var ErrInvalidCatalog = errors.New("shop: invalid catalog")
 
@@ -33,11 +37,19 @@ type Catalog struct {
 	byNPC    map[string]Shop
 }
 
+func Default() (*Catalog, error) {
+	return Load(defaultCatalogJSON)
+}
+
 func LoadFile(path string) (*Catalog, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return Load(data)
+}
+
+func Load(data []byte) (*Catalog, error) {
 	var definition Definition
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -100,7 +112,11 @@ func (c *Catalog) ShopForNPC(npcArchetypeID string) (Shop, bool) {
 		return Shop{}, false
 	}
 	entry, ok := c.byNPC[npcArchetypeID]
-	return entry, ok
+	if !ok {
+		return Shop{}, false
+	}
+	entry.Offers = append([]Offer(nil), entry.Offers...)
+	return entry, true
 }
 
 func FindOffer(entry Shop, offerID string) (Offer, bool) {
