@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	playtestNPCArchetypeID      = "npc_emberwatch_warden"
-	playtestNPCDisplayName      = "Warden Sera"
-	playtestNPCDialogue         = "The eastern road is secure. Keep your blade ready beyond the gate."
-	npcInteractionRangeMeters   = float32(3.0)
+	playtestNPCArchetypeID    = "npc_emberwatch_warden"
+	playtestNPCDisplayName    = "Warden Sera"
+	playtestNPCDialogue       = "The eastern road is secure. Keep your blade ready beyond the gate."
+	npcInteractionRangeMeters = float32(3.0)
 )
 
 var (
@@ -55,7 +55,7 @@ func (r *Runtime) EnqueueFencedInteractNPC(ownership SessionOwnershipFence, sequ
 	return r.queue.tryPush(npcCommand{sessionID: ownership.SessionID, sequence: sequence, intent: intent, ownership: ownership})
 }
 
-func (r *Runtime) applyInteractNPC(name string, command npcCommand, report *StepReport) {
+func (r *Runtime) applyInteractNPC(name string, command npcCommand, tick uint64, report *StepReport) {
 	if command.ownership.Valid() {
 		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
@@ -107,36 +107,15 @@ func (r *Runtime) applyInteractNPC(name string, command npcCommand, report *Step
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
-	r.sessionNPCInteractionPending[s.ID] = interaction
-}
 
-func (r *Runtime) replicatePendingNPCInteractions(tick uint64, report *StepReport) {
-	if len(r.sessionNPCInteractionPending) == 0 {
-		return
+	envelope := protocol.Envelope{
+		Delivery:   protocol.DeliveryReliableOrdered,
+		Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
+		ServerTick: tick,
+		Message:    interaction,
 	}
-	for _, s := range r.sessions.List() {
-		interaction, pending := r.sessionNPCInteractionPending[s.ID]
-		if !pending {
-			continue
-		}
-		envelope := protocol.Envelope{
-			Delivery:   protocol.DeliveryReliableOrdered,
-			Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
-			ServerTick: tick,
-			Message:    interaction,
-		}
-		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(envelope); err != nil {
-			if !errors.Is(err, session.ErrBackpressure) {
-				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: interaction.Type(), Err: err})
-			}
-			continue
-		}
-		delete(r.sessionNPCInteractionPending, s.ID)
-	}
-	for id := range r.sessionNPCInteractionPending {
-		if _, ok := r.sessions.Get(id); !ok {
-			delete(r.sessionNPCInteractionPending, id)
-		}
+	report.Metrics.OutboundMessages++
+	if err := s.Connection().TrySend(envelope); err != nil {
+		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: interaction.Type(), Err: err})
 	}
 }
