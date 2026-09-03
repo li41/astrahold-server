@@ -113,6 +113,15 @@ func (c useActionCommand) name() string {
 // Alias keeps equipment enqueue code explicit while Step continues to dispatch the one bounded Reliable carrier.
 type equipmentCommand = useActionCommand
 
+type npcCommand struct {
+	sessionID session.ID
+	sequence  uint32
+	intent    protocol.ClientInteractNPC
+	ownership SessionOwnershipFence
+}
+
+func (npcCommand) name() string { return "interact_npc" }
+
 // setBlockerCommand remains the existing Step dispatch carrier for DynamicWorld mutations.
 // D.3C uses the explicit discriminator below for the Server-only round-reset control command
 // so the mutation still crosses the bounded world-owner queue instead of touching World state
