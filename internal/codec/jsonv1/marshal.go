@@ -36,6 +36,13 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			return nil, ErrUnsupportedMessage
 		}
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
+	case protocol.ClientInteractNPC:
+		return json.Marshal(clientInteractNPC{NPCEntityID: uint64(m.NPCEntityID)})
+	case *protocol.ClientInteractNPC:
+		if m == nil {
+			return nil, ErrUnsupportedMessage
+		}
+		return json.Marshal(clientInteractNPC{NPCEntityID: uint64(m.NPCEntityID)})
 	case protocol.ActionStarted:
 		return json.Marshal(actionStarted{ActionInstanceID: m.ActionInstanceID, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID, TargetX: m.TargetX, TargetZ: m.TargetZ})
 	case protocol.ActionRejected:
@@ -77,6 +84,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			out.Slots[i] = equipmentSlotState{Slot: string(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID}
 		}
 		return json.Marshal(out)
+	case protocol.NPCInteraction:
+		return json.Marshal(npcInteraction{NPCEntityID: uint64(m.NPCEntityID), NPCArchetypeID: m.NPCArchetypeID, DisplayName: m.DisplayName, Text: m.Text})
 	case protocol.SiegeMatchState:
 		return json.Marshal(siegeMatchState{Revision: m.Revision, Round: m.Round, MatchID: m.MatchID, AttackerID: m.AttackerID, DefenderID: m.DefenderID, YourTeam: string(m.YourTeam), Phase: string(m.Phase), BreachGateID: m.BreachGateID, ThroneObjectiveID: m.ThroneObjectiveID, GateBreached: m.GateBreached, WinnerTeam: string(m.WinnerTeam), WinnerID: m.WinnerID, CastleOwnerID: m.CastleOwnerID})
 	case protocol.CombatEvent:
