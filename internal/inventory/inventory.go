@@ -115,6 +115,61 @@ func (i *Inventory) Remove(archetypeID string, quantity uint32) error {
 	return nil
 }
 
+// Exchange atomically consumes one authoritative stack quantity and grants another.
+// Validation is completed before mutation, and a successful exchange advances inventory revision exactly once.
+func (i *Inventory) Exchange(removeArchetypeID string, removeQuantity uint32, addArchetypeID string, addQuantity uint32) error {
+	if i == nil {
+		return ErrInsufficient
+	}
+	removeArchetypeID = strings.TrimSpace(removeArchetypeID)
+	addArchetypeID = strings.TrimSpace(addArchetypeID)
+	if removeArchetypeID == "" || addArchetypeID == "" {
+		return ErrInvalidArchetype
+	}
+	if removeQuantity == 0 || addQuantity == 0 {
+		return ErrInvalidQuantity
+	}
+
+	removeCurrent := i.stacks[removeArchetypeID]
+	if removeCurrent < removeQuantity {
+		return ErrInsufficient
+	}
+
+	if removeArchetypeID == addArchetypeID {
+		remaining := uint64(removeCurrent - removeQuantity)
+		final := remaining + uint64(addQuantity)
+		if final > math.MaxUint32 {
+			return ErrQuantityOverflow
+		}
+		i.stacks[removeArchetypeID] = uint32(final)
+		i.revision++
+		return nil
+	}
+
+	addCurrent, addExists := i.stacks[addArchetypeID]
+	if uint64(addCurrent)+uint64(addQuantity) > math.MaxUint32 {
+		return ErrQuantityOverflow
+	}
+
+	stackCountAfterRemove := len(i.stacks)
+	if removeCurrent == removeQuantity {
+		stackCountAfterRemove--
+	}
+	if !addExists && stackCountAfterRemove >= i.maxStacks {
+		return ErrFull
+	}
+
+	remaining := removeCurrent - removeQuantity
+	if remaining == 0 {
+		delete(i.stacks, removeArchetypeID)
+	} else {
+		i.stacks[removeArchetypeID] = remaining
+	}
+	i.stacks[addArchetypeID] = addCurrent + addQuantity
+	i.revision++
+	return nil
+}
+
 // EquipMainHand atomically moves one item from Inventory into MainHand.
 func (i *Inventory) EquipMainHand(archetypeID string) error {
 	if i == nil {
