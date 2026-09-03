@@ -16,6 +16,7 @@ import (
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/shop"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
@@ -42,6 +43,7 @@ type Config struct {
 	MaxCharacterStateAutosavesPerTick    int
 	InventoryMaxStacks                   int
 	StarterInventory                     []inventory.Stack
+	ShopCatalog                          *shop.Catalog
 	SiegeCompletedMinHold                time.Duration
 	SiegeCompletedMaxHold                time.Duration
 	AOIOptions                           spatial.QueryOptions
