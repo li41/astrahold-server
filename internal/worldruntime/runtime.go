@@ -61,12 +61,12 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		CommandQueueCapacity:                 4096,
-		MaxCommandsPerTick:                   2048,
-		SnapshotEveryTicks:                   2,
-		CharacterMaxHP:                       1000,
-		MaxCharacterStateAutosavesPerTick:    32,
-		InventoryMaxStacks:                   32,
+		CommandQueueCapacity:              4096,
+		MaxCommandsPerTick:                2048,
+		SnapshotEveryTicks:                2,
+		CharacterMaxHP:                    1000,
+		MaxCharacterStateAutosavesPerTick: 32,
+		InventoryMaxStacks:                32,
 		StarterInventory: []inventory.Stack{
 			{ArchetypeID: "item_minor_healing_potion", Quantity: 5},
 			{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
@@ -105,19 +105,19 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore                   int
-	CommandQueueDepthAfter                    int
+	CommandQueueDepthBefore                  int
+	CommandQueueDepthAfter                   int
 	CommandsDrained                          int
 	EntityActionsApplied                     int
-	CharacterStateSaveIntentsEnqueued         int
-	CharacterStateSaveIntentFailures          int
-	CharacterStateAutosaveBudget              int
-	CharacterStateAutosaveAttempts            int
-	CharacterStateAutosaveEnqueued            int
-	CharacterStateAutosaveBudgetExhausted     bool
+	CharacterStateSaveIntentsEnqueued        int
+	CharacterStateSaveIntentFailures         int
+	CharacterStateAutosaveBudget             int
+	CharacterStateAutosaveAttempts           int
+	CharacterStateAutosaveEnqueued           int
+	CharacterStateAutosaveBudgetExhausted    bool
 	DeathOutcomesRecorded                    int
-	DeathOutcomeEventsEnqueued                int
-	DeathOutcomeEventEnqueueFailures          int
+	DeathOutcomeEventsEnqueued               int
+	DeathOutcomeEventEnqueueFailures         int
 	DeathPenaltyTransactionsApplied          int
 	DeathPenaltyCheckpointForfeits           int
 	RespawnsScheduled                        int
@@ -200,50 +200,50 @@ type dirtyVitalsProgress struct {
 }
 
 type Runtime struct {
-	world                           *simulation.World
-	sessions                        *session.Registry
-	characterIdentities             *characterIdentityRegistry
-	characterStateOutbox            *characterstate.Outbox
-	characterStateWorld             characterstate.WorldRef
-	characterStateAutosaveLastTick  map[world.EntityID]uint64
-	characterStateAutosaveCursor    int
-	characterStateAutosaveNextTick  uint64
-	inventories                     map[characteridentity.ID]*inventory.Inventory
-	sessionInventoryPending         map[session.ID]struct{}
-	replication                     *replication.Service
-	replicationFrameBuilder         *simulation.ReplicationFrameBuilder
-	replicationVisibleScratch       []int
-	characters                      *character.Service
-	queue                           *commandQueue
-	config                          Config
-	dynamic                         DynamicWorld
-	siege                           *siege.Service
-	siegeStepDelta                  time.Duration
-	siegeCompletedRevision          uint64
-	siegeCompletedElapsed           time.Duration
-	siegeRoundResetQueued           bool
-	combat                          *combat.Service
-	respawnPolicy                   *respawnpolicy.Service
-	deathPenalty                    *deathpenalty.Service
-	deathOutbox                     *deathoutcome.Outbox
-	deathRevision                   map[world.EntityID]uint64
-	dynamicRevision                 uint64
-	sessionDynamicRevision          map[session.ID]uint64
-	sessionSiegeState               map[session.ID]siegeDeliveryStamp
-	entityVitalsRevision            map[world.EntityID]uint64
-	dirtyVitalsEntities             map[world.EntityID]struct{}
-	dirtyVitalsScratch              []world.EntityID
-	dirtyVitalsNextEntity           world.EntityID
-	dirtyVitalsNextSession          map[world.EntityID]session.ID
-	dirtyVitalsProgress             map[world.EntityID]dirtyVitalsProgress
-	respawnVitalsPhases             map[world.EntityID]respawnVitalsPhase
-	reviveProtectionUntil           map[world.EntityID]uint64
-	sessionVitalsRevision           map[session.ID]map[world.EntityID]uint64
-	sessionVitalsPending            map[session.ID]map[world.EntityID]struct{}
-	lifecycleSessionCursor          int
-	vitalsSessionCursor             int
-	lifecycleChurnActive            bool
-	initialBootstrapState           uint8
+	world                          *simulation.World
+	sessions                       *session.Registry
+	characterIdentities            *characterIdentityRegistry
+	characterStateOutbox           *characterstate.Outbox
+	characterStateWorld            characterstate.WorldRef
+	characterStateAutosaveLastTick map[world.EntityID]uint64
+	characterStateAutosaveCursor   int
+	characterStateAutosaveNextTick uint64
+	inventories                    map[characteridentity.ID]*inventory.Inventory
+	sessionInventoryPending        map[session.ID]struct{}
+	replication                    *replication.Service
+	replicationFrameBuilder        *simulation.ReplicationFrameBuilder
+	replicationVisibleScratch      []int
+	characters                     *character.Service
+	queue                          *commandQueue
+	config                         Config
+	dynamic                        DynamicWorld
+	siege                          *siege.Service
+	siegeStepDelta                 time.Duration
+	siegeCompletedRevision         uint64
+	siegeCompletedElapsed          time.Duration
+	siegeRoundResetQueued          bool
+	combat                         *combat.Service
+	respawnPolicy                  *respawnpolicy.Service
+	deathPenalty                   *deathpenalty.Service
+	deathOutbox                    *deathoutcome.Outbox
+	deathRevision                  map[world.EntityID]uint64
+	dynamicRevision                uint64
+	sessionDynamicRevision         map[session.ID]uint64
+	sessionSiegeState              map[session.ID]siegeDeliveryStamp
+	entityVitalsRevision           map[world.EntityID]uint64
+	dirtyVitalsEntities            map[world.EntityID]struct{}
+	dirtyVitalsScratch             []world.EntityID
+	dirtyVitalsNextEntity          world.EntityID
+	dirtyVitalsNextSession         map[world.EntityID]session.ID
+	dirtyVitalsProgress            map[world.EntityID]dirtyVitalsProgress
+	respawnVitalsPhases            map[world.EntityID]respawnVitalsPhase
+	reviveProtectionUntil          map[world.EntityID]uint64
+	sessionVitalsRevision          map[session.ID]map[world.EntityID]uint64
+	sessionVitalsPending           map[session.ID]map[world.EntityID]struct{}
+	lifecycleSessionCursor         int
+	vitalsSessionCursor            int
+	lifecycleChurnActive           bool
+	initialBootstrapState          uint8
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
