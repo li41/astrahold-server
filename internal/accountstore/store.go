@@ -202,7 +202,7 @@ func SaveIfRevision(path string, expectedRevision uint64, definition Definition)
 		return fmt.Errorf("%w: current=%d expected=%d", ErrRevisionConflict, current.Revision, expectedRevision)
 	}
 	if definition.Revision != expectedRevision+1 {
-		return fmt.Errorf("%w: next=%d expected=%d", ErrRevisionConflict, definition.Revision, expectedRevision+1)
+		return fmt.Errorf("%w: next=%d expected=%d", ErrRevisionConflict, definition.Revision, expectedRevision)
 	}
 	return Save(path, definition)
 }
@@ -248,12 +248,7 @@ func saveAtomic(path string, definition Definition) error {
 	if err := os.Chmod(path, 0o600); err != nil {
 		return fmt.Errorf("accountstore: chmod store: %w", err)
 	}
-	dir, err := os.Open(directory)
-	if err != nil {
-		return fmt.Errorf("accountstore: open directory for fsync: %w", err)
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
+	if err := syncDirectory(directory); err != nil {
 		return fmt.Errorf("accountstore: fsync directory: %w", err)
 	}
 	return nil
