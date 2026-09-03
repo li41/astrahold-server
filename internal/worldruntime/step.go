@@ -77,6 +77,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
 		case npcCommand:
 			r.applyInteractNPC(cmd.name(), c, tick, &report)
+		case shopCommand:
+			r.applyShopCommand(cmd.name(), c, tick, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
@@ -191,10 +193,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				MaxDespawns: r.config.MaxDespawnsPerSessionBuild,
 				MaxMessages: maxMessages,
 			}
-			// Initial bootstrap active時，fully-known Session不和仍在做 Spawn/Initial Vitals
-			// 的 Session同 tick競爭 remote snapshot candidate CPU。若目前 AOI membership 有
-			// lifecycle work，仍使用原 bounded builder；只有 lifecycle-complete view 才套
-			// 現有 MaxMessages=-1 deferred path，因此不改 lifecycle truth / Confirm semantics。
 			if suppressInitialSnapshots && !r.replication.NeedsLifecycleWork(s.ID, frame, visible) {
 				lifecycleLimits.MaxMessages = -1
 			}
@@ -233,8 +231,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			selectedLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
 			report.Metrics.LifecycleGlobalSelected += selectedLifecycle
 
-			// 第一個 departed candidate 就代表這不是 pure bootstrap，而是 mixed AOI churn。
-			// 立即把本 snapshot 的 global ceiling 收斂到較低 churn budget；第一個 Session 最多只先用32筆。
 			if batch.Stats.DespawnCandidates > 0 && !r.lifecycleChurnActive {
 				r.lifecycleChurnActive = true
 				if r.config.MaxChurnLifecycleMessagesPerSnapshot > 0 && (globalBudget <= 0 || r.config.MaxChurnLifecycleMessagesPerSnapshot < globalBudget) {
@@ -289,8 +285,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	}
 
 	if snapshotRan {
-		// Respawn position 可能同時改變 AOI membership；只有完整 normal snapshot 已讓每個
-		// Session rebuild desired view 後，revived Vitals 才能解除第一層 ordering barrier。
 		r.reconcileRespawnVitalsAfterSnapshot()
 	}
 
