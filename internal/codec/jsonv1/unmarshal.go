@@ -31,6 +31,12 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.ClientPickupItem{DropEntityID: world.EntityID(in.DropEntityID)}, nil
+	case protocol.MessageClientInteractNPC:
+		var in clientInteractNPC
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		return protocol.ClientInteractNPC{NPCEntityID: world.EntityID(in.NPCEntityID)}, nil
 	case protocol.MessageActionStarted:
 		var in actionStarted
 		if err := decodeStrict(data, &in); err != nil {
@@ -117,6 +123,12 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			slots[i] = protocol.EquipmentSlotState{Slot: protocol.EquipmentSlot(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID}
 		}
 		return protocol.EquipmentSnapshot{Revision: in.Revision, Slots: slots}, nil
+	case protocol.MessageNPCInteraction:
+		var in npcInteraction
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		return protocol.NPCInteraction{NPCEntityID: world.EntityID(in.NPCEntityID), NPCArchetypeID: in.NPCArchetypeID, DisplayName: in.DisplayName, Text: in.Text}, nil
 	case protocol.MessageSiegeMatchState:
 		var in siegeMatchState
 		if err := decodeStrict(data, &in); err != nil {
