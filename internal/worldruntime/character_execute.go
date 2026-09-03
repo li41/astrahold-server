@@ -45,11 +45,11 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{
-			ActionInstanceID: prepared.ActionInstanceID,
-			ActorEntityID: actor.ID,
-			ActionID: prepared.Definition.ID,
-			Result: protocol.CombatEventResurrect,
-			TargetEntityID: targetID,
+			ActionInstanceID:  prepared.ActionInstanceID,
+			ActorEntityID:     actor.ID,
+			ActionID:          prepared.Definition.ID,
+			Result:            protocol.CombatEventResurrect,
+			TargetEntityID:    targetID,
 			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true
@@ -83,12 +83,12 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{
-			ActionInstanceID: prepared.ActionInstanceID,
-			ActorEntityID: actor.ID,
-			ActionID: prepared.Definition.ID,
-			Result: protocol.CombatEventHit,
-			TargetEntityID: targetID,
-			Damage: prepared.Damage.Amount,
+			ActionInstanceID:  prepared.ActionInstanceID,
+			ActorEntityID:     actor.ID,
+			ActionID:          prepared.Definition.ID,
+			Result:            protocol.CombatEventHit,
+			TargetEntityID:    targetID,
+			Damage:            prepared.Damage.Amount,
 			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true
