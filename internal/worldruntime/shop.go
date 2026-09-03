@@ -47,6 +47,19 @@ func validShopIntent(intent protocol.ClientShopCommand) bool {
 	}
 }
 
+func (r *Runtime) authoritativeShopCatalog() (*shop.Catalog, error) {
+	if r.config.ShopCatalog != nil {
+		return r.config.ShopCatalog, nil
+	}
+	catalog, err := shop.Default()
+	if err != nil {
+		return nil, ErrShopUnavailable
+	}
+	// This function runs only on the single world owner. Cache the immutable catalog after first use.
+	r.config.ShopCatalog = catalog
+	return catalog, nil
+}
+
 func (r *Runtime) applyShopCommand(name string, command shopCommand, tick uint64, report *StepReport) {
 	if command.ownership.Valid() {
 		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
@@ -94,11 +107,12 @@ func (r *Runtime) applyShopCommand(name string, command shopCommand, tick uint64
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrNPCOutOfRange})
 		return
 	}
-	if r.config.ShopCatalog == nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrShopUnavailable})
+	catalog, err := r.authoritativeShopCatalog()
+	if err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
-	catalogShop, ok := r.config.ShopCatalog.ShopForNPC(npc.ArchetypeID)
+	catalogShop, ok := catalog.ShopForNPC(npc.ArchetypeID)
 	if !ok {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrShopNotFound})
 		return
@@ -106,7 +120,7 @@ func (r *Runtime) applyShopCommand(name string, command shopCommand, tick uint64
 
 	switch command.intent.Operation {
 	case protocol.ShopOperationOpen:
-		r.sendShopSnapshot(s, npc.ID, catalogShop, tick, report)
+		r.sendShopSnapshot(s, catalog, npc.ID, catalogShop, tick, report)
 	case protocol.ShopOperationBuy:
 		offer, ok := shop.FindOffer(catalogShop, strings.TrimSpace(command.intent.OfferID))
 		if !ok {
@@ -128,7 +142,7 @@ func (r *Runtime) applyShopCommand(name string, command shopCommand, tick uint64
 	}
 }
 
-func (r *Runtime) sendShopSnapshot(s *session.Session, npcEntityID world.EntityID, catalogShop shop.Shop, tick uint64, report *StepReport) {
+func (r *Runtime) sendShopSnapshot(s *session.Session, catalog *shop.Catalog, npcEntityID world.EntityID, catalogShop shop.Shop, tick uint64, report *StepReport) {
 	offers := make([]protocol.ShopOffer, len(catalogShop.Offers))
 	for i, offer := range catalogShop.Offers {
 		offers[i] = protocol.ShopOffer{
@@ -140,7 +154,7 @@ func (r *Runtime) sendShopSnapshot(s *session.Session, npcEntityID world.EntityI
 		}
 	}
 	message := protocol.ShopSnapshot{
-		Revision:    r.config.ShopCatalog.Revision(),
+		Revision:    catalog.Revision(),
 		NPCEntityID: npcEntityID,
 		ShopID:      catalogShop.ID,
 		Offers:      offers,
