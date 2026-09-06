@@ -82,5 +82,7 @@ func (r *Runtime) applyRespawnRequest(name string, command useActionCommand, _ u
 		return
 	}
 
-	r.respawnRequested[s.EntityID] = struct{}{}
+	// This per-Runtime phase map already owns the respawn transition barrier; keep restart consent
+	// there as a pre-respawn phase instead of introducing process-global sidecar state.
+	r.respawnVitalsPhases[s.EntityID] = respawnVitalsRestartRequested
 }
