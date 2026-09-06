@@ -213,16 +213,7 @@ func (s *Store) writeLocked(worldID string, state siege.CastleOwnershipState) er
 		_ = os.Remove(tmpName)
 		return err
 	}
-	directory, err := os.Open(s.root)
-	if err != nil {
-		return err
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return syncErr
-	}
-	return closeErr
+	return syncDirectory(s.root)
 }
 
 func (s *Store) recordPath(worldID string) string {
