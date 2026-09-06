@@ -29,6 +29,8 @@ func TestTrustedCharacterRestoreFactoryPopulatesJoin(t *testing.T) {
 		World:       cfg.WorldIdentity,
 		HP:          720,
 		MaxHP:       1100,
+		MP:          100,
+		MaxMP:       100,
 		Transform: world.Transform{
 			Position: world.Position{X: 14, Z: -2, Layer: 3},
 			Yaw:      0.75,
