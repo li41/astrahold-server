@@ -118,7 +118,7 @@ func TestCharacterAutosaveOutboxFailureRetriesWithoutAdvancingBaseline(t *testin
 	outbox, _ := characterstate.NewOutbox(1)
 	blocker, _ := characteridentity.NewTrusted("character:blocker")
 	blockerIntent, err := outbox.Enqueue(blocker, characterstate.Snapshot{
-		World: characterStateTestWorld, HP: 1000, MaxHP: 1000, Position: world.Position{Layer: 4},
+		World: characterStateTestWorld, HP: 1000, MaxHP: 1000, MP: 100, MaxMP: 100, Position: world.Position{Layer: 4},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -61,7 +61,7 @@ func TestTrustedLeaveEnqueuesAuthoritativeCharacterState(t *testing.T) {
 	// The simulation/navigation layer normalizes the bootstrap Y onto its authoritative
 	// plane during Spawn, so persistence must capture Y=0 rather than the pre-spawn Y=2.
 	wantPosition := world.Position{X: 7, Y: 0, Z: -3, Layer: 4}
-	if intent.Identity != identity || intent.Snapshot.World != characterStateTestWorld || intent.Snapshot.HP != 875 || intent.Snapshot.MaxHP != 1000 || intent.Snapshot.Defeated || intent.Snapshot.Position != wantPosition || intent.Snapshot.Yaw != 1.25 {
+	if intent.Identity != identity || intent.Snapshot.World != characterStateTestWorld || intent.Snapshot.HP != 875 || intent.Snapshot.MaxHP != 1000 || intent.Snapshot.MP != 100 || intent.Snapshot.MaxMP != 100 || intent.Snapshot.Defeated || intent.Snapshot.Position != wantPosition || intent.Snapshot.Yaw != 1.25 {
 		t.Fatalf("intent=%#v", intent)
 	}
 	if _, ok := rt.world.Entity(1); ok {
@@ -100,7 +100,7 @@ func TestCharacterStateOutboxFailureDoesNotRollbackLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 	blockerSnapshot := characterstate.Snapshot{
-		World: characterStateTestWorld, HP: 1000, MaxHP: 1000,
+		World: characterStateTestWorld, HP: 1000, MaxHP: 1000, MP: 100, MaxMP: 100,
 		Position: world.Position{Layer: 0},
 	}
 	if _, err := outbox.Enqueue(blocker, blockerSnapshot); err != nil {

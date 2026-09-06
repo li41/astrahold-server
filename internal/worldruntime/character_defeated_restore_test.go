@@ -115,7 +115,7 @@ func defeatedRestoreFixture(characterID characteridentity.ID, remaining uint64) 
 		CharacterID: characterID,
 		Revision: 3,
 		World: characterRestoreWorld,
-		HP: 0, MaxHP: 1000, Defeated: true,
+		HP: 0, MaxHP: 1000, MP: 100, MaxMP: 100, Defeated: true,
 		Transform: world.Transform{Position: world.Position{X: 3, Y: 0, Z: 4, Layer: 4}, Yaw: 0.5},
 		Respawn: characterstate.DefeatedRespawn{
 			Context: respawnpolicy.DeathContextPvP,

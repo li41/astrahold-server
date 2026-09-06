@@ -31,7 +31,7 @@ func testResurrectAction() ActionDefinition {
 
 func TestLoadRejectsUnknownFields(t *testing.T) {
 	_, err := Load(strings.NewReader(`{
-		"schema_version":2,
+		"schema_version":3,
 		"revision":"r1",
 		"actions":[{
 			"id":"basic-attack",
@@ -51,7 +51,7 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 
 func TestLoadNormalizesDamageAndAcceptsResurrection(t *testing.T) {
 	loaded, err := Load(strings.NewReader(`{
-		"schema_version":2,
+		"schema_version":3,
 		"revision":"r2",
 		"actions":[
 			{
