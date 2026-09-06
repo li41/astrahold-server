@@ -1,7 +1,7 @@
-// Package gamev1 提供 Protocol v6 使用的混合 Payload Codec。
+// Package gamev1 提供 Astrahold gameplay protocol 使用的混合 Payload Codec。
 //
-// Reliable control message 仍委派給 jsonv1，方便 Godot Thin Client 開發；
-// Realtime movement / snapshot / correction 則使用固定欄位 binary，降低 payload 與 allocation。
+// Reliable control/state messages normally delegate to jsonv1; selected tiny control intents and
+// realtime movement/snapshot/correction use fixed payloads to keep the production path explicit.
 package gamev1
 
 import (
@@ -39,6 +39,13 @@ func (c Codec) Marshal(message protocol.Message) ([]byte, error) {
 			return nil, ErrInvalidPayload
 		}
 		return marshalMove(*m), nil
+	case protocol.ClientRespawnRequest:
+		return nil, nil
+	case *protocol.ClientRespawnRequest:
+		if m == nil {
+			return nil, ErrInvalidPayload
+		}
+		return nil, nil
 	case protocol.WorldSnapshot:
 		return marshalSnapshot(m)
 	case *protocol.WorldSnapshot:
@@ -58,8 +65,7 @@ func (c Codec) Marshal(message protocol.Message) ([]byte, error) {
 	}
 }
 
-// AppendMarshal 讓 transport 可以直接把 realtime payload 寫進 reusable frame/datagram buffer。
-// wire layout 與 Marshal 完全一致；Reliable JSON fallback 仍保留既有 codec contract。
+// AppendMarshal writes supported fixed payloads directly into a reusable transport buffer.
 func (c Codec) AppendMarshal(dst []byte, message protocol.Message) ([]byte, error) {
 	switch m := message.(type) {
 	case protocol.ClientMoveInput:
@@ -69,6 +75,13 @@ func (c Codec) AppendMarshal(dst []byte, message protocol.Message) ([]byte, erro
 			return dst, ErrInvalidPayload
 		}
 		return appendMove(dst, *m), nil
+	case protocol.ClientRespawnRequest:
+		return dst, nil
+	case *protocol.ClientRespawnRequest:
+		if m == nil {
+			return dst, ErrInvalidPayload
+		}
+		return dst, nil
 	case protocol.WorldSnapshot:
 		return appendSnapshot(dst, m)
 	case *protocol.WorldSnapshot:
@@ -102,6 +115,11 @@ func (c Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protoco
 			DirectionX: readFloat32(data[0:4]),
 			DirectionZ: readFloat32(data[4:8]),
 		}, nil
+	case protocol.MessageClientRespawnRequest:
+		if len(data) != 0 {
+			return nil, ErrInvalidPayload
+		}
+		return protocol.ClientRespawnRequest{}, nil
 	case protocol.MessageWorldSnapshot:
 		return unmarshalSnapshot(data)
 	case protocol.MessagePositionCorrection:
