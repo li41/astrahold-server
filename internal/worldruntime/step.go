@@ -99,6 +99,10 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
+	// Managed monsters keep a short authoritative corpse window, then leave world membership.
+	// Respawn waits for the prior Reliable EntityDespawn knowledge to converge before reusing EntityID.
+	r.stepMonsterLifecycles(tick, &report)
+
 	// Siege objective truth consumes post-simulation position/defeat/team state. Reuse this
 	// stable list later for SiegeMatchState replication so D.2B adds no extra session sort.
 	var siegeSessions []*session.Session
