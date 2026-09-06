@@ -43,6 +43,12 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.ClientShopCommand{Operation: protocol.ShopOperation(in.Operation), NPCEntityID: world.EntityID(in.NPCEntityID), OfferID: in.OfferID}, nil
+	case protocol.MessageClientRespawnRequest:
+		var in clientRespawnRequest
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		return protocol.ClientRespawnRequest{}, nil
 	case protocol.MessageActionStarted:
 		var in actionStarted
 		if err := decodeStrict(data, &in); err != nil {
