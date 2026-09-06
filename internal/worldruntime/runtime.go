@@ -210,6 +210,7 @@ type Runtime struct {
 	siegeRoundResetQueued           bool
 	combat                          *combat.Service
 	autonomousMeleeAgents           []autonomousMeleeAgent
+	monsterLifecycles               []monsterLifecycle
 	respawnPolicy                   *respawnpolicy.Service
 	deathPenalty                    *deathpenalty.Service
 	deathOutbox                     *deathoutcome.Outbox
