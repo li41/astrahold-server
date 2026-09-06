@@ -76,9 +76,9 @@ func (r *Runtime) applySetRespawnCheckpoint(name string, command setRespawnCheck
 	r.applyAcquireRespawnCheckpoint(name, command, report)
 }
 
-// scheduleRespawnForDefeat 只在 Character alive -> defeated transition 成功後呼叫。
-// Policy 在死亡當下綁定 context、checkpoint與 due tick；排程失敗不回滾已成立的 combat damage。
-// 回傳值供 Death Outcome event保存「死亡當下」已綁定的 immutable respawn truth。
+// scheduleRespawnForDefeat binds context, checkpoint, authoritative destination and earliest due
+// tick at the alive -> defeated transition. Protocol v19 changes only the final release condition:
+// the schedule becomes executable after due only when the owning client has requested restart.
 func (r *Runtime) scheduleRespawnForDefeat(entityID world.EntityID, tick uint64, context respawnpolicy.DeathContext, report *StepReport) (respawnpolicy.Scheduled, bool) {
 	if r.respawnPolicy == nil {
 		return respawnpolicy.Scheduled{}, false
@@ -92,9 +92,7 @@ func (r *Runtime) scheduleRespawnForDefeat(entityID world.EntityID, tick uint64,
 	return scheduled, true
 }
 
-// classifyDeathContext 只使用 Server-owned authoritative entity kind。
-// 若未來 Siege mode要把 player-vs-player改判為 Siege，可在更上層 source resolver接入，
-// 不需要增加 Client death-context欄位。
+// classifyDeathContext only uses Server-owned authoritative entity kind.
 func classifyDeathContext(actor, target world.EntityState) respawnpolicy.DeathContext {
 	if actor.Kind == world.EntitySiegeObject {
 		return respawnpolicy.DeathContextSiege
@@ -105,10 +103,10 @@ func classifyDeathContext(actor, target world.EntityState) respawnpolicy.DeathCo
 	return respawnpolicy.DeathContextPvE
 }
 
-// applyDueRespawns 在 command phase 完成後、simulation Tick 前執行。
-// 同一 due tick 收到的 ClientMoveInput 仍先以 Defeated 規則 consume/zero；角色復活後必須等新的 input。
-// Due selection 本身不移除 pending：authoritative transition成功時由 applyRespawn Cancel；若 transition fault，
-// pending會留到下一 tick重試。只有 entity不存在或已由其他合法路徑復活時才視為 stale schedule並清除。
+// applyDueRespawns runs after command handling and before simulation. A due schedule is necessary but
+// no longer sufficient: Protocol v19 also requires restart consent from ClientRespawnRequest. This
+// keeps the defeated session connected for a death modal while preserving Server-owned PvE/PvP/Siege
+// delay and destination. An early click arms consent and is applied exactly when the policy becomes due.
 func (r *Runtime) applyDueRespawns(tick uint64, report *StepReport) {
 	if r.respawnPolicy == nil {
 		return
@@ -119,6 +117,10 @@ func (r *Runtime) applyDueRespawns(tick uint64, report *StepReport) {
 		state, ok := r.characters.State(scheduled.EntityID)
 		if !ok || !state.Defeated {
 			r.respawnPolicy.Cancel(scheduled.EntityID)
+			delete(r.respawnVitalsPhases, scheduled.EntityID)
+			continue
+		}
+		if r.respawnVitalsPhases[scheduled.EntityID] != respawnVitalsRestartRequested {
 			continue
 		}
 		r.applyRespawn("respawn_policy", RespawnRequest{EntityID: scheduled.EntityID, Position: scheduled.Position}, report)
