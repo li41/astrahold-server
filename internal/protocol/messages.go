@@ -8,6 +8,7 @@ import (
 )
 
 // Version 在 wire-incompatible contract 或會造成舊 Client/Server 行為歧義的 gameplay protocol 語意變更時必須遞增。
+// v19: Reliable ClientRespawnRequest lets a defeated player request restart without reconnecting; Server retains respawn destination/timing authority.
 // v18: Server-authoritative NPC shop open/buy barter vertical slice.
 // v17: Reliable ClientInteractNPC intent plus source-session authoritative NPCInteraction dialogue response.
 // v16: Server-owned item-drop entity lifecycle plus Reliable ClientPickupItem intent.
@@ -18,7 +19,7 @@ import (
 // 當 malformed transport message關閉連線，不能再與新 Client 成功握手後延遲到第一次施法才失敗。
 // v11: 新增 Reliable ActionRejected，讓 Server 對已處理的 action intent 明確回覆 authoritative rejection reason。
 // ActionStarted 仍只代表 Server accepted；CombatEvent / EntityVitalsState 仍分別是 resolved outcome / vitals truth。
-const Version uint16 = 18
+const Version uint16 = 19
 
 const MaxSnapshotEntitiesPerChunk = 43
 
