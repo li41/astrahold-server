@@ -106,6 +106,10 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
+	// Managed monsters keep a short authoritative corpse window after defeat. Removal happens
+	// only after defeated vitals have converged; EntityID reuse waits for old despawn knowledge.
+	r.stepMonsterLifecycles(tick, &report)
+
 	// Siege objective truth consumes post-simulation position/defeat/team state. Reuse this
 	// stable list later for SiegeMatchState replication so D.2B adds no extra session sort.
 	var siegeSessions []*session.Session
@@ -270,7 +274,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 						report.Metrics.LifecycleBackpressureStops++
 						continue
 					}
-					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err})
+					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: out.Message.Type(), Err: err})
 					continue
 				}
 				confirmLifecycleDelivery(r, s.ID, out.Message)
