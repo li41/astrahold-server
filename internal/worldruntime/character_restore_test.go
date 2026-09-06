@@ -36,7 +36,7 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 		World:       characterRestoreWorld,
 		HP:          640,
 		MaxHP:       1200,
-		MP:          100,
+		MP:          45,
 		MaxMP:       100,
 		Transform: world.Transform{
 			Position: world.Position{X: 21, Y: 0, Z: -8, Layer: 4},
@@ -55,7 +55,7 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 		t.Fatalf("join errors=%#v", report.CommandErrors)
 	}
 	state, ok := rt.characters.State(1)
-	if !ok || state.HP != 640 || state.MaxHP != 1200 || state.Defeated {
+	if !ok || state.HP != 640 || state.MaxHP != 1200 || state.MP != 45 || state.MaxMP != 100 || state.Defeated {
 		t.Fatalf("character state=%#v ok=%v", state, ok)
 	}
 	entity, ok := rt.world.Entity(1)
@@ -122,7 +122,7 @@ func TestJoinRejectsDefeatedRestoreBeforeSpawn(t *testing.T) {
 
 func TestValidateCharacterRestoreRequiresTrustedMatchingIdentity(t *testing.T) {
 	trusted, _ := characteridentity.NewTrusted("character:trusted")
-	restore := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, HP: 1, MaxHP: 1, MP: 100, MaxMP: 100}
+	restore := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, HP: 1, MaxHP: 1, MP: 1, MaxMP: 1}
 	if err := ValidateCharacterRestore(trusted, restore, characterRestoreWorld); err != nil {
 		t.Fatal(err)
 	}

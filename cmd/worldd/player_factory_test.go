@@ -33,6 +33,9 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 
 	factory := newWorldPlayerFactory(spawn, loadedWorld.Definition.Agent)
 	spec := factory(1, 1)
+	if spec.Speed != defaultPlayerGroundSpeedMetersPerSecond {
+		t.Fatalf("player speed=%g; want authoritative normal ground speed=%g", spec.Speed, defaultPlayerGroundSpeedMetersPerSecond)
+	}
 	state := movement.AgentState{
 		Position:      spec.Entity.Transform.Position,
 		Speed:         spec.Speed,
@@ -50,7 +53,7 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 	}
 
 	const gateFrontZ = float32(8.5)
-	for step := 0; step < 100 && state.Position.Z < gateFrontZ; step++ {
+	for step := 0; step < 120 && state.Position.Z < gateFrontZ; step++ {
 		before := state.Position.Z
 		if _, err := move.Step(&state, 0.1); err != nil {
 			t.Fatalf("step %d from z=%g: %v", step, before, err)

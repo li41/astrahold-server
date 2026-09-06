@@ -10,6 +10,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+const defaultPlayerGroundSpeedMetersPerSecond float32 = 4.2
+
 func freshPlayerSpawn(definition respawnpolicy.Definition) (respawnpolicy.SpawnPoint, error) {
 	var spawnID string
 	for _, rule := range definition.Contexts {
@@ -37,7 +39,9 @@ func newWorldPlayerFactory(spawn respawnpolicy.SpawnPoint, agent gameplayworld.A
 				Kind:      world.EntityPlayer,
 				Transform: world.Transform{Position: spawn.Position()},
 			},
-			Speed:         6,
+			// Normal on-foot movement is Server-authoritative. Unreal/Click-to-Move both
+			// consume this same world speed rather than inventing a presentation-only rate.
+			Speed:         defaultPlayerGroundSpeedMetersPerSecond,
 			Radius:        agent.Radius,
 			MaxStepHeight: agent.MaxStepHeight,
 			AOIRadius:     64,

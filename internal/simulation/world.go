@@ -3,6 +3,7 @@ package simulation
 
 import (
 	"errors"
+	"math"
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/movement"
@@ -87,13 +88,20 @@ func (w *World) Teleport(id world.EntityID, position world.Position) error {
 	return nil
 }
 
-// SetMoveInput 只更新 client 的移動意圖；實際位置要等下一個 server Tick 才改變。
+// SetMoveInput 只接受 client / server-owned AI 的移動意圖；實際位置要等下一個 server Tick 才改變。
+// 非零方向同時更新 authoritative facing yaw。零方向保留最後朝向，避免停下時跳回預設角度。
 func (w *World) SetMoveInput(id world.EntityID, input movement.Input) error {
 	a, ok := w.actors[id]
 	if !ok {
 		return ErrEntityNotFound
 	}
-	return w.movement.AcceptInput(&a.move, input)
+	if err := w.movement.AcceptInput(&a.move, input); err != nil {
+		return err
+	}
+	if a.move.Direction.X != 0 || a.move.Direction.Z != 0 {
+		a.entity.Transform.Yaw = float32(math.Atan2(float64(a.move.Direction.Z), float64(a.move.Direction.X)) * 180 / math.Pi)
+	}
+	return nil
 }
 
 // Tick 由 server clock 推進世界。

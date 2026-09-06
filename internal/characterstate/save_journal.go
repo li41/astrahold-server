@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	SaveJournalSchemaVersion    uint16 = 1
-	saveCheckpointSchemaVersion uint16 = 1
-	saveJournalIDSize                  = 16
-	maxSaveJournalPayload              = 1 << 20
+	LegacySaveJournalSchemaVersion uint16 = 1
+	SaveJournalSchemaVersion       uint16 = 2
+	saveCheckpointSchemaVersion    uint16 = 1
+	saveJournalIDSize                     = 16
+	maxSaveJournalPayload                 = 1 << 20
 )
 
 var (
@@ -557,14 +558,14 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: trailing record data", ErrCorruptSaveJournal)
 	}
-	if wire.SchemaVersion != SaveJournalSchemaVersion || wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
+	if (wire.SchemaVersion != LegacySaveJournalSchemaVersion && wire.SchemaVersion != SaveJournalSchemaVersion) || wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
 	}
 	identity, err := characteridentity.NewTrusted(wire.CharacterID)
 	if err != nil {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: character identity: %v", ErrCorruptSaveJournal, err)
 	}
-	intent := SaveIntent{IntentID: wire.IntentID, Identity: identity, Snapshot: saveJournalWireToSnapshot(wire.Snapshot)}
+	intent := SaveIntent{IntentID: wire.IntentID, Identity: identity, Snapshot: saveJournalWireToSnapshot(wire.SchemaVersion, wire.Snapshot)}
 	if err := validateSaveIntent(intent); err != nil {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: intent: %v", ErrCorruptSaveJournal, err)
 	}
@@ -588,20 +589,23 @@ func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 	return wire
 }
 
-func saveJournalWireToSnapshot(wire saveJournalWireSnapshot) Snapshot {
+func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapshot) Snapshot {
 	mp, maxMP := wire.MP, wire.MaxMP
-	if maxMP == 0 {
+	if schemaVersion == LegacySaveJournalSchemaVersion {
+		// v1 save-journal records predate authoritative MP persistence. Matching Store.Load
+		// compatibility, they resume from the legacy full resource pool rather than inventing
+		// a partially known resource state after restart.
 		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
 	}
 	snapshot := Snapshot{
 		World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
-		HP:    wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
+		HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 		Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
 	}
 	if wire.DefeatedRespawn != nil {
 		snapshot.Respawn = DefeatedRespawn{
 			Context: wire.DefeatedRespawn.Context, SpawnPointID: wire.DefeatedRespawn.SpawnPointID, SpawnClass: wire.DefeatedRespawn.SpawnClass,
-			Position:       world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
+			Position: world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
 			RemainingTicks: wire.DefeatedRespawn.RemainingTicks, CheckpointID: wire.DefeatedRespawn.CheckpointID,
 		}
 	}
