@@ -1,6 +1,7 @@
 package characterstate
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,6 +58,34 @@ func TestSaveJournalAppendReopenRoundTripsAliveAndDefeated(t *testing.T) {
 	}
 	if len(records) != 2 || records[0].Intent != alive || records[0].ExpectedRevision != 3 || records[1].Intent != defeated || records[1].ExpectedRevision != 8 {
 		t.Fatalf("records=%#v", records)
+	}
+}
+
+func TestSaveJournalDecodesLegacyV1WithDefaultMP(t *testing.T) {
+	snapshot := testSnapshot()
+	identity := trusted(t, "character:journal-v1")
+	wire := saveJournalWireRecord{
+		SchemaVersion:    LegacySaveJournalSchemaVersion,
+		RecordID:         1,
+		ExpectedRevision: 0,
+		IntentID:         7,
+		CharacterID:      string(identity.ID),
+		Snapshot: saveJournalWireSnapshot{
+			WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
+			HP: snapshot.HP, MaxHP: snapshot.MaxHP, Defeated: false,
+			X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
+		},
+	}
+	payload, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, intent, err := decodeSaveJournalRecord(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.Snapshot.MP != LegacyDefaultMaxMP || intent.Snapshot.MaxMP != LegacyDefaultMaxMP {
+		t.Fatalf("legacy journal mp=%d/%d; want %d/%d", intent.Snapshot.MP, intent.Snapshot.MaxMP, LegacyDefaultMaxMP, LegacyDefaultMaxMP)
 	}
 }
 
