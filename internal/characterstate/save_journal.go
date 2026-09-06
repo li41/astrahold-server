@@ -346,17 +346,8 @@ func (s *SaveCheckpointStore) Save(journal *SaveJournal, record SaveJournalRecor
 		_ = os.Remove(tmpName)
 		return SaveCheckpoint{}, err
 	}
-	directory, err := os.Open(dir)
-	if err != nil {
+	if err := syncDirectory(dir); err != nil {
 		return SaveCheckpoint{}, err
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return SaveCheckpoint{}, syncErr
-	}
-	if closeErr != nil {
-		return SaveCheckpoint{}, closeErr
 	}
 	return checkpoint, nil
 }
