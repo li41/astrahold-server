@@ -93,6 +93,11 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.CommandDuration = time.Since(stageStart)
 	}
 
+	// Server-owned PvE intent is decided on the same single-owner world path as Client intent.
+	// It may update movement direction or dispatch an existing Combat Action, but never writes
+	// final position/damage outside the authoritative simulation/combat services.
+	r.stepAutonomousMeleeAgents(tick, delta, &report)
+
 	if measure {
 		stageStart = time.Now()
 	}
