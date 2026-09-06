@@ -64,13 +64,26 @@ func TestDynamicBlockerStateReplicatesWithRevision(t *testing.T) {
 
 func nextDynamicState(t *testing.T, conn *session.QueueConnection) protocol.WorldDynamicState {
 	t.Helper()
-	select {
-	case envelope := <-conn.Reliable():
-		state, ok := envelope.Message.(protocol.WorldDynamicState)
-		if !ok { t.Fatalf("unexpected reliable message: %#v", envelope.Message) }
-		return state
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for WorldDynamicState")
-		return protocol.WorldDynamicState{}
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case envelope := <-conn.Reliable():
+			switch state := envelope.Message.(type) {
+			case protocol.WorldDynamicState:
+				return state
+			case protocol.InventorySnapshot, protocol.EquipmentSnapshot:
+				// Protocol v14+ character bootstrap shares the same ReliableOrdered stream.
+				// This helper is intentionally scoped to WorldDynamicState, so consume those
+				// independent bootstrap views instead of coupling legacy world-state tests to
+				// their delivery position.
+				continue
+			default:
+				t.Fatalf("unexpected reliable message: %#v", envelope.Message)
+			}
+		case <-timer.C:
+			t.Fatal("timed out waiting for WorldDynamicState")
+			return protocol.WorldDynamicState{}
+		}
 	}
 }
