@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	LegacySchemaVersion   uint16 = 1
-	RespawnSchemaVersion  uint16 = 2
-	SchemaVersion         uint16 = 3
-	LegacyDefaultMaxMP    uint32 = 100
+	LegacySchemaVersion  uint16 = 1
+	RespawnSchemaVersion uint16 = 2
+	SchemaVersion        uint16 = 3
+	LegacyDefaultMaxMP   uint32 = 100
 )
 
 var (
@@ -220,11 +220,7 @@ func (s *Store) writeLocked(record Record) error {
 	if err := tmp.Sync(); err != nil { cleanup(); return err }
 	if err := tmp.Close(); err != nil { _ = os.Remove(tmpName); return err }
 	if err := os.Rename(tmpName, s.recordPath(record.CharacterID)); err != nil { _ = os.Remove(tmpName); return err }
-	directory, err := os.Open(s.root)
-	if err != nil { return err }
-	syncErr := directory.Sync(); closeErr := directory.Close()
-	if syncErr != nil { return syncErr }
-	return closeErr
+	return syncDirectory(s.root)
 }
 
 func (s *Store) recordPath(id characteridentity.ID) string {

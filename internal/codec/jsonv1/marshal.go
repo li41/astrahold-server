@@ -50,6 +50,13 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			return nil, ErrUnsupportedMessage
 		}
 		return json.Marshal(clientShopCommand{Operation: string(m.Operation), NPCEntityID: uint64(m.NPCEntityID), OfferID: m.OfferID})
+	case protocol.ClientRespawnRequest:
+		return json.Marshal(clientRespawnRequest{})
+	case *protocol.ClientRespawnRequest:
+		if m == nil {
+			return nil, ErrUnsupportedMessage
+		}
+		return json.Marshal(clientRespawnRequest{})
 	case protocol.ActionStarted:
 		return json.Marshal(actionStarted{ActionInstanceID: m.ActionInstanceID, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID, TargetX: m.TargetX, TargetZ: m.TargetZ})
 	case protocol.ActionRejected:
