@@ -215,7 +215,11 @@ func main() {
 		worldruntime.WithCharacterStateOutbox(characterStateOutbox, characterStateWorld),
 	}
 	if *playtestMonster {
-		runtimeOptions = append(runtimeOptions, worldruntime.WithAutonomousMeleeAgent(newPlaytestMonsterAIConfig()))
+		runtimeOptions = append(
+			runtimeOptions,
+			worldruntime.WithAutonomousMeleeAgent(newPlaytestMonsterAIConfig()),
+			worldruntime.WithMonsterLifecycle(newPlaytestMonsterLifecycleConfig(loadedWorld.Definition.Agent, *tickRate)),
+		)
 	}
 	runtime := worldruntime.New(sim, runtimeConfig, runtimeOptions...)
 	if *playtestMonster {
