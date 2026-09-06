@@ -34,6 +34,9 @@ type NPCCommandSink interface {
 type ShopCommandSink interface {
 	EnqueueShopCommand(session.ID, uint32, protocol.ClientShopCommand) error
 }
+type RespawnCommandSink interface {
+	EnqueueRespawnRequest(session.ID, uint32, protocol.ClientRespawnRequest) error
+}
 
 type Ingress struct{ sink MoveCommandSink }
 
@@ -144,6 +147,19 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 			return ErrInvalidClientDelivery
 		}
 		return g.enqueueShopCommand(sessionID, envelope.Sequence, *message)
+	case protocol.ClientRespawnRequest:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered {
+			return ErrInvalidClientDelivery
+		}
+		return g.enqueueRespawnRequest(sessionID, envelope.Sequence, message)
+	case *protocol.ClientRespawnRequest:
+		if message == nil {
+			return ErrInvalidClientEnvelope
+		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered {
+			return ErrInvalidClientDelivery
+		}
+		return g.enqueueRespawnRequest(sessionID, envelope.Sequence, *message)
 	default:
 		return ErrUnsupportedClientMessage
 	}
@@ -232,4 +248,11 @@ func (g *Ingress) enqueueShopCommand(sessionID session.ID, sequence uint32, inte
 		return ErrUnsupportedClientMessage
 	}
 	return sink.EnqueueShopCommand(sessionID, sequence, intent)
+}
+func (g *Ingress) enqueueRespawnRequest(sessionID session.ID, sequence uint32, intent protocol.ClientRespawnRequest) error {
+	sink, ok := g.sink.(RespawnCommandSink)
+	if !ok {
+		return ErrUnsupportedClientMessage
+	}
+	return sink.EnqueueRespawnRequest(sessionID, sequence, intent)
 }
