@@ -41,6 +41,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if r.respawnPolicy != nil {
 			r.respawnPolicy.Cancel(targetID)
 		}
+		// Resurrection is an alternate authoritative revive path. Any previously armed local-player
+		// restart request belongs to the defeated lifecycle and must not survive this transition.
+		delete(r.respawnVitalsPhases, targetID)
 		r.grantReviveProtection(targetID, tick, report)
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
