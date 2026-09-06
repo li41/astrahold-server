@@ -7,11 +7,13 @@ import (
 )
 
 const (
-	playtestMonsterEntityID    world.EntityID = 9001
-	playtestMonsterArchetypeID                = "wolf-gray-01"
-	playtestMonsterActionID                   = "wolf-bite"
-	playtestMonsterSpawnX       float32        = 2
-	playtestMonsterSpawnZ       float32        = -35
+	playtestMonsterEntityID            world.EntityID = 9001
+	playtestMonsterArchetypeID                        = "wolf-gray-01"
+	playtestMonsterActionID                           = "wolf-bite"
+	playtestMonsterSpawnX               float32        = 2
+	playtestMonsterSpawnZ               float32        = -35
+	playtestMonsterCorpseHoldSeconds                   = 2
+	playtestMonsterRespawnDelaySeconds                 = 8
 )
 
 func playtestMonsterHome() world.Position {
@@ -43,5 +45,13 @@ func newPlaytestMonsterAIConfig() worldruntime.AutonomousMeleeAgentConfig {
 		LeashRange:      16,
 		AttackRange:     1.75,
 		ReturnTolerance: 0.25,
+	}
+}
+
+func newPlaytestMonsterLifecycleConfig(agent gameplayworld.AgentDefaults, tickRate int) worldruntime.MonsterLifecycleConfig {
+	return worldruntime.MonsterLifecycleConfig{
+		Spawn:             newPlaytestMonsterSpawn(agent),
+		CorpseHoldTicks:   uint64(playtestMonsterCorpseHoldSeconds * tickRate),
+		RespawnDelayTicks: uint64(playtestMonsterRespawnDelaySeconds * tickRate),
 	}
 }
