@@ -9,6 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/simulation"
@@ -52,6 +53,9 @@ func TestJoinRestoresDefeatedRespawnAtRemainingTickBoundary(t *testing.T) {
 	if !state.Defeated {
 		t.Fatal("character respawned before exact due boundary")
 	}
+	if err := rt.EnqueueRespawnRequest(10, 1, protocol.ClientRespawnRequest{}); err != nil {
+		t.Fatal(err)
+	}
 	if report := rt.Step(12, 50*time.Millisecond); report.Metrics.RespawnsApplied != 1 {
 		t.Fatalf("due report=%#v", report)
 	}
@@ -68,7 +72,7 @@ func TestJoinRestoresDefeatedRespawnAtRemainingTickBoundary(t *testing.T) {
 	}
 }
 
-func TestJoinRestoresZeroRemainingTicksOnSameDueBoundary(t *testing.T) {
+func TestJoinRestoresZeroRemainingTicksAndWaitsForRestartRequest(t *testing.T) {
 	rt := makeDefeatedRestoreRuntime(t)
 	identity, _ := characteridentity.NewTrusted("character:due-now")
 	conn := session.NewQueueConnection(32, 32)
@@ -78,12 +82,23 @@ func TestJoinRestoresZeroRemainingTicksOnSameDueBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := rt.Step(50, 50*time.Millisecond)
-	if len(report.CommandErrors) != 0 || report.Metrics.RespawnsApplied != 1 {
-		t.Fatalf("report=%#v", report)
+	if len(report.CommandErrors) != 0 || report.Metrics.RespawnsApplied != 0 {
+		t.Fatalf("join report=%#v", report)
 	}
 	state, _ := rt.characters.State(91)
+	if !state.Defeated {
+		t.Fatal("due defeated restore respawned without player restart request")
+	}
+	if err := rt.EnqueueRespawnRequest(1, 1, protocol.ClientRespawnRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	restart := rt.Step(51, 50*time.Millisecond)
+	if len(restart.CommandErrors) != 0 || restart.Metrics.RespawnsApplied != 1 {
+		t.Fatalf("restart report=%#v", restart)
+	}
+	state, _ = rt.characters.State(91)
 	if state.Defeated {
-		t.Fatal("zero remaining ticks did not respawn on join tick due phase")
+		t.Fatal("due defeated restore did not respawn after restart request")
 	}
 }
 
