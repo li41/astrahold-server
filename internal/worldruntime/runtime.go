@@ -209,6 +209,7 @@ type Runtime struct {
 	siegeCompletedElapsed           time.Duration
 	siegeRoundResetQueued           bool
 	combat                          *combat.Service
+	autonomousMeleeAgents           []autonomousMeleeAgent
 	respawnPolicy                   *respawnpolicy.Service
 	deathPenalty                    *deathpenalty.Service
 	deathOutbox                     *deathoutcome.Outbox
