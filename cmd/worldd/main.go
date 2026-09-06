@@ -359,3 +359,29 @@ func reviveProtectionTicks(seconds float64, tickRate int) (uint64, error) {
 	}
 	return uint64(ticks), nil
 }
+
+func logStepReport(report worldruntime.StepReport) {
+	for _, item := range report.CommandErrors {
+		log.Printf("world command error: tick=%d command=%s session=%d err=%v", report.Tick, item.Command, item.SessionID, item.Err)
+	}
+	for _, item := range report.ActionRejections {
+		log.Printf("world action rejected: tick=%d action=%s session=%d err=%v", report.Tick, item.Action, item.SessionID, item.Err)
+	}
+	for _, item := range report.TickErrors {
+		log.Printf("world tick error: tick=%d entity=%d err=%v", report.Tick, item.EntityID, item.Err)
+	}
+	for _, item := range report.DeliveryErrors {
+		log.Printf("world delivery error: tick=%d session=%d delivery=%d type=%d err=%v", report.Tick, item.SessionID, item.Delivery, item.MessageType, item.Err)
+	}
+}
+
+func logNetworkErrors(ctx context.Context, events <-chan tcpudp.NetworkError) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-events:
+			log.Printf("network error: session=%d op=%s err=%v", event.SessionID, event.Operation, event.Err)
+		}
+	}
+}
