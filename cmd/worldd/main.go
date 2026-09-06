@@ -177,7 +177,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("build gameplay navigator: %v", err)
 	}
-
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
 	runtimeConfig := worldruntime.DefaultConfig()
@@ -201,9 +200,7 @@ func main() {
 		characterStateStore,
 		worldIdentity,
 	)
-	runtime := worldruntime.New(
-		sim,
-		runtimeConfig,
+	runtimeOptions := []worldruntime.Option{
 		worldruntime.WithDynamicWorld(nav),
 		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
 		worldruntime.WithSiegeMatch(loadedSiegeMatch.Definition),
@@ -213,7 +210,11 @@ func main() {
 		worldruntime.WithDeathPenalty(deathPenaltyService),
 		worldruntime.WithDeathOutcomeOutbox(deathOutbox),
 		worldruntime.WithCharacterStateOutbox(characterStateOutbox, characterStateWorld),
-	)
+	}
+	if *playtestMonster {
+		runtimeOptions = append(runtimeOptions, worldruntime.WithAutonomousMeleeAgent(newPlaytestMonsterAIConfig()))
+	}
+	runtime := worldruntime.New(sim, runtimeConfig, runtimeOptions...)
 	if *playtestMonster {
 		if err := runtime.EnqueueSpawnEntity(newPlaytestMonsterSpawn(loadedWorld.Definition.Agent)); err != nil {
 			log.Fatalf("queue playtest Monster spawn: %v", err)
@@ -357,30 +358,4 @@ func reviveProtectionTicks(seconds float64, tickRate int) (uint64, error) {
 		return 0, fmt.Errorf("post-revive-protection-seconds overflows tick duration")
 	}
 	return uint64(ticks), nil
-}
-
-func logStepReport(report worldruntime.StepReport) {
-	for _, item := range report.CommandErrors {
-		log.Printf("world command error: tick=%d command=%s session=%d err=%v", report.Tick, item.Command, item.SessionID, item.Err)
-	}
-	for _, item := range report.ActionRejections {
-		log.Printf("world action rejected: tick=%d action=%s session=%d err=%v", report.Tick, item.Action, item.SessionID, item.Err)
-	}
-	for _, item := range report.TickErrors {
-		log.Printf("world tick error: tick=%d entity=%d err=%v", report.Tick, item.EntityID, item.Err)
-	}
-	for _, item := range report.DeliveryErrors {
-		log.Printf("world delivery error: tick=%d session=%d delivery=%d type=%d err=%v", report.Tick, item.SessionID, item.Delivery, item.MessageType, item.Err)
-	}
-}
-
-func logNetworkErrors(ctx context.Context, events <-chan tcpudp.NetworkError) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event := <-events:
-			log.Printf("network error: session=%d op=%s err=%v", event.SessionID, event.Operation, event.Err)
-		}
-	}
 }
