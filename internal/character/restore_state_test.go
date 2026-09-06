@@ -12,7 +12,7 @@ func TestRegisterStateRestoresAuthoritativeHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := State{EntityID: 7, HP: 640, MaxHP: 1200}
+	want := State{EntityID: 7, HP: 640, MaxHP: 1200, MP: DefaultMaxMP, MaxMP: DefaultMaxMP}
 	if err := service.RegisterState(want); err != nil {
 		t.Fatal(err)
 	}
