@@ -177,7 +177,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("build gameplay navigator: %v", err)
 	}
-
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
 	runtimeConfig := worldruntime.DefaultConfig()
@@ -201,9 +200,7 @@ func main() {
 		characterStateStore,
 		worldIdentity,
 	)
-	runtime := worldruntime.New(
-		sim,
-		runtimeConfig,
+	runtimeOptions := []worldruntime.Option{
 		worldruntime.WithDynamicWorld(nav),
 		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
 		worldruntime.WithSiegeMatch(loadedSiegeMatch.Definition),
@@ -213,7 +210,11 @@ func main() {
 		worldruntime.WithDeathPenalty(deathPenaltyService),
 		worldruntime.WithDeathOutcomeOutbox(deathOutbox),
 		worldruntime.WithCharacterStateOutbox(characterStateOutbox, characterStateWorld),
-	)
+	}
+	if *playtestMonster {
+		runtimeOptions = append(runtimeOptions, worldruntime.WithAutonomousMeleeAgent(newPlaytestMonsterAIConfig()))
+	}
+	runtime := worldruntime.New(sim, runtimeConfig, runtimeOptions...)
 	if *playtestMonster {
 		if err := runtime.EnqueueSpawnEntity(newPlaytestMonsterSpawn(loadedWorld.Definition.Agent)); err != nil {
 			log.Fatalf("queue playtest Monster spawn: %v", err)

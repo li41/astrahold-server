@@ -9,7 +9,14 @@ import (
 const (
 	playtestMonsterEntityID    world.EntityID = 9001
 	playtestMonsterArchetypeID                = "wolf-gray-01"
+	playtestMonsterActionID                   = "wolf-bite"
+	playtestMonsterSpawnX       float32        = 2
+	playtestMonsterSpawnZ       float32        = -35
 )
+
+func playtestMonsterHome() world.Position {
+	return world.Position{X: playtestMonsterSpawnX, Z: playtestMonsterSpawnZ, Layer: 0}
+}
 
 func newPlaytestMonsterSpawn(agent gameplayworld.AgentDefaults) worldruntime.SpawnEntityRequest {
 	return worldruntime.SpawnEntityRequest{
@@ -17,12 +24,24 @@ func newPlaytestMonsterSpawn(agent gameplayworld.AgentDefaults) worldruntime.Spa
 			ID:          playtestMonsterEntityID,
 			Kind:        world.EntityMonster,
 			ArchetypeID: playtestMonsterArchetypeID,
-			Transform:   world.Transform{Position: world.Position{X: 2, Y: 0, Z: -35, Layer: 0}},
+			Transform:   world.Transform{Position: playtestMonsterHome()},
 		},
 		Speed:         4,
 		Radius:        agent.Radius,
 		MaxStepHeight: agent.MaxStepHeight,
 		HP:            200,
 		MaxHP:         200,
+	}
+}
+
+func newPlaytestMonsterAIConfig() worldruntime.AutonomousMeleeAgentConfig {
+	return worldruntime.AutonomousMeleeAgentConfig{
+		EntityID:        playtestMonsterEntityID,
+		Home:            playtestMonsterHome(),
+		ActionID:        playtestMonsterActionID,
+		AggroRange:      9,
+		LeashRange:      16,
+		AttackRange:     1.75,
+		ReturnTolerance: 0.25,
 	}
 }

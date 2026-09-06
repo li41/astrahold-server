@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-ground-fireball-001",
+  "revision": "vertical-slice-pve-wolf-001",
   "actions": [
     {
       "id": "basic-attack",
@@ -51,6 +51,15 @@
       "range": 4.5,
       "revive_hp_percent": 30,
       "cooldown_seconds": 10.0
+    },
+    {
+      "id": "wolf-bite",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 2.0,
+      "base_damage": 90,
+      "damage_type": "physical",
+      "cooldown_seconds": 1.35
     }
   ]
 }
