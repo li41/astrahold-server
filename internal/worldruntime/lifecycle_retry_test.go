@@ -27,8 +27,11 @@ func TestLifecycleBackpressureRetriesWithoutDeliveryLoss(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.SnapshotEveryTicks = 1
-	// 只容納一個 Reliable envelope，強制同一輪第二個 Spawn backpressure。
-	conn := session.NewQueueConnection(1, 16)
+	// Protocol v14+ registration emits two independent authoritative ReliableOrdered
+	// bootstrap views before lifecycle replication: InventorySnapshot and EquipmentSnapshot.
+	// Capacity 3 therefore admits those two plus EntitySpawn(1), deliberately forcing the
+	// second spawn to backpressure so this test keeps exercising lifecycle retry semantics.
+	conn := session.NewQueueConnection(3, 16)
 	s, err := session.New(1, 1, 20, conn)
 	if err != nil {
 		t.Fatal(err)
@@ -51,9 +54,25 @@ func TestLifecycleBackpressureRetriesWithoutDeliveryLoss(t *testing.T) {
 
 	select {
 	case envelope := <-conn.Reliable():
+		if _, ok := envelope.Message.(protocol.InventorySnapshot); !ok {
+			t.Fatalf("first reliable message=%T %#v, want InventorySnapshot", envelope.Message, envelope.Message)
+		}
+	default:
+		t.Fatal("expected inventory bootstrap in reliable queue")
+	}
+	select {
+	case envelope := <-conn.Reliable():
+		if _, ok := envelope.Message.(protocol.EquipmentSnapshot); !ok {
+			t.Fatalf("second reliable message=%T %#v, want EquipmentSnapshot", envelope.Message, envelope.Message)
+		}
+	default:
+		t.Fatal("expected equipment bootstrap in reliable queue")
+	}
+	select {
+	case envelope := <-conn.Reliable():
 		spawn, ok := envelope.Message.(protocol.EntitySpawn)
 		if !ok || spawn.EntityID != 1 {
-			t.Fatalf("first reliable message=%T %#v, want EntitySpawn(1)", envelope.Message, envelope.Message)
+			t.Fatalf("third reliable message=%T %#v, want EntitySpawn(1)", envelope.Message, envelope.Message)
 		}
 	default:
 		t.Fatal("expected first spawn in reliable queue")

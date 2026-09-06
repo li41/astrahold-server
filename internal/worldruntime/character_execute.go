@@ -45,11 +45,11 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{
-			ActionInstanceID: prepared.ActionInstanceID,
-			ActorEntityID: actor.ID,
-			ActionID: prepared.Definition.ID,
-			Result: protocol.CombatEventResurrect,
-			TargetEntityID: targetID,
+			ActionInstanceID:  prepared.ActionInstanceID,
+			ActorEntityID:     actor.ID,
+			ActionID:          prepared.Definition.ID,
+			Result:            protocol.CombatEventResurrect,
+			TargetEntityID:    targetID,
 			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true
@@ -73,19 +73,22 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			}
-			if target.Kind == world.EntityPlayer {
+			switch target.Kind {
+			case world.EntityPlayer:
 				r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report)
+			case world.EntityMonster:
+				r.spawnMonsterItemDrop(target, prepared.ActionInstanceID, report)
 			}
 		}
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{
-			ActionInstanceID: prepared.ActionInstanceID,
-			ActorEntityID: actor.ID,
-			ActionID: prepared.Definition.ID,
-			Result: protocol.CombatEventHit,
-			TargetEntityID: targetID,
-			Damage: prepared.Damage.Amount,
+			ActionInstanceID:  prepared.ActionInstanceID,
+			ActorEntityID:     actor.ID,
+			ActionID:          prepared.Definition.ID,
+			Result:            protocol.CombatEventHit,
+			TargetEntityID:    targetID,
+			Damage:            prepared.Damage.Amount,
 			CooldownReadyTick: cooldownReadyTick,
 		}, tick, report)
 		return true

@@ -89,19 +89,48 @@ type spawnEntityCommand struct{ request SpawnEntityRequest }
 
 func (spawnEntityCommand) name() string { return "spawn_entity" }
 
+// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment and pickup
+// keep their own typed protocol payloads and are routed before combat preparation; neither is a skill.
 type useActionCommand struct {
 	sessionID session.ID
 	sequence  uint32
 	action    protocol.ClientUseAction
+	equipment *protocol.ClientEquipmentCommand
+	pickup    *protocol.ClientPickupItem
 	ownership SessionOwnershipFence
 }
 
-func (useActionCommand) name() string { return "use_action" }
+func (c useActionCommand) name() string {
+	if c.equipment != nil {
+		return "equipment_command"
+	}
+	if c.pickup != nil {
+		return "pickup_item"
+	}
+	return "use_action"
+}
+
+type equipmentCommand = useActionCommand
+
+type npcCommand struct {
+	sessionID session.ID
+	sequence  uint32
+	intent    protocol.ClientInteractNPC
+	ownership SessionOwnershipFence
+}
+
+func (npcCommand) name() string { return "interact_npc" }
+
+type shopCommand struct {
+	sessionID session.ID
+	sequence  uint32
+	intent    protocol.ClientShopCommand
+	ownership SessionOwnershipFence
+}
+
+func (shopCommand) name() string { return "shop_command" }
 
 // setBlockerCommand remains the existing Step dispatch carrier for DynamicWorld mutations.
-// D.3C uses the explicit discriminator below for the Server-only round-reset control command
-// so the mutation still crosses the bounded world-owner queue instead of touching World state
-// from a scheduler/management goroutine.
 type setBlockerCommand struct {
 	id                  string
 	enabled             bool
@@ -123,7 +152,6 @@ func newCommandQueue(capacity int) *commandQueue {
 	}
 	return &commandQueue{ch: make(chan command, capacity)}
 }
-
 func (q *commandQueue) tryPush(c command) error {
 	select {
 	case q.ch <- c:
@@ -132,7 +160,6 @@ func (q *commandQueue) tryPush(c command) error {
 		return ErrCommandQueueFull
 	}
 }
-
 func (q *commandQueue) drain(max int) []command {
 	if max <= 0 {
 		return nil
@@ -148,5 +175,4 @@ func (q *commandQueue) drain(max int) []command {
 	}
 	return out
 }
-
 func (q *commandQueue) depth() int { return len(q.ch) }

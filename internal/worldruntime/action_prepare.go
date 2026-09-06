@@ -8,6 +8,16 @@ import (
 )
 
 func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uint64, delta time.Duration, report *StepReport) {
+	// Equipment and pickup share the existing bounded Reliable client-intent carrier, but remain
+	// distinct typed payloads and never enter combat preparation or the skill/action gameplay path.
+	if command.equipment != nil {
+		r.applyEquipmentCommand(name, command, report)
+		return
+	}
+	if command.pickup != nil {
+		r.applyPickupItem(name, command, report)
+		return
+	}
 	if command.ownership.Valid() {
 		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})

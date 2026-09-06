@@ -39,6 +39,7 @@ const (
 	EntityNPC
 	EntityMonster
 	EntitySiegeObject
+	EntityItemDrop
 )
 
 // Transform 是同步給其他系統的最小空間狀態。
