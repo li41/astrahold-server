@@ -34,17 +34,28 @@ func TestWorldTickMovesActorAndUpdatesAOI(t *testing.T) {
 	}
 }
 
-func TestSetMoveInputDoesNotMoveUntilTick(t *testing.T) {
+func TestSetMoveInputDoesNotMoveUntilTickAndUpdatesFacing(t *testing.T) {
 	move := movement.NewService(navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100}, 1)
 	sim := New(spatial.NewGrid(10), move)
 	if err := sim.Spawn(world.EntityState{ID: 1, Kind: world.EntityPlayer}, 5, 0.35, 0.5); err != nil {
 		t.Fatal(err)
 	}
-	if err := sim.SetMoveInput(1, movement.Input{Direction: world.Vec3{X: 1}}); err != nil {
+	if err := sim.SetMoveInput(1, movement.Input{Direction: world.Vec3{Z: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	entity, _ := sim.Entity(1)
-	if entity.Transform.Position.X != 0 {
+	if entity.Transform.Position.Z != 0 {
 		t.Fatalf("position changed before tick: %+v", entity.Transform.Position)
+	}
+	if entity.Transform.Yaw < 89.99 || entity.Transform.Yaw > 90.01 {
+		t.Fatalf("yaw=%f want=90", entity.Transform.Yaw)
+	}
+
+	if err := sim.SetMoveInput(1, movement.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	entity, _ = sim.Entity(1)
+	if entity.Transform.Yaw < 89.99 || entity.Transform.Yaw > 90.01 {
+		t.Fatalf("zero input changed facing yaw=%f", entity.Transform.Yaw)
 	}
 }
