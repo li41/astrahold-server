@@ -83,6 +83,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		}
 		if target.Kind == world.EntityMonster && actualDamage > 0 {
 			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
+			if actor.Kind == world.EntityPlayer && !state.Defeated {
+				r.provokeAutonomousMeleeMonster(targetID, actor.ID)
+			}
 		}
 		if state.Defeated {
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
