@@ -51,7 +51,9 @@ func TestJoinEmitsAuthoritativeInventorySnapshot(t *testing.T) {
 		t.Fatalf("message = %T, want protocol.InventorySnapshot", inventoryEnvelope.Message)
 	}
 	want := protocol.InventorySnapshot{
-		Revision: 3,
+		Revision:           3,
+		CurrentCarryWeight: 16,
+		MaxCarryWeight:     100,
 		Items: []protocol.InventoryItemStack{
 			{ArchetypeID: "item_minor_healing_potion", Quantity: 5},
 			{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
