@@ -106,6 +106,10 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
 
+	// Loot observes the generic authoritative Defeated transition before any managed corpse can
+	// leave the world. Item-drop ownership remains separate from corpse/despawn/respawn policy.
+	r.stepMonsterLoot(&report)
+
 	// Managed monsters keep a short authoritative corpse window after defeat. Removal happens
 	// only after defeated vitals have converged; EntityID reuse waits for old despawn knowledge.
 	r.stepMonsterLifecycles(tick, &report)
