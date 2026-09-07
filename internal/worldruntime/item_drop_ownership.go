@@ -1,6 +1,8 @@
 package worldruntime
 
 import (
+	"strings"
+
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
@@ -13,4 +15,16 @@ func (r *Runtime) EnqueueFencedPickupItem(fence SessionOwnershipFence, sequence 
 	}
 	payload := intent
 	return r.queue.tryPush(useActionCommand{sessionID: fence.SessionID, sequence: sequence, pickup: &payload, ownership: fence})
+}
+
+func (r *Runtime) EnqueueFencedUseItem(fence SessionOwnershipFence, sequence uint32, intent protocol.ClientUseItem) error {
+	if !fence.Valid() || sequence == 0 {
+		return ErrCharacterOwnershipFenceInvalid
+	}
+	if err := validateUseItemIntent(intent); err != nil {
+		return err
+	}
+	intent.ItemArchetypeID = strings.TrimSpace(intent.ItemArchetypeID)
+	payload := intent
+	return r.queue.tryPush(useActionCommand{sessionID: fence.SessionID, sequence: sequence, useItem: &payload, ownership: fence})
 }
