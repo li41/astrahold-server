@@ -63,7 +63,7 @@ type Snapshot struct {
 	Position  world.Position
 	Yaw       float32
 	Respawn   DefeatedRespawn
-	Inventory InventoryState
+	Inventory *InventoryState
 }
 
 type Record struct {
@@ -108,7 +108,7 @@ type wireRecord struct {
 	Layer           world.LayerID         `json:"layer"`
 	Yaw             float32               `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
-	Inventory        InventoryState        `json:"inventory,omitempty"`
+	Inventory        *InventoryState       `json:"inventory,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -121,8 +121,8 @@ func Open(root string) (*Store, error) {
 func (s *Store) Path() string { return s.root }
 
 // Load accepts v1-v4 records. v1/v2 predate MP and migrate to the legacy full resource pool.
-// v1-v3 predate inventory persistence and remain explicitly Inventory.Initialized=false so
-// worldruntime can preserve starter-inventory bootstrap semantics on the first post-upgrade join.
+// v1-v3 predate inventory persistence and load with Snapshot.Inventory=nil. A v4 empty inventory
+// is represented by a non-nil zero InventoryState, preserving the migration/bootstrap distinction.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -165,14 +165,16 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		return Record{}, false, ErrCorruptRecord
 	}
 	if wire.SchemaVersion == LegacySchemaVersion && wire.DefeatedRespawn != nil { return Record{}, false, ErrCorruptRecord }
-	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory.Initialized { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory != nil { return Record{}, false, ErrCorruptRecord }
 
 	mp, maxMP := wire.MP, wire.MaxMP
 	if wire.SchemaVersion < ResourceSchemaVersion {
 		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
 	}
-	inventoryState := InventoryState{}
+	var inventoryState *InventoryState
 	if wire.SchemaVersion >= InventorySchemaVersion {
+		// Presence is mandatory for v4 so omitted inventory cannot be mistaken for a genuinely empty one.
+		if wire.Inventory == nil { return Record{}, false, ErrCorruptRecord }
 		inventoryState = CanonicalInventoryState(wire.Inventory)
 	}
 	record := Record{
