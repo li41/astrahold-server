@@ -46,7 +46,9 @@ Server Issue #139 已回覆 canonical target。Server -> Client 正式 handoff �
 
 `[gpt-server] Adopt canonical Server Protocol v20 integration target`
 
-目前 Server source-level canonical target 已驗證；下一個跨 repo checkpoint 是 gpt-client 消費 v20 並做 live Three.js BrowserWS runtime / presentation validation。
+`gpt-client` 已回覆接受 canonical v20 target，並在 Client repo 建立 `feat/canonical-v20-client`；Client 會自行完成 semantic mirror / codec / Inventory / Equipment / NPC / Shop / Pickup / Respawn consumption，再 against exact Server canonical head 做 Browser live checkpoint。Carry weight 由 Client 顯示 Server snapshot，不在 Client 重算。
+
+Canonical branch 在 Client integration 期間維持 frozen；後續 Server gameplay slice 由 canonical head 另開 stacked branch，不讓 Client target 漂移。
 
 ## Protocol v13 -> v20 Client-visible delta
 
@@ -68,7 +70,13 @@ Monster evade、loot chance、patrol 等 Server-only gameplay semantics 不要�
 - PR #136 — authoritative carry-weight snapshot v20。
 - PR #137 — Server-authored probabilistic monster loot。
 - PR #138 — deterministic authored idle patrol。
-- PR #141 — canonical Three.js Server v20 integration target；目前 Ready for review。
+- PR #141 — canonical Three.js Server v20 integration target；Ready for review；frozen for Client integration。
+- PR #142 — stationary authoritative melee target facing；基於 #141；Server CI test / vet / race PASS。
+- PR #143 — ranged opening retaliation aggro；基於 #142；Server CI test / vet / race PASS。
+
+PR #142 修正怪物進入近戰距離停步後 yaw 不再跟目標更新的問題；狼會只轉向、不滑步，cooldown 等待期間仍追蹤目標 facing。
+
+PR #143 修正合法遠程先手在 proximity aggro 外命中怪物後，怪物同 tick evade / 補滿的問題；未交戰怪會對實際造成傷害的玩家反擊，但不搶換既有目標、不打斷 evade，也沒有提前建立完整 threat table。
 
 實際 merge / rebase / retarget 順序每次以 GitHub 當下狀態重新確認；本文件不是永久 branch topology。
 
@@ -90,8 +98,8 @@ Monster evade、loot chance、patrol 等 Server-only gameplay semantics 不要�
 近期優先順序：
 
 1. 等待 / 回應 gpt-client 對 Protocol v20 canonical target 的 integration feedback；Client source 由 gpt-client 自己修改。
-2. Server 可繼續收斂 PvE loop，不因 Client presentation 開發停止 authoritative gameplay work。
-3. 下一批 Server gameplay 優先 movement / facing / combat readability / loot / item use 等玩家可感知缺口。
+2. Server 繼續收斂 PvE loop，不因 Client presentation 開發停止 authoritative gameplay work。
+3. 下一批 Server gameplay 優先 combat encounter consistency、loot / item use 等玩家可感知缺口。
 4. 不先擴張大型 guild / auction / crafting / siege framework，除非當前 playable loop 已需要。
 
 每次選下一個 slice 時，先問：
