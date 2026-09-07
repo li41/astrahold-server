@@ -16,6 +16,7 @@ func TestStoreReadsLegacyV1AliveRecord(t *testing.T) {
 	}
 	identity := trusted(t, "character:legacy-alive")
 	snapshot := testSnapshot()
+	snapshot.Inventory = InventoryState{}
 	wire := wireRecord{
 		SchemaVersion: LegacySchemaVersion,
 		CharacterID: string(identity.ID), Revision: 9,
