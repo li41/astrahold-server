@@ -36,3 +36,32 @@ func TestClientPickupItemStrictDecodeRejectsUnknownFields(t *testing.T) {
 		t.Fatal("expected strict decoder to reject client-supplied pickup quantity")
 	}
 }
+
+func TestClientUseItemRoundTrip(t *testing.T) {
+	codec := Codec{}
+	want := protocol.ClientUseItem{ItemArchetypeID: "item_minor_healing_potion"}
+
+	payload, err := codec.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal use item: %v", err)
+	}
+	decoded, err := codec.Unmarshal(protocol.MessageClientUseItem, payload)
+	if err != nil {
+		t.Fatalf("unmarshal use item: %v", err)
+	}
+	got, ok := decoded.(protocol.ClientUseItem)
+	if !ok {
+		t.Fatalf("decoded type = %T, want protocol.ClientUseItem", decoded)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round trip = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientUseItemStrictDecodeRejectsClientRestoreAmount(t *testing.T) {
+	codec := Codec{}
+	_, err := codec.Unmarshal(protocol.MessageClientUseItem, []byte(`{"item_archetype_id":"item_minor_healing_potion","restore_amount":999999}`))
+	if err == nil {
+		t.Fatal("expected strict decoder to reject client-supplied restore amount")
+	}
+}
