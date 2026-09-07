@@ -107,6 +107,9 @@ func (r *Runtime) removeSessionInventoryDelivery(id session.ID) {
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 	r.pruneItemUseCooldowns(tick)
+	// Item-use results are ordered Reliable feedback, not gameplay truth, but unlike snapshots
+	// they cannot be reconstructed later. Retry retained results before other inventory traffic.
+	r.retryPendingItemUseResults(tick, report)
 	if len(r.sessionInventoryPending) == 0 {
 		return
 	}
