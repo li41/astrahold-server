@@ -110,8 +110,10 @@ type inventoryItemStack struct {
 	Quantity    uint32 `json:"quantity"`
 }
 type inventorySnapshot struct {
-	Revision uint64               `json:"revision"`
-	Items    []inventoryItemStack `json:"items"`
+	Revision           uint64               `json:"revision"`
+	CurrentCarryWeight uint64               `json:"current_carry_weight"`
+	MaxCarryWeight     uint64               `json:"max_carry_weight"`
+	Items              []inventoryItemStack `json:"items"`
 }
 type equipmentSlotState struct {
 	Slot            string `json:"slot"`
