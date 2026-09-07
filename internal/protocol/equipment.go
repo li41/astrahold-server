@@ -14,7 +14,10 @@ const (
 
 type EquipmentSlot string
 
-const EquipmentSlotMainHand EquipmentSlot = "main_hand"
+const (
+	EquipmentSlotMainHand EquipmentSlot = "main_hand"
+	EquipmentSlotOffHand  EquipmentSlot = "off_hand"
+)
 
 // ClientEquipmentCommand is intent only. The Server validates inventory ownership,
 // slot legality and the resulting authoritative transaction.
