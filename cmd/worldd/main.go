@@ -218,6 +218,7 @@ func main() {
 		runtimeOptions = append(
 			runtimeOptions,
 			worldruntime.WithAutonomousMeleeAgent(newPlaytestMonsterAIConfig()),
+			worldruntime.WithMonsterLootCatalog(newPlaytestMonsterLootCatalog()),
 			worldruntime.WithMonsterLifecycle(newPlaytestMonsterLifecycleConfig(loadedWorld.Definition.Agent, *tickRate)),
 		)
 	}
