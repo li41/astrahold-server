@@ -33,6 +33,9 @@ type clientEquipmentCommand struct {
 	Slot            string `json:"slot"`
 	ItemArchetypeID string `json:"item_archetype_id,omitempty"`
 }
+type clientUseItem struct {
+	ItemArchetypeID string `json:"item_archetype_id"`
+}
 type actionStarted struct {
 	ActionInstanceID uint64   `json:"action_instance_id"`
 	ActorEntityID    uint64   `json:"actor_entity_id"`
