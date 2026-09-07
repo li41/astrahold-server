@@ -83,7 +83,12 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		for _, stack := range stacks {
 			items = append(items, protocol.InventoryItemStack{ArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity})
 		}
-		inventoryMessage := protocol.InventorySnapshot{Revision: inv.Revision(), Items: items}
+		inventoryMessage := protocol.InventorySnapshot{
+			Revision:           inv.Revision(),
+			CurrentCarryWeight: inv.CurrentWeight(),
+			MaxCarryWeight:     inv.MaxWeight(),
+			Items:              items,
+		}
 		inventoryEnvelope := protocol.Envelope{
 			Delivery:   protocol.DeliveryReliableOrdered,
 			Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
