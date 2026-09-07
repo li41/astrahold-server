@@ -1,9 +1,11 @@
 package worldruntime
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"hash/fnv"
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
@@ -18,7 +20,10 @@ const monsterAutoLootRadiusMeters = float32(2.0)
 var (
 	ErrInvalidMonsterLoot              = errors.New("worldruntime: invalid monster loot configuration")
 	ErrMonsterLootInventoryUnavailable = errors.New("worldruntime: monster loot inventory unavailable")
+	monsterLootProcessSecret           = newMonsterLootRollSecret()
 )
+
+type monsterLootRollSecret [32]byte
 
 type monsterLootContribution struct {
 	characterID characteridentity.ID
@@ -173,7 +178,7 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 				if total == 0 {
 					continue
 				}
-				ticket := monsterLootDeterministicTicket(entityID, state.incarnation, index, total)
+				ticket := monsterLootTicket(entityID, state.incarnation, index, total)
 				selected, ok := selectDamageWeightedMonsterLootCandidate(candidates, ticket)
 				if !ok {
 					continue
@@ -212,8 +217,9 @@ func (r *Runtime) nearbyMonsterLootCandidates(position world.Position, state *mo
 			sessionID: s.ID, characterID: s.CharacterIdentity.ID, damage: contribution.damage,
 		})
 	}
-	// Probability is damage-proportional; stable CharacterIdentity ordering makes deterministic
-	// ticket intervals independent from transient session enumeration order.
+	// Probability is damage-proportional; stable CharacterIdentity ordering makes ticket intervals
+	// independent from transient session enumeration order. The ticket itself uses Server-private
+	// entropy, so clients cannot predict the winning interval from public entity state.
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].characterID < candidates[j].characterID
 	})
@@ -256,17 +262,41 @@ func selectDamageWeightedMonsterLootCandidate(candidates []monsterLootCandidate,
 	return monsterLootCandidate{}, false
 }
 
-func monsterLootDeterministicTicket(monsterID world.EntityID, incarnation uint64, dropIndex int, total uint64) uint64 {
+func newMonsterLootRollSecret() monsterLootRollSecret {
+	var secret monsterLootRollSecret
+	if _, err := rand.Read(secret[:]); err != nil {
+		panic("worldruntime: crypto/rand unavailable for monster loot rolls")
+	}
+	return secret
+}
+
+func monsterLootTicket(monsterID world.EntityID, incarnation uint64, dropIndex int, total uint64) uint64 {
+	return monsterLootTicketWithSecret(monsterLootProcessSecret, monsterID, incarnation, dropIndex, total)
+}
+
+// monsterLootTicketWithSecret derives an unbiased weighted-lottery ticket from Server-private
+// entropy. Public EntityID/incarnation/drop-index data provides stable per-drop domain input, while
+// HMAC prevents a client from calculating the winning ticket. Rejection sampling avoids modulo bias.
+func monsterLootTicketWithSecret(secret monsterLootRollSecret, monsterID world.EntityID, incarnation uint64, dropIndex int, total uint64) uint64 {
 	if total == 0 {
 		return 0
 	}
-	var encoded [24]byte
+	threshold := -total % total
+	var encoded [32]byte
 	binary.LittleEndian.PutUint64(encoded[0:8], uint64(monsterID))
 	binary.LittleEndian.PutUint64(encoded[8:16], incarnation)
 	binary.LittleEndian.PutUint64(encoded[16:24], uint64(dropIndex))
-	h := fnv.New64a()
-	_, _ = h.Write(encoded[:])
-	return h.Sum64() % total
+	for counter := uint64(0); ; counter++ {
+		binary.LittleEndian.PutUint64(encoded[24:32], counter)
+		mac := hmac.New(sha256.New, secret[:])
+		_, _ = mac.Write([]byte("astrahold/monster-loot-winner/v1"))
+		_, _ = mac.Write(encoded[:])
+		sum := mac.Sum(nil)
+		sample := binary.LittleEndian.Uint64(sum[:8])
+		if sample >= threshold {
+			return sample % total
+		}
+	}
 }
 
 func (r *Runtime) tryAutoGrantMonsterLoot(candidate monsterLootCandidate, itemArchetypeID string, dropID world.EntityID, report *StepReport) bool {
