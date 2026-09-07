@@ -144,6 +144,17 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 	return item, true
 }
 
+// UnitWeights returns a defensive copy of the authored carry weight for every catalog item.
+// Inventory policy consumes this view so equipment has one Server-authoritative weight source.
+func (c *Catalog) UnitWeights() map[string]uint32 {
+	if c == nil { return nil }
+	weights := make(map[string]uint32, len(c.byItem))
+	for itemArchetypeID, item := range c.byItem {
+		weights[itemArchetypeID] = item.Weight
+	}
+	return weights
+}
+
 func (d Definition) DamageRangeFor(size BodySize) DamageRange {
 	if d.Weapon == nil { return DamageRange{} }
 	switch size {
