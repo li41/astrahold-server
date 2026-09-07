@@ -66,11 +66,23 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 			return false
 		}
+		beforeState, ok := r.combatantState(targetID)
+		if !ok {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: ErrSessionEntityNotFound})
+			return false
+		}
 		r.emitActionStarted(actor.ID, startPrepared, tick, report)
 		state, err := r.reduceCombatantHP(targetID, prepared.Damage.Amount)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
+		}
+		actualDamage := prepared.Damage.Amount
+		if actualDamage > beforeState.HP {
+			actualDamage = beforeState.HP
+		}
+		if target.Kind == world.EntityMonster && actualDamage > 0 {
+			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
 		}
 		if state.Defeated {
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
