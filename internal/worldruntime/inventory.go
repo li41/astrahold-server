@@ -15,6 +15,7 @@ var defaultInventoryUnitWeights = map[string]uint32{
 	"item_minor_healing_potion": 1,
 	"item_minor_mana_potion":    1,
 	"item_training_blade":       8,
+	"item_mana_siphon_staff":    8,
 	"item_gray_wolf_pelt":       2,
 }
 
@@ -64,7 +65,7 @@ func restoreCharacterInventory(maxStacks int, state characterstate.InventoryStat
 	}
 	inv := newCharacterInventory(maxStacks)
 	if state.MainHand != "" {
-		if state.MainHand != trainingBladeArchetypeID {
+		if !mainHandItemAllowed(state.MainHand) {
 			return nil, ErrEquipmentItemNotAllowed
 		}
 		// Add/equip first so an equipped item does not consume a stack slot while the remaining
@@ -177,7 +178,7 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 					Delivery:    equipmentEnvelope.Delivery,
 					MessageType: equipmentMessage.Type(),
 					Err:         err,
-				})
+			})
 			}
 			continue
 		}
