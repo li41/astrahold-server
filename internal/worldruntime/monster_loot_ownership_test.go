@@ -20,7 +20,7 @@ import (
 func TestMonsterLootSingleNearbyContributorAutoAddsToInventory(t *testing.T) {
 	rt, sim := newLootDistributionRuntime(t, []combat.ActionDefinition{{
 		ID: "loot-strike", Targets: []combat.TargetKind{combat.TargetEntity}, Range: 6,
-		BaseDamage: 200, DamageType: combat.DamagePhysical, CooldownSeconds: 0.5,
+		BaseDamage: 300, DamageType: combat.DamagePhysical, CooldownSeconds: 0.5,
 	}})
 	player, conn := addLootDistributionPlayer(t, rt, 1, 10, "loot-single", 0)
 	spawn := testMonsterLootSpawn(testLootSourceArchetypeID)
@@ -42,6 +42,7 @@ func TestMonsterLootSingleNearbyContributorAutoAddsToInventory(t *testing.T) {
 		t.Fatalf("inventory=%v pelt=%d", inv, inventoryQuantity(inv, testLootItemArchetypeID))
 	}
 	state := rt.monsterLootStates[spawn.Entity.ID]
+	// The authored hit is 300, but this monster has only 200 HP. Loot odds use actual damage.
 	if state == nil || state.contributions[player.CharacterIdentity.ID].damage != 200 {
 		t.Fatalf("damage contribution=%#v", state)
 	}
