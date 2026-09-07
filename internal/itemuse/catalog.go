@@ -1,6 +1,6 @@
 // Package itemuse owns Server-authoritative consumable item gameplay definitions.
 // Presentation metadata stays client-side; this package only resolves stable item archetype IDs
-// into gameplay resource effects.
+// into gameplay resource effects and cooldown policy.
 package itemuse
 
 import (
@@ -26,6 +26,8 @@ type Definition struct {
 	ItemArchetypeID string   `json:"item_archetype_id"`
 	Resource        Resource `json:"resource"`
 	RestoreAmount   uint32   `json:"restore_amount"`
+	CooldownGroup   string   `json:"cooldown_group"`
+	CooldownTicks   uint64   `json:"cooldown_ticks"`
 }
 
 type CatalogDefinition struct {
@@ -64,7 +66,8 @@ func New(definition CatalogDefinition) (*Catalog, error) {
 	}
 	for _, item := range definition.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
-		if item.ItemArchetypeID == "" || item.RestoreAmount == 0 {
+		item.CooldownGroup = strings.TrimSpace(item.CooldownGroup)
+		if item.ItemArchetypeID == "" || item.RestoreAmount == 0 || item.CooldownGroup == "" || item.CooldownTicks == 0 {
 			return nil, ErrInvalidCatalog
 		}
 		switch item.Resource {
