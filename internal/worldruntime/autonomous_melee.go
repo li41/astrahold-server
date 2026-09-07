@@ -30,8 +30,9 @@ type AutonomousMeleeAgentConfig struct {
 }
 
 type autonomousMeleeAgent struct {
-	config   AutonomousMeleeAgentConfig
-	targetID world.EntityID
+	config        AutonomousMeleeAgentConfig
+	targetID      world.EntityID
+	returningHome bool
 }
 
 func WithAutonomousMeleeAgent(config AutonomousMeleeAgentConfig) Option {
@@ -83,35 +84,54 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 	actor, ok := r.world.Entity(agent.config.EntityID)
 	if !ok {
 		agent.targetID = 0
+		agent.returningHome = false
 		return
 	}
 	state, ok := r.combatantState(actor.ID)
 	if !ok || state.Defeated {
 		agent.targetID = 0
+		agent.returningHome = false
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
 		return
 	}
 	if actor.Kind != world.EntityMonster || actor.Transform.Position.Layer != agent.config.Home.Layer {
 		agent.targetID = 0
+		agent.returningHome = false
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
+		return
+	}
+
+	if agent.returningHome {
+		r.stepAutonomousMeleeReturnHome(agent, actor, report)
 		return
 	}
 
 	leashSq := agent.config.LeashRange * agent.config.LeashRange
 	if actor.Transform.Position.DistanceXZSquared(agent.config.Home) > leashSq {
-		agent.targetID = 0
-		r.steerAutonomousHome(actor, agent.config, report)
+		r.beginAutonomousMeleeReturnHome(agent, actor, report)
 		return
 	}
 
-	target, valid := r.autonomousMeleeTarget(actor, agent.config, agent.targetID, tick)
-	if !valid {
+	var target world.EntityState
+	var valid bool
+	if agent.targetID != 0 {
+		target, valid = r.autonomousMeleeTarget(actor, agent.config, agent.targetID, tick)
+		if !valid {
+			r.beginAutonomousMeleeReturnHome(agent, actor, report)
+			return
+		}
+	} else {
 		target, valid = r.acquireAutonomousMeleeTarget(actor, agent.config, tick)
 		if valid {
 			agent.targetID = target.ID
 		} else {
-			agent.targetID = 0
-			r.steerAutonomousHome(actor, agent.config, report)
+			toleranceSq := agent.config.ReturnTolerance * agent.config.ReturnTolerance
+			if actor.Transform.Position.DistanceXZSquared(agent.config.Home) > toleranceSq {
+				r.beginAutonomousMeleeReturnHome(agent, actor, report)
+				return
+			}
+			r.setAutonomousMove(actor.ID, world.Vec3{}, report)
+			r.restoreAutonomousMeleeVitalsAtHome(actor.ID, report)
 			return
 		}
 	}
@@ -139,6 +159,38 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 		X: target.Transform.Position.X - actor.Transform.Position.X,
 		Z: target.Transform.Position.Z - actor.Transform.Position.Z,
 	}, report)
+}
+
+func (r *Runtime) beginAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, actor world.EntityState, report *StepReport) {
+	agent.targetID = 0
+	agent.returningHome = true
+	r.stepAutonomousMeleeReturnHome(agent, actor, report)
+}
+
+func (r *Runtime) stepAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, actor world.EntityState, report *StepReport) {
+	toleranceSq := agent.config.ReturnTolerance * agent.config.ReturnTolerance
+	if actor.Transform.Position.DistanceXZSquared(agent.config.Home) <= toleranceSq {
+		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
+		r.restoreAutonomousMeleeVitalsAtHome(actor.ID, report)
+		agent.returningHome = false
+		return
+	}
+	r.setAutonomousMove(actor.ID, world.Vec3{
+		X: agent.config.Home.X - actor.Transform.Position.X,
+		Z: agent.config.Home.Z - actor.Transform.Position.Z,
+	}, report)
+}
+
+func (r *Runtime) restoreAutonomousMeleeVitalsAtHome(entityID world.EntityID, report *StepReport) {
+	state, ok := r.combatantState(entityID)
+	if !ok || state.Defeated || (state.HP == state.MaxHP && state.MP == state.MaxMP) {
+		return
+	}
+	if _, err := r.characters.RestoreAliveFull(entityID); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "autonomous_melee_restore", Err: err})
+		return
+	}
+	r.markEntityVitalsDirty(entityID)
 }
 
 func (r *Runtime) autonomousMeleeTarget(actor world.EntityState, config AutonomousMeleeAgentConfig, targetID world.EntityID, tick uint64) (world.EntityState, bool) {
@@ -195,18 +247,6 @@ func (r *Runtime) acquireAutonomousMeleeTarget(actor world.EntityState, config A
 		}
 	}
 	return best, found
-}
-
-func (r *Runtime) steerAutonomousHome(actor world.EntityState, config AutonomousMeleeAgentConfig, report *StepReport) {
-	toleranceSq := config.ReturnTolerance * config.ReturnTolerance
-	if actor.Transform.Position.DistanceXZSquared(config.Home) <= toleranceSq {
-		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
-		return
-	}
-	r.setAutonomousMove(actor.ID, world.Vec3{
-		X: config.Home.X - actor.Transform.Position.X,
-		Z: config.Home.Z - actor.Transform.Position.Z,
-	}, report)
 }
 
 func (r *Runtime) setAutonomousMove(entityID world.EntityID, direction world.Vec3, report *StepReport) {
