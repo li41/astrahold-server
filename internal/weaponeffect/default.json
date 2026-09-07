@@ -1,0 +1,9 @@
+{
+  "revision": "weapon-effects-v1",
+  "weapons": [
+    {
+      "item_archetype_id": "item_mana_siphon_staff",
+      "mana_restore_on_damage_hit": 5
+    }
+  ]
+}
