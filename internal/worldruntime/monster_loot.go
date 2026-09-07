@@ -1,28 +1,47 @@
 package worldruntime
 
 import (
+	"encoding/binary"
 	"errors"
+	"hash/fnv"
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-var ErrInvalidMonsterLoot = errors.New("worldruntime: invalid monster loot configuration")
+const monsterAutoLootRadiusMeters = float32(2.0)
+
+var (
+	ErrInvalidMonsterLoot            = errors.New("worldruntime: invalid monster loot configuration")
+	ErrMonsterLootInventoryUnavailable = errors.New("worldruntime: monster loot inventory unavailable")
+)
+
+type monsterLootContribution struct {
+	characterID characteridentity.ID
+	damage      uint64
+}
 
 type monsterLootState struct {
 	sourceArchetypeID string
 	configured        bool
 	awarded           bool
-	ownerCharacterID  characteridentity.ID
-	dropOwners        map[world.EntityID]characteridentity.ID
+	incarnation       uint64
+	contributions     map[characteridentity.ID]monsterLootContribution
+}
+
+type monsterLootCandidate struct {
+	sessionID   session.ID
+	characterID characteridentity.ID
+	damage      uint64
 }
 
 // WithMonsterLootCatalog installs server-authored loot data. Combat and monster lifecycle do not
-// know concrete loot tables; worldruntime observes the same authoritative Defeated transition and
-// materializes generic item-drop entities through the existing pickup path.
+// know concrete loot tables; worldruntime observes the authoritative Defeated transition and then
+// applies the Server-owned nearby auto-loot policy or leaves public item-drop entities on the ground.
 func WithMonsterLootCatalog(catalog *loot.Catalog) Option {
 	if catalog == nil {
 		panic(ErrInvalidMonsterLoot)
@@ -37,7 +56,7 @@ func WithMonsterLootCatalog(catalog *loot.Catalog) Option {
 
 // trackMonsterLootEntity starts a fresh loot incarnation only after the normal world + character
 // spawn path succeeds. Lifecycle respawn uses applySpawnEntity too, so the same EntityID is re-armed
-// without introducing a monster-specific spawn pipeline.
+// without introducing a monster-specific spawn pipeline. Damage credit never crosses incarnations.
 func (r *Runtime) trackMonsterLootEntity(entity world.EntityState) {
 	if r.monsterLootCatalog == nil || entity.Kind != world.EntityMonster {
 		return
@@ -45,26 +64,28 @@ func (r *Runtime) trackMonsterLootEntity(entity world.EntityState) {
 	_, configured := r.monsterLootCatalog.DropsFor(entity.ArchetypeID)
 	state, exists := r.monsterLootStates[entity.ID]
 	if !exists {
-		state = &monsterLootState{dropOwners: make(map[world.EntityID]characteridentity.ID)}
+		state = &monsterLootState{contributions: make(map[characteridentity.ID]monsterLootContribution)}
 		r.monsterLootStates[entity.ID] = state
 		r.monsterLootEntityIDs = append(r.monsterLootEntityIDs, entity.ID)
 		sort.Slice(r.monsterLootEntityIDs, func(i, j int) bool {
 			return r.monsterLootEntityIDs[i] < r.monsterLootEntityIDs[j]
 		})
-	} else if state.dropOwners == nil {
-		state.dropOwners = make(map[world.EntityID]characteridentity.ID)
+	} else if state.contributions == nil {
+		state.contributions = make(map[characteridentity.ID]monsterLootContribution)
+	}
+	if state.incarnation != ^uint64(0) {
+		state.incarnation++
 	}
 	state.sourceArchetypeID = entity.ArchetypeID
 	state.configured = configured
 	state.awarded = false
-	state.ownerCharacterID = ""
+	clear(state.contributions)
 }
 
-// recordMonsterLootOwner captures the durable character identity that delivered the authoritative
-// defeating hit. Server-owned/environment defeats keep ownerCharacterID empty and therefore produce
-// public drops. Ownership is recorded only for a real source Session bound to the attacking entity.
-func (r *Runtime) recordMonsterLootOwner(monsterID, actorID world.EntityID, sourceSessionID session.ID) {
-	if sourceSessionID == 0 {
+// recordMonsterLootDamage records only actual successful player damage. Rejected attacks, misses,
+// Server-owned AI and overkill beyond the target's remaining HP never inflate a player's loot odds.
+func (r *Runtime) recordMonsterLootDamage(monsterID, actorID world.EntityID, sourceSessionID session.ID, actualDamage uint32) {
+	if sourceSessionID == 0 || actualDamage == 0 {
 		return
 	}
 	state := r.monsterLootStates[monsterID]
@@ -75,11 +96,32 @@ func (r *Runtime) recordMonsterLootOwner(monsterID, actorID world.EntityID, sour
 	if !ok || s.EntityID != actorID || !s.CharacterIdentity.Valid() {
 		return
 	}
-	state.ownerCharacterID = s.CharacterIdentity.ID
+	id := s.CharacterIdentity.ID
+	contribution := state.contributions[id]
+	contribution.characterID = id
+	amount := uint64(actualDamage)
+	if contribution.damage > ^uint64(0)-amount {
+		contribution.damage = ^uint64(0)
+	} else {
+		contribution.damage += amount
+	}
+	state.contributions[id] = contribution
+}
+
+// resetMonsterLootContributions is part of encounter reset: damage from a failed leash pull cannot
+// survive evade and improve the next attempt's loot probability.
+func (r *Runtime) resetMonsterLootContributions(monsterID world.EntityID) {
+	state := r.monsterLootStates[monsterID]
+	if state == nil || len(state.contributions) == 0 {
+		return
+	}
+	clear(state.contributions)
 }
 
 // stepMonsterLoot runs after authoritative simulation/combat updates and before corpse lifecycle.
-// The first observed Defeated state wins exactly once for the current spawn incarnation.
+// Every resolved item is first materialized as an immediately-public ground drop. Eligible nearby
+// contributors may then receive it directly; if direct inventory insertion cannot succeed, the same
+// public drop simply remains in the world. There is deliberately no pickup reservation timer.
 func (r *Runtime) stepMonsterLoot(report *StepReport) {
 	if r.monsterLootCatalog == nil {
 		return
@@ -109,48 +151,140 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 			if err != nil {
 				for _, spawnedID := range spawned {
 					r.world.Remove(spawnedID)
-					delete(state.dropOwners, spawnedID)
 				}
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot", Err: err})
 				failed = true
 				break
 			}
 			spawned = append(spawned, dropID)
-			if state.ownerCharacterID != "" {
-				state.dropOwners[dropID] = state.ownerCharacterID
+		}
+		if failed {
+			continue
+		}
+
+		candidates := r.nearbyMonsterLootCandidates(monster.Transform.Position, state)
+		for index, dropID := range spawned {
+			if len(candidates) == 0 {
+				continue
 			}
+			winner := candidates[0]
+			if len(candidates) > 1 {
+				total := monsterLootCandidateTotalDamage(candidates)
+				if total == 0 {
+					continue
+				}
+				ticket := monsterLootDeterministicTicket(entityID, state.incarnation, index, total)
+				selected, ok := selectDamageWeightedMonsterLootCandidate(candidates, ticket)
+				if !ok {
+					continue
+				}
+				winner = selected
+			}
+			r.tryAutoGrantMonsterLoot(winner, drops[index].ItemArchetypeID, dropID, report)
 		}
-		if !failed {
-			state.awarded = true
-		}
+		state.awarded = true
 	}
 }
 
-func (r *Runtime) itemDropPickupOwner(dropID world.EntityID) (characteridentity.ID, bool) {
-	for _, monsterID := range r.monsterLootEntityIDs {
-		state := r.monsterLootStates[monsterID]
-		if state == nil || len(state.dropOwners) == 0 {
+func (r *Runtime) nearbyMonsterLootCandidates(position world.Position, state *monsterLootState) []monsterLootCandidate {
+	if state == nil || len(state.contributions) == 0 {
+		return nil
+	}
+	radiusSq := monsterAutoLootRadiusMeters * monsterAutoLootRadiusMeters
+	candidates := make([]monsterLootCandidate, 0, len(state.contributions))
+	for _, s := range r.sessions.List() {
+		contribution, contributed := state.contributions[s.CharacterIdentity.ID]
+		if !contributed || contribution.damage == 0 {
 			continue
 		}
-		owner, ok := state.dropOwners[dropID]
-		if ok {
-			return owner, true
+		player, exists := r.world.Entity(s.EntityID)
+		if !exists || player.Kind != world.EntityPlayer || player.Transform.Position.Layer != position.Layer {
+			continue
 		}
+		vitals, exists := r.characters.State(player.ID)
+		if !exists || vitals.Defeated {
+			continue
+		}
+		if player.Transform.Position.DistanceXZSquared(position) > radiusSq {
+			continue
+		}
+		candidates = append(candidates, monsterLootCandidate{
+			sessionID: s.ID, characterID: s.CharacterIdentity.ID, damage: contribution.damage,
+		})
 	}
-	return "", false
+	// Probability is damage-proportional; stable CharacterIdentity ordering makes deterministic
+	// ticket intervals independent from transient session enumeration order.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].characterID < candidates[j].characterID
+	})
+	return candidates
 }
 
-func (r *Runtime) clearItemDropPickupOwner(dropID world.EntityID) {
-	for _, monsterID := range r.monsterLootEntityIDs {
-		state := r.monsterLootStates[monsterID]
-		if state == nil || len(state.dropOwners) == 0 {
+func monsterLootCandidateTotalDamage(candidates []monsterLootCandidate) uint64 {
+	var total uint64
+	for _, candidate := range candidates {
+		if candidate.damage > ^uint64(0)-total {
+			return ^uint64(0)
+		}
+		total += candidate.damage
+	}
+	return total
+}
+
+// selectDamageWeightedMonsterLootCandidate maps [0,totalDamage) into contiguous damage-sized
+// intervals. Therefore a character responsible for 70% of nearby recorded damage has exactly 70%
+// of the ticket space for each resolved drop.
+func selectDamageWeightedMonsterLootCandidate(candidates []monsterLootCandidate, ticket uint64) (monsterLootCandidate, bool) {
+	total := monsterLootCandidateTotalDamage(candidates)
+	if total == 0 || ticket >= total {
+		return monsterLootCandidate{}, false
+	}
+	var cumulative uint64
+	for _, candidate := range candidates {
+		if candidate.damage == 0 {
 			continue
 		}
-		if _, ok := state.dropOwners[dropID]; ok {
-			delete(state.dropOwners, dropID)
-			return
+		if candidate.damage > ^uint64(0)-cumulative {
+			return candidate, true
+		}
+		cumulative += candidate.damage
+		if ticket < cumulative {
+			return candidate, true
 		}
 	}
+	return monsterLootCandidate{}, false
+}
+
+func monsterLootDeterministicTicket(monsterID world.EntityID, incarnation uint64, dropIndex int, total uint64) uint64 {
+	if total == 0 {
+		return 0
+	}
+	var encoded [24]byte
+	binary.LittleEndian.PutUint64(encoded[0:8], uint64(monsterID))
+	binary.LittleEndian.PutUint64(encoded[8:16], incarnation)
+	binary.LittleEndian.PutUint64(encoded[16:24], uint64(dropIndex))
+	h := fnv.New64a()
+	_, _ = h.Write(encoded[:])
+	return h.Sum64() % total
+}
+
+func (r *Runtime) tryAutoGrantMonsterLoot(candidate monsterLootCandidate, itemArchetypeID string, dropID world.EntityID, report *StepReport) bool {
+	inv := r.inventories[candidate.characterID]
+	if inv == nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot_auto_grant", SessionID: candidate.sessionID, Err: ErrMonsterLootInventoryUnavailable})
+		return false
+	}
+	if err := inv.Add(itemArchetypeID, 1); err != nil {
+		// Capacity failure is expected gameplay: the item remains immediately public on the ground.
+		if errors.Is(err, inventory.ErrFull) || errors.Is(err, inventory.ErrWeightExceeded) || errors.Is(err, inventory.ErrQuantityOverflow) {
+			return false
+		}
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot_auto_grant", SessionID: candidate.sessionID, Err: err})
+		return false
+	}
+	r.world.Remove(dropID)
+	r.sessionInventoryPending[candidate.sessionID] = struct{}{}
+	return true
 }
 
 func monsterLootDropPosition(source world.Position, index int) world.Position {
