@@ -73,6 +73,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			return false
 		}
 		if state.Defeated {
+			if target.Kind == world.EntityMonster {
+				r.recordMonsterLootOwner(targetID, actor.ID, sessionID)
+			}
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			}
