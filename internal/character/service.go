@@ -18,6 +18,7 @@ var (
 	ErrCharacterNotFound    = errors.New("character: character not found")
 	ErrCharacterDefeated    = errors.New("character: character defeated")
 	ErrInsufficientResource = errors.New("character: insufficient resource")
+	ErrResourceFull         = errors.New("character: resource already full")
 )
 
 type State struct {
@@ -123,6 +124,49 @@ func (s *Service) SpendMP(id world.EntityID, amount uint32) (State, error) {
 		return state, ErrInsufficientResource
 	}
 	state.MP -= amount
+	s.states[id] = state
+	return state, nil
+}
+
+// RestoreHP applies an authoritative consumable/resource recovery transition. It rejects full HP
+// so callers can validate before consuming an inventory item; successful recovery clamps to MaxHP.
+func (s *Service) RestoreHP(id world.EntityID, amount uint32) (State, error) {
+	state, ok := s.states[id]
+	if !ok {
+		return State{}, ErrCharacterNotFound
+	}
+	if state.Defeated {
+		return state, ErrCharacterDefeated
+	}
+	if state.HP >= state.MaxHP {
+		return state, ErrResourceFull
+	}
+	missing := state.MaxHP - state.HP
+	if amount > missing {
+		amount = missing
+	}
+	state.HP += amount
+	s.states[id] = state
+	return state, nil
+}
+
+// RestoreMP mirrors RestoreHP for the authoritative MP pool.
+func (s *Service) RestoreMP(id world.EntityID, amount uint32) (State, error) {
+	state, ok := s.states[id]
+	if !ok {
+		return State{}, ErrCharacterNotFound
+	}
+	if state.Defeated {
+		return state, ErrCharacterDefeated
+	}
+	if state.MP >= state.MaxMP {
+		return state, ErrResourceFull
+	}
+	missing := state.MaxMP - state.MP
+	if amount > missing {
+		amount = missing
+	}
+	state.MP += amount
 	s.states[id] = state
 	return state, nil
 }
