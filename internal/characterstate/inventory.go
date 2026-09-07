@@ -1,87 +1,99 @@
 package characterstate
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 )
 
 // InventoryStack is stable durable gameplay truth for one unequipped item stack.
-// Presentation metadata and derived carry-weight values are intentionally excluded.
 type InventoryStack struct {
 	ItemArchetypeID string `json:"item_archetype_id"`
 	Quantity        uint32 `json:"quantity"`
 }
 
-// InventoryState is the durable inventory/equipment aggregate. Snapshot.Inventory == nil
-// means a legacy v1-v3 state (or old save-journal command) that never captured inventory.
-// A non-nil empty InventoryState is therefore a genuinely empty v4 inventory.
+// InventoryState deliberately stays value-comparable because character-state crash replay
+// already relies on Snapshot equality. StacksJSON is canonical Server-internal persistence
+// encoding; callers use NewInventoryState/Stacks rather than treating it as gameplay data.
+// Initialized=false is the migration fence for v1-v3 records and old save-journal entries.
 type InventoryState struct {
-	Stacks   []InventoryStack `json:"stacks,omitempty"`
-	MainHand string           `json:"main_hand,omitempty"`
+	Initialized bool   `json:"initialized"`
+	StacksJSON  string `json:"stacks_json,omitempty"`
+	MainHand    string `json:"main_hand,omitempty"`
 }
 
-func validateInventoryState(state *InventoryState) error {
-	if state == nil {
+func NewInventoryState(stacks []InventoryStack, mainHand string) (InventoryState, error) {
+	canonical := append([]InventoryStack(nil), stacks...)
+	for index := range canonical {
+		canonical[index].ItemArchetypeID = strings.TrimSpace(canonical[index].ItemArchetypeID)
+	}
+	sort.Slice(canonical, func(i, j int) bool { return canonical[i].ItemArchetypeID < canonical[j].ItemArchetypeID })
+	state := InventoryState{Initialized: true, MainHand: strings.TrimSpace(mainHand)}
+	if len(canonical) > 0 {
+		data, err := json.Marshal(canonical)
+		if err != nil {
+			return InventoryState{}, err
+		}
+		state.StacksJSON = string(data)
+	}
+	if err := validateInventoryState(state); err != nil {
+		return InventoryState{}, err
+	}
+	return state, nil
+}
+
+func (state InventoryState) Stacks() ([]InventoryStack, error) {
+	if state.StacksJSON == "" {
+		return nil, nil
+	}
+	var stacks []InventoryStack
+	if err := json.Unmarshal([]byte(state.StacksJSON), &stacks); err != nil {
+		return nil, ErrInvalidSnapshot
+	}
+	return stacks, nil
+}
+
+func validateInventoryState(state InventoryState) error {
+	if !state.Initialized {
+		if state.StacksJSON != "" || strings.TrimSpace(state.MainHand) != "" {
+			return ErrInvalidSnapshot
+		}
 		return nil
 	}
-	seen := make(map[string]struct{}, len(state.Stacks))
+	if state.MainHand != strings.TrimSpace(state.MainHand) {
+		return ErrInvalidSnapshot
+	}
+	stacks, err := state.Stacks()
+	if err != nil {
+		return err
+	}
 	last := ""
-	for _, stack := range state.Stacks {
+	for _, stack := range stacks {
 		id := strings.TrimSpace(stack.ItemArchetypeID)
-		if id == "" || id != stack.ItemArchetypeID || stack.Quantity == 0 {
-			return ErrInvalidSnapshot
-		}
-		if _, exists := seen[id]; exists {
-			return ErrInvalidSnapshot
-		}
-		seen[id] = struct{}{}
-		if last != "" && id <= last {
+		if id == "" || id != stack.ItemArchetypeID || stack.Quantity == 0 || (last != "" && id <= last) {
 			return ErrInvalidSnapshot
 		}
 		last = id
 	}
-	if state.MainHand != strings.TrimSpace(state.MainHand) {
+	if len(stacks) == 0 {
+		if state.StacksJSON != "" {
+			return ErrInvalidSnapshot
+		}
+		return nil
+	}
+	data, err := json.Marshal(stacks)
+	if err != nil || string(data) != state.StacksJSON {
 		return ErrInvalidSnapshot
 	}
 	return nil
 }
 
-// CanonicalInventoryState defensively copies and sorts stack identity for deterministic
-// Store and save-journal bytes. nil is preserved because it is the legacy migration fence.
-func CanonicalInventoryState(state *InventoryState) *InventoryState {
-	if state == nil {
-		return nil
+func CanonicalInventoryState(state InventoryState) (InventoryState, error) {
+	if !state.Initialized {
+		if err := validateInventoryState(state); err != nil { return InventoryState{}, err }
+		return InventoryState{}, nil
 	}
-	out := &InventoryState{MainHand: strings.TrimSpace(state.MainHand)}
-	if len(state.Stacks) == 0 {
-		return out
-	}
-	out.Stacks = append([]InventoryStack(nil), state.Stacks...)
-	for index := range out.Stacks {
-		out.Stacks[index].ItemArchetypeID = strings.TrimSpace(out.Stacks[index].ItemArchetypeID)
-	}
-	sort.Slice(out.Stacks, func(i, j int) bool { return out.Stacks[i].ItemArchetypeID < out.Stacks[j].ItemArchetypeID })
-	return out
-}
-
-// SnapshotsEqual provides semantic equality for crash-replay idempotence. Snapshot stays
-// comparable for legacy callers, but v4 inventory pointers require content comparison.
-func SnapshotsEqual(a, b Snapshot) bool {
-	aInventory, bInventory := a.Inventory, b.Inventory
-	a.Inventory, b.Inventory = nil, nil
-	if a != b {
-		return false
-	}
-	if aInventory == nil || bInventory == nil {
-		return aInventory == nil && bInventory == nil
-	}
-	if aInventory.MainHand != bInventory.MainHand || len(aInventory.Stacks) != len(bInventory.Stacks) {
-		return false
-	}
-	for index := range aInventory.Stacks {
-		if aInventory.Stacks[index] != bInventory.Stacks[index] {
-			return false
-		}
-	}
-	return true
+	stacks, err := state.Stacks()
+	if err != nil { return InventoryState{}, err }
+	return NewInventoryState(stacks, state.MainHand)
 }
