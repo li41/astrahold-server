@@ -12,6 +12,7 @@ import (
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
 	"github.com/li41/astrahold-server/internal/inventory"
+	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -225,6 +226,10 @@ type Runtime struct {
 	combat                         *combat.Service
 	autonomousMeleeAgents          []autonomousMeleeAgent
 	monsterLifecycles              []monsterLifecycle
+	monsterLootCatalog             *loot.Catalog
+	monsterLootStates              map[world.EntityID]*monsterLootState
+	monsterLootEntityIDs           []world.EntityID
+	nextItemDropEntityID           world.EntityID
 	respawnPolicy                  *respawnpolicy.Service
 	deathPenalty                   *deathpenalty.Service
 	deathOutbox                    *deathoutcome.Outbox
@@ -316,6 +321,8 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characters:                     characters,
 		queue:                          newCommandQueue(config.CommandQueueCapacity),
 		config:                         config,
+		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
+		nextItemDropEntityID:           firstItemDropEntityID,
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
 		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),
