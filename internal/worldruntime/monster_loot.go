@@ -16,7 +16,7 @@ import (
 const monsterAutoLootRadiusMeters = float32(2.0)
 
 var (
-	ErrInvalidMonsterLoot            = errors.New("worldruntime: invalid monster loot configuration")
+	ErrInvalidMonsterLoot              = errors.New("worldruntime: invalid monster loot configuration")
 	ErrMonsterLootInventoryUnavailable = errors.New("worldruntime: monster loot inventory unavailable")
 )
 
@@ -233,7 +233,7 @@ func monsterLootCandidateTotalDamage(candidates []monsterLootCandidate) uint64 {
 
 // selectDamageWeightedMonsterLootCandidate maps [0,totalDamage) into contiguous damage-sized
 // intervals. Therefore a character responsible for 70% of nearby recorded damage has exactly 70%
-// of the ticket space for each resolved drop.
+// of the ticket space for each resolved drop under normal bounded combat totals.
 func selectDamageWeightedMonsterLootCandidate(candidates []monsterLootCandidate, ticket uint64) (monsterLootCandidate, bool) {
 	total := monsterLootCandidateTotalDamage(candidates)
 	if total == 0 || ticket >= total {
@@ -244,7 +244,8 @@ func selectDamageWeightedMonsterLootCandidate(candidates []monsterLootCandidate,
 		if candidate.damage == 0 {
 			continue
 		}
-		if candidate.damage > ^uint64(0)-cumulative {
+		remaining := total - cumulative
+		if candidate.damage >= remaining {
 			return candidate, true
 		}
 		cumulative += candidate.damage
