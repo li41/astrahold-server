@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -41,6 +42,47 @@ func TestMonsterLootTicketDependsOnServerPrivateSecret(t *testing.T) {
 	}
 	if !changed {
 		t.Fatal("loot tickets did not depend on Server-private secret")
+	}
+}
+
+func TestMonsterLootRollDomainsSeparateDropChanceFromWinnerSelection(t *testing.T) {
+	var secret monsterLootRollSecret
+	secret[0] = 0x53
+	secret[31] = 0xb7
+
+	changed := false
+	for monsterID := world.EntityID(1); monsterID <= 64; monsterID++ {
+		dropRoll := monsterLootRollWithSecret(secret, monsterLootDropRollDomain, monsterID, 7, 1, uint64(loot.ChanceBasisPointsScale))
+		winnerRoll := monsterLootRollWithSecret(secret, monsterLootWinnerRollDomain, monsterID, 7, 1, uint64(loot.ChanceBasisPointsScale))
+		if dropRoll >= uint64(loot.ChanceBasisPointsScale) || winnerRoll >= uint64(loot.ChanceBasisPointsScale) {
+			t.Fatalf("roll outside basis-point range: drop=%d winner=%d", dropRoll, winnerRoll)
+		}
+		if dropRoll != winnerRoll {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("drop chance and winner selection HMAC domains were not separated")
+	}
+}
+
+func TestResolveMonsterLootDropsWithSecretHonorsChanceThreshold(t *testing.T) {
+	var secret monsterLootRollSecret
+	secret[0] = 0x71
+	secret[31] = 0x22
+	monsterID := world.EntityID(9001)
+	incarnation := uint64(3)
+
+	missRoll := uint16(monsterLootRollWithSecret(secret, monsterLootDropRollDomain, monsterID, incarnation, 1, uint64(loot.ChanceBasisPointsScale)))
+	drops := []loot.Drop{
+		{ItemArchetypeID: "guaranteed", ChanceBasisPoints: loot.ChanceBasisPointsScale},
+		// IncludesRoll is [0,chance), so a threshold equal to the exact roll must miss.
+		{ItemArchetypeID: "miss", ChanceBasisPoints: missRoll},
+	}
+	resolved := resolveMonsterLootDropsWithSecret(secret, monsterID, incarnation, drops)
+	if len(resolved) != 1 || resolved[0].drop.ItemArchetypeID != "guaranteed" || resolved[0].authoredIndex != 0 {
+		t.Fatalf("resolved drops=%#v, want only guaranteed authored index 0", resolved)
 	}
 }
 

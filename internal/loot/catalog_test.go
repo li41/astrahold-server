@@ -10,7 +10,10 @@ func TestCatalogLookupReturnsOwnedDrops(t *testing.T) {
 		Revision: "test-v1",
 		Tables: []Table{{
 			SourceArchetypeID: "monster-a",
-			Drops:             []Drop{{ItemArchetypeID: "item-a"}},
+			Drops: []Drop{
+				{ItemArchetypeID: "item-a"},
+				{ItemArchetypeID: "item-b", ChanceBasisPoints: 2_500},
+			},
 		}},
 	})
 	if err != nil {
@@ -20,8 +23,17 @@ func TestCatalogLookupReturnsOwnedDrops(t *testing.T) {
 		t.Fatalf("revision=%q", got)
 	}
 	drops, ok := catalog.DropsFor("monster-a")
-	if !ok || len(drops) != 1 || drops[0].ItemArchetypeID != "item-a" {
+	if !ok || len(drops) != 2 {
 		t.Fatalf("drops=%#v ok=%v", drops, ok)
+	}
+	if drops[0].ItemArchetypeID != "item-a" || drops[0].ChanceBasisPoints != ChanceBasisPointsScale {
+		t.Fatalf("default chance not normalized to guaranteed: %#v", drops[0])
+	}
+	if drops[1].ItemArchetypeID != "item-b" || drops[1].ChanceBasisPoints != 2_500 {
+		t.Fatalf("explicit chance changed: %#v", drops[1])
+	}
+	if !drops[1].IncludesRoll(2_499) || drops[1].IncludesRoll(2_500) {
+		t.Fatalf("chance threshold semantics are not [0,chance): %#v", drops[1])
 	}
 	drops[0].ItemArchetypeID = "mutated"
 	again, ok := catalog.DropsFor("monster-a")
@@ -44,6 +56,7 @@ func TestCatalogRejectsInvalidAndDuplicateTables(t *testing.T) {
 		{name: "empty source", def: Definition{Revision: "v1", Tables: []Table{{Drops: []Drop{{ItemArchetypeID: "x"}}}}}, want: ErrInvalidDefinition},
 		{name: "empty drops", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a"}}}, want: ErrInvalidDefinition},
 		{name: "empty item", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{}}}}}, want: ErrInvalidDefinition},
+		{name: "chance above scale", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "x", ChanceBasisPoints: ChanceBasisPointsScale + 1}}}}}, want: ErrInvalidDefinition},
 		{name: "duplicate source", def: Definition{Revision: "v1", Tables: []Table{
 			{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "x"}}},
 			{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "y"}}},

@@ -12,6 +12,7 @@ const (
 	playtestMonsterArchetypeID                        = "wolf-gray-01"
 	playtestMonsterActionID                           = "wolf-bite"
 	playtestMonsterDropArchetypeID                    = "item_gray_wolf_pelt"
+	playtestMonsterDropChanceBasisPoints uint16       = 7_000
 	playtestMonsterSpawnX               float32        = 2
 	playtestMonsterSpawnZ               float32        = -35
 	playtestMonsterCorpseHoldSeconds                   = 2
@@ -60,10 +61,13 @@ func newPlaytestMonsterLifecycleConfig(agent gameplayworld.AgentDefaults, tickRa
 
 func newPlaytestMonsterLootCatalog() *loot.Catalog {
 	catalog, err := loot.New(loot.Definition{
-		Revision: "playtest-monster-loot-v1",
+		Revision: "playtest-monster-loot-v2",
 		Tables: []loot.Table{{
 			SourceArchetypeID: playtestMonsterArchetypeID,
-			Drops:             []loot.Drop{{ItemArchetypeID: playtestMonsterDropArchetypeID}},
+			Drops: []loot.Drop{{
+				ItemArchetypeID:   playtestMonsterDropArchetypeID,
+				ChanceBasisPoints: playtestMonsterDropChanceBasisPoints,
+			}},
 		}},
 	})
 	if err != nil {
