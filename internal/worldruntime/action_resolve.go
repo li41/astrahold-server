@@ -22,8 +22,6 @@ func combatIntentFromClientAction(actorID world.EntityID, action protocol.Client
 	return combat.Intent{ActorEntityID: actorID, ActionID: action.ActionID, Target: target}
 }
 
-// prepareAndDispatchAction is transport-neutral after ingress has resolved ActorEntityID.
-// SourceSessionID/clientActionSequence are retained only for diagnostics and source-session UX feedback.
 func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, clientActionSequence uint32, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
 	actor, ok := r.world.Entity(intent.ActorEntityID)
 	if !ok || !combatActorKind(actor.Kind) {
@@ -53,5 +51,6 @@ func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:err})
 		return
 	}
+	r.applyEquippedBasicAttackTiming(&prepared, sourceSessionID)
 	r.dispatchPreparedAction(name, sourceSessionID, clientActionSequence, prepared, tick, delta, report)
 }
