@@ -351,5 +351,6 @@ func worlddCharacterSnapshot(hp uint32) characterstate.Snapshot {
 		HP: hp, MaxHP: 1000, MP: 100, MaxMP: 100,
 		Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1},
 		Yaw:      0.75,
+		Inventory: characterstate.InventoryState{Initialized: true},
 	}
 }
