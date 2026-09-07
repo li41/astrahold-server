@@ -1,5 +1,5 @@
 {
-  "revision": "shop-vs-001",
+  "revision": "shop-vs-002",
   "shops": [
     {
       "id": "shop_emberwatch_warden_supplies",
@@ -11,6 +11,13 @@
           "quantity": 1,
           "cost_archetype_id": "item_gray_wolf_pelt",
           "cost_quantity": 1
+        },
+        {
+          "id": "trade_gray_pelts_for_mana_siphon_staff",
+          "item_archetype_id": "item_mana_siphon_staff",
+          "quantity": 1,
+          "cost_archetype_id": "item_gray_wolf_pelt",
+          "cost_quantity": 3
         }
       ]
     }
