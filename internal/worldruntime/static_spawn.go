@@ -64,4 +64,5 @@ func (r *Runtime) applySpawnEntity(name string, request SpawnEntityRequest, repo
 		return
 	}
 	r.ensureEntityVitalsRevision(request.Entity.ID)
+	r.trackMonsterLootEntity(request.Entity)
 }
