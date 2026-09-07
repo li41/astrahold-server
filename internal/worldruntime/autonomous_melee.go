@@ -164,6 +164,9 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 func (r *Runtime) beginAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, actor world.EntityState, report *StepReport) {
 	agent.targetID = 0
 	agent.returningHome = true
+	// Evade begins a fresh encounter. Damage from the failed pull must not improve loot odds after
+	// the monster resets and is engaged again.
+	r.resetMonsterLootContributions(actor.ID)
 	r.stepAutonomousMeleeReturnHome(agent, actor, report)
 }
 
