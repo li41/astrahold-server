@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
+	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
@@ -10,6 +11,7 @@ const (
 	playtestMonsterEntityID            world.EntityID = 9001
 	playtestMonsterArchetypeID                        = "wolf-gray-01"
 	playtestMonsterActionID                           = "wolf-bite"
+	playtestMonsterDropArchetypeID                    = "item_gray_wolf_pelt"
 	playtestMonsterSpawnX               float32        = 2
 	playtestMonsterSpawnZ               float32        = -35
 	playtestMonsterCorpseHoldSeconds                   = 2
@@ -54,4 +56,18 @@ func newPlaytestMonsterLifecycleConfig(agent gameplayworld.AgentDefaults, tickRa
 		CorpseHoldTicks:   uint64(playtestMonsterCorpseHoldSeconds * tickRate),
 		RespawnDelayTicks: uint64(playtestMonsterRespawnDelaySeconds * tickRate),
 	}
+}
+
+func newPlaytestMonsterLootCatalog() *loot.Catalog {
+	catalog, err := loot.New(loot.Definition{
+		Revision: "playtest-monster-loot-v1",
+		Tables: []loot.Table{{
+			SourceArchetypeID: playtestMonsterArchetypeID,
+			Drops:             []loot.Drop{{ItemArchetypeID: playtestMonsterDropArchetypeID}},
+		}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return catalog
 }
