@@ -19,6 +19,10 @@ var ErrInvalidAutonomousMeleeAgent = errors.New("worldruntime: invalid autonomou
 // the existing authoritative simulation input and attacks reuse the existing Combat Service.
 // AttackRange is steering/animation spacing only; the Combat Action Catalog revalidates legal
 // range, target state and line of sight before damage can be committed.
+//
+// IdlePatrol is an optional authored, deterministic route for healthy out-of-combat monsters.
+// Every point must stay on Home's layer and inside LeashRange. Patrol movement is presentation-
+// visible gameplay state, but the Server remains the sole owner of position, aggro and encounter reset.
 type AutonomousMeleeAgentConfig struct {
 	EntityID        world.EntityID
 	Home            world.Position
@@ -27,18 +31,22 @@ type AutonomousMeleeAgentConfig struct {
 	LeashRange      float32
 	AttackRange     float32
 	ReturnTolerance float32
+	IdlePatrol      []world.Position
+	PatrolTolerance float32
 }
 
 type autonomousMeleeAgent struct {
 	config        AutonomousMeleeAgentConfig
 	targetID      world.EntityID
 	returningHome bool
+	patrolIndex   int
 }
 
 func WithAutonomousMeleeAgent(config AutonomousMeleeAgentConfig) Option {
 	if err := validateAutonomousMeleeAgentConfig(config); err != nil {
 		panic(err)
 	}
+	config.IdlePatrol = append([]world.Position(nil), config.IdlePatrol...)
 	return func(r *Runtime) {
 		for _, existing := range r.autonomousMeleeAgents {
 			if existing.config.EntityID == config.EntityID {
@@ -68,6 +76,24 @@ func validateAutonomousMeleeAgentConfig(config AutonomousMeleeAgentConfig) error
 	if !finiteFloat32(config.ReturnTolerance) || config.ReturnTolerance < 0 {
 		return ErrInvalidAutonomousMeleeAgent
 	}
+	if len(config.IdlePatrol) == 0 {
+		if config.PatrolTolerance != 0 {
+			return ErrInvalidAutonomousMeleeAgent
+		}
+		return nil
+	}
+	if !positiveFiniteFloat32(config.PatrolTolerance) {
+		return ErrInvalidAutonomousMeleeAgent
+	}
+	leashSq := config.LeashRange * config.LeashRange
+	for _, point := range config.IdlePatrol {
+		if !finiteFloat32(point.X) || !finiteFloat32(point.Y) || !finiteFloat32(point.Z) || point.Layer != config.Home.Layer {
+			return ErrInvalidAutonomousMeleeAgent
+		}
+		if point.DistanceXZSquared(config.Home) > leashSq {
+			return ErrInvalidAutonomousMeleeAgent
+		}
+	}
 	return nil
 }
 
@@ -83,20 +109,17 @@ func (r *Runtime) stepAutonomousMeleeAgents(tick uint64, delta time.Duration, re
 func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uint64, delta time.Duration, report *StepReport) {
 	actor, ok := r.world.Entity(agent.config.EntityID)
 	if !ok {
-		agent.targetID = 0
-		agent.returningHome = false
+		r.resetAutonomousMeleeAgentState(agent)
 		return
 	}
 	state, ok := r.combatantState(actor.ID)
 	if !ok || state.Defeated {
-		agent.targetID = 0
-		agent.returningHome = false
+		r.resetAutonomousMeleeAgentState(agent)
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
 		return
 	}
 	if actor.Kind != world.EntityMonster || actor.Transform.Position.Layer != agent.config.Home.Layer {
-		agent.targetID = 0
-		agent.returningHome = false
+		r.resetAutonomousMeleeAgentState(agent)
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
 		return
 	}
@@ -125,6 +148,16 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 		if valid {
 			agent.targetID = target.ID
 		} else {
+			// A wounded or resource-depleted monster never resumes a cosmetic-looking patrol.
+			// It evades to the authored Home, restores there, then may patrol again on a later tick.
+			if state.HP != state.MaxHP || state.MP != state.MaxMP {
+				r.beginAutonomousMeleeReturnHome(agent, actor, report)
+				return
+			}
+			if len(agent.config.IdlePatrol) > 0 {
+				r.stepAutonomousMeleeIdlePatrol(agent, actor, report)
+				return
+			}
 			toleranceSq := agent.config.ReturnTolerance * agent.config.ReturnTolerance
 			if actor.Transform.Position.DistanceXZSquared(agent.config.Home) > toleranceSq {
 				r.beginAutonomousMeleeReturnHome(agent, actor, report)
@@ -161,9 +194,35 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 	}, report)
 }
 
+func (r *Runtime) stepAutonomousMeleeIdlePatrol(agent *autonomousMeleeAgent, actor world.EntityState, report *StepReport) {
+	points := agent.config.IdlePatrol
+	if len(points) == 0 {
+		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
+		return
+	}
+	if agent.patrolIndex < 0 || agent.patrolIndex >= len(points) {
+		agent.patrolIndex = 0
+	}
+	toleranceSq := agent.config.PatrolTolerance * agent.config.PatrolTolerance
+	for visited := 0; visited < len(points); visited++ {
+		point := points[agent.patrolIndex]
+		if actor.Transform.Position.DistanceXZSquared(point) > toleranceSq {
+			r.setAutonomousMove(actor.ID, world.Vec3{
+				X: point.X - actor.Transform.Position.X,
+				Z: point.Z - actor.Transform.Position.Z,
+			}, report)
+			return
+		}
+		agent.patrolIndex = (agent.patrolIndex + 1) % len(points)
+	}
+	// Degenerate authored routes whose every point lies inside tolerance are still safe and stable.
+	r.setAutonomousMove(actor.ID, world.Vec3{}, report)
+}
+
 func (r *Runtime) beginAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, actor world.EntityState, report *StepReport) {
 	agent.targetID = 0
 	agent.returningHome = true
+	agent.patrolIndex = 0
 	// Evade begins a fresh encounter. Damage from the failed pull must not improve loot odds after
 	// the monster resets and is engaged again.
 	r.resetMonsterLootContributions(actor.ID)
@@ -182,6 +241,15 @@ func (r *Runtime) stepAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, act
 		X: agent.config.Home.X - actor.Transform.Position.X,
 		Z: agent.config.Home.Z - actor.Transform.Position.Z,
 	}, report)
+}
+
+func resetAutonomousMeleeAgentState(agent *autonomousMeleeAgent) {
+	if agent == nil {
+		return
+	}
+	agent.targetID = 0
+	agent.returningHome = false
+	agent.patrolIndex = 0
 }
 
 func (r *Runtime) restoreAutonomousMeleeVitalsAtHome(entityID world.EntityID, report *StepReport) {
