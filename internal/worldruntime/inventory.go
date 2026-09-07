@@ -11,19 +11,25 @@ import (
 
 const defaultInventoryCarryCapacity = uint64(100)
 
-var defaultInventoryUnitWeights = map[string]uint32{
-	"item_minor_healing_potion":    1,
-	"item_minor_mana_potion":       1,
-	"item_training_blade":          8,
-	"item_gray_wolf_pelt":          2,
-	"item_militia_iron_sword":      7,
-	"item_light_guard_sword":       6,
-	"item_gladiator_iron_sword":    8,
-	"item_militia_battle_axe":      10,
-	"item_iron_war_mace":           9,
-	"item_iron_rim_round_shield":   6,
-	"item_guard_shield":            8,
-	"item_runed_square_shield":     6,
+var defaultInventoryUnitWeights = mustDefaultInventoryUnitWeights()
+
+func mustDefaultInventoryUnitWeights() map[string]uint32 {
+	weights := map[string]uint32{
+		"item_minor_healing_potion": 1,
+		"item_minor_mana_potion":    1,
+		"item_training_blade":       8,
+		"item_gray_wolf_pelt":       2,
+	}
+	for itemArchetypeID, weight := range defaultEquipmentCatalog.UnitWeights() {
+		if itemArchetypeID == "" || weight == 0 {
+			panic("worldruntime: invalid equipment catalog weight")
+		}
+		if _, exists := weights[itemArchetypeID]; exists {
+			panic("worldruntime: equipment catalog collides with base inventory weight")
+		}
+		weights[itemArchetypeID] = weight
+	}
+	return weights
 }
 
 func newCharacterInventory(maxStacks int) *inventory.Inventory {
