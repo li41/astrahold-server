@@ -23,3 +23,27 @@ func TestPlaytestMonsterLootCatalogUsesCommonPeltChance(t *testing.T) {
 		t.Fatalf("wolf pelt chance=%d should be common but non-guaranteed", drop.ChanceBasisPoints)
 	}
 }
+
+func TestPlaytestMonsterAIUsesSmallAuthoredIdlePatrol(t *testing.T) {
+	config := newPlaytestMonsterAIConfig()
+	if len(config.IdlePatrol) != 4 {
+		t.Fatalf("idle patrol points=%d want=4", len(config.IdlePatrol))
+	}
+	if config.PatrolTolerance != playtestMonsterPatrolToleranceMeters || config.PatrolTolerance <= 0 {
+		t.Fatalf("patrol tolerance=%v want=%v", config.PatrolTolerance, playtestMonsterPatrolToleranceMeters)
+	}
+	home := playtestMonsterHome()
+	leashSq := config.LeashRange * config.LeashRange
+	for index, point := range config.IdlePatrol {
+		if point.Layer != home.Layer {
+			t.Fatalf("patrol[%d] layer=%d want=%d", index, point.Layer, home.Layer)
+		}
+		if point.DistanceXZSquared(home) > leashSq {
+			t.Fatalf("patrol[%d]=%#v outside leash %.2fm", index, point, config.LeashRange)
+		}
+	}
+	last := config.IdlePatrol[len(config.IdlePatrol)-1]
+	if last != home {
+		t.Fatalf("idle route does not close at home: last=%#v home=%#v", last, home)
+	}
+}
