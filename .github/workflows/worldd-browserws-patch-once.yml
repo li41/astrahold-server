@@ -145,3 +145,5 @@ jobs:
           git add cmd/worldd/main.go cmd/worldd/world_network.go cmd/worldd/world_network_test.go
           git commit -m "net: wire exclusive browserws-dev worldd mode"
           git push origin HEAD:feat/worldd-browserws-mode
+
+# Temporary patch workflow; delete after it commits the reviewed wiring.
