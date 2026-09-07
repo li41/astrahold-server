@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	LegacySaveJournalSchemaVersion   uint16 = 1
-	ResourceSaveJournalSchemaVersion uint16 = 2
-	SaveJournalSchemaVersion         uint16 = 3
-	saveCheckpointSchemaVersion      uint16 = 1
-	saveJournalIDSize                       = 16
-	maxSaveJournalPayload                   = 1 << 20
+	LegacySaveJournalSchemaVersion    uint16 = 1
+	ResourceSaveJournalSchemaVersion  uint16 = 2
+	InventorySaveJournalSchemaVersion uint16 = 3
+	SaveJournalSchemaVersion          uint16 = 4
+	saveCheckpointSchemaVersion       uint16 = 1
+	saveJournalIDSize                        = 16
+	maxSaveJournalPayload                    = 1 << 20
 )
 
 var (
@@ -553,6 +554,7 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 	}
 	if (wire.SchemaVersion != LegacySaveJournalSchemaVersion &&
 		wire.SchemaVersion != ResourceSaveJournalSchemaVersion &&
+		wire.SchemaVersion != InventorySaveJournalSchemaVersion &&
 		wire.SchemaVersion != SaveJournalSchemaVersion) ||
 		wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
@@ -599,7 +601,7 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
 	}
 	inventoryState := InventoryState{}
-	if schemaVersion >= SaveJournalSchemaVersion {
+	if schemaVersion >= InventorySaveJournalSchemaVersion {
 		inventoryState = wire.Inventory
 	}
 	snapshot := Snapshot{
@@ -611,9 +613,10 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 	if wire.DefeatedRespawn != nil {
 		snapshot.Respawn = DefeatedRespawn{
 			Context: wire.DefeatedRespawn.Context, SpawnPointID: wire.DefeatedRespawn.SpawnPointID, SpawnClass: wire.DefeatedRespawn.SpawnClass,
-			Position: world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
+			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer},
 			RemainingTicks: wire.DefeatedRespawn.RemainingTicks, CheckpointID: wire.DefeatedRespawn.CheckpointID,
 		}
+		snapshot.Respawn.Position = world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer}
 	}
 	return snapshot
 }
@@ -628,7 +631,7 @@ func validateNewSaveIntent(intent SaveIntent) error {
 	if !intent.Snapshot.Inventory.Initialized {
 		return ErrInvalidSnapshot
 	}
-	return validateSnapshotV4(intent.Snapshot)
+	return validateSnapshotV5(intent.Snapshot)
 }
 
 func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
@@ -638,12 +641,16 @@ func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
 	if err := validateTrustedIdentity(intent.Identity); err != nil {
 		return err
 	}
-	if err := validateSnapshotV4(intent.Snapshot); err != nil {
+	if err := validateSnapshotV5(intent.Snapshot); err != nil {
 		return err
 	}
 	switch schemaVersion {
 	case LegacySaveJournalSchemaVersion, ResourceSaveJournalSchemaVersion:
 		if intent.Snapshot.Inventory != (InventoryState{}) {
+			return ErrInvalidSnapshot
+		}
+	case InventorySaveJournalSchemaVersion:
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.Inventory.OffHand != "" {
 			return ErrInvalidSnapshot
 		}
 	case SaveJournalSchemaVersion:
