@@ -17,6 +17,11 @@ import (
 
 const monsterAutoLootRadiusMeters = float32(2.0)
 
+const (
+	monsterLootWinnerRollDomain = "astrahold/monster-loot-winner/v1"
+	monsterLootDropRollDomain   = "astrahold/monster-loot-drop/v1"
+)
+
 var (
 	ErrInvalidMonsterLoot              = errors.New("worldruntime: invalid monster loot configuration")
 	ErrMonsterLootInventoryUnavailable = errors.New("worldruntime: monster loot inventory unavailable")
@@ -42,6 +47,11 @@ type monsterLootCandidate struct {
 	sessionID   session.ID
 	characterID characteridentity.ID
 	damage      uint64
+}
+
+type monsterLootResolvedDrop struct {
+	drop          loot.Drop
+	authoredIndex int
 }
 
 // WithMonsterLootCatalog installs server-authored loot data. Combat and monster lifecycle do not
@@ -124,9 +134,9 @@ func (r *Runtime) resetMonsterLootContributions(monsterID world.EntityID) {
 }
 
 // stepMonsterLoot runs after authoritative simulation/combat updates and before corpse lifecycle.
-// Every resolved item is first materialized as an immediately-public ground drop. Eligible nearby
-// contributors may then receive it directly; if direct inventory insertion cannot succeed, the same
-// public drop simply remains in the world. There is deliberately no pickup reservation timer.
+// Server-private chance is resolved first. Every successful item is then materialized as an
+// immediately-public ground drop. Eligible nearby contributors may receive it directly; if direct
+// inventory insertion cannot succeed, the same public drop simply remains in the world.
 func (r *Runtime) stepMonsterLoot(report *StepReport) {
 	if r.monsterLootCatalog == nil {
 		return
@@ -148,11 +158,16 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 		if !configured || len(drops) == 0 {
 			continue
 		}
+		resolved := resolveMonsterLootDropsWithSecret(monsterLootProcessSecret, entityID, state.incarnation, drops)
+		if len(resolved) == 0 {
+			state.awarded = true
+			continue
+		}
 
-		spawned := make([]world.EntityID, 0, len(drops))
+		spawned := make([]world.EntityID, 0, len(resolved))
 		failed := false
-		for index, drop := range drops {
-			dropID, err := r.spawnItemDrop(drop.ItemArchetypeID, monsterLootDropPosition(monster.Transform.Position, index))
+		for spawnIndex, resolvedDrop := range resolved {
+			dropID, err := r.spawnItemDrop(resolvedDrop.drop.ItemArchetypeID, monsterLootDropPosition(monster.Transform.Position, spawnIndex))
 			if err != nil {
 				for _, spawnedID := range spawned {
 					r.world.Remove(spawnedID)
@@ -172,23 +187,38 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 			if len(candidates) == 0 {
 				continue
 			}
+			resolvedDrop := resolved[index]
 			winner := candidates[0]
 			if len(candidates) > 1 {
 				total := monsterLootCandidateTotalDamage(candidates)
 				if total == 0 {
 					continue
 				}
-				ticket := monsterLootTicket(entityID, state.incarnation, index, total)
+				// Use the authored index rather than compact resolved order so another entry's
+				// chance result cannot perturb this drop's winner ticket.
+				ticket := monsterLootTicket(entityID, state.incarnation, resolvedDrop.authoredIndex, total)
 				selected, ok := selectDamageWeightedMonsterLootCandidate(candidates, ticket)
 				if !ok {
 					continue
 				}
 				winner = selected
 			}
-			r.tryAutoGrantMonsterLoot(winner, drops[index].ItemArchetypeID, dropID, report)
+			r.tryAutoGrantMonsterLoot(winner, resolvedDrop.drop.ItemArchetypeID, dropID, report)
 		}
 		state.awarded = true
 	}
+}
+
+func resolveMonsterLootDropsWithSecret(secret monsterLootRollSecret, monsterID world.EntityID, incarnation uint64, drops []loot.Drop) []monsterLootResolvedDrop {
+	resolved := make([]monsterLootResolvedDrop, 0, len(drops))
+	for index, drop := range drops {
+		roll := uint16(monsterLootRollWithSecret(secret, monsterLootDropRollDomain, monsterID, incarnation, index, uint64(loot.ChanceBasisPointsScale)))
+		if !drop.IncludesRoll(roll) {
+			continue
+		}
+		resolved = append(resolved, monsterLootResolvedDrop{drop: drop, authoredIndex: index})
+	}
+	return resolved
 }
 
 func (r *Runtime) nearbyMonsterLootCandidates(position world.Position, state *monsterLootState) []monsterLootCandidate {
@@ -278,6 +308,13 @@ func monsterLootTicket(monsterID world.EntityID, incarnation uint64, dropIndex i
 // entropy. Public EntityID/incarnation/drop-index data provides stable per-drop domain input, while
 // HMAC prevents a client from calculating the winning ticket. Rejection sampling avoids modulo bias.
 func monsterLootTicketWithSecret(secret monsterLootRollSecret, monsterID world.EntityID, incarnation uint64, dropIndex int, total uint64) uint64 {
+	return monsterLootRollWithSecret(secret, monsterLootWinnerRollDomain, monsterID, incarnation, dropIndex, total)
+}
+
+// monsterLootRollWithSecret provides domain-separated, unbiased Server-private rolls for both
+// authored drop chance and damage-weighted winner selection. The same public entity inputs therefore
+// cannot be used to infer one gameplay result from the other.
+func monsterLootRollWithSecret(secret monsterLootRollSecret, domain string, monsterID world.EntityID, incarnation uint64, dropIndex int, total uint64) uint64 {
 	if total == 0 {
 		return 0
 	}
@@ -289,7 +326,7 @@ func monsterLootTicketWithSecret(secret monsterLootRollSecret, monsterID world.E
 	for counter := uint64(0); ; counter++ {
 		binary.LittleEndian.PutUint64(encoded[24:32], counter)
 		mac := hmac.New(sha256.New, secret[:])
-		_, _ = mac.Write([]byte("astrahold/monster-loot-winner/v1"))
+		_, _ = mac.Write([]byte(domain))
 		_, _ = mac.Write(encoded[:])
 		sum := mac.Sum(nil)
 		sample := binary.LittleEndian.Uint64(sum[:8])
