@@ -2,7 +2,11 @@ package worldruntime
 
 import (
 	"errors"
+	"strings"
 
+	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/inventory"
+	"github.com/li41/astrahold-server/internal/itemuse"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -25,11 +29,30 @@ var (
 	ErrItemDropWrongLayer  = errors.New("worldruntime: item drop wrong layer")
 	ErrItemDropOutOfRange  = errors.New("worldruntime: item drop out of range")
 	ErrItemDropIDExhausted = errors.New("worldruntime: item drop entity id exhausted")
+	ErrInvalidUseItemIntent = errors.New("worldruntime: invalid use-item intent")
+	ErrItemNotUsable        = errors.New("worldruntime: item is not a usable consumable")
 )
+
+var defaultItemUseCatalog = mustDefaultItemUseCatalog()
+
+func mustDefaultItemUseCatalog() *itemuse.Catalog {
+	catalog, err := itemuse.Default()
+	if err != nil {
+		panic(err)
+	}
+	return catalog
+}
 
 func validatePickupIntent(intent protocol.ClientPickupItem) error {
 	if intent.DropEntityID == 0 {
 		return ErrInvalidPickupIntent
+	}
+	return nil
+}
+
+func validateUseItemIntent(intent protocol.ClientUseItem) error {
+	if strings.TrimSpace(intent.ItemArchetypeID) == "" {
+		return ErrInvalidUseItemIntent
 	}
 	return nil
 }
@@ -43,6 +66,18 @@ func (r *Runtime) EnqueuePickupItem(id session.ID, sequence uint32, intent proto
 	}
 	payload := intent
 	return r.queue.tryPush(useActionCommand{sessionID: id, sequence: sequence, pickup: &payload})
+}
+
+func (r *Runtime) EnqueueUseItem(id session.ID, sequence uint32, intent protocol.ClientUseItem) error {
+	if id == 0 || sequence == 0 {
+		return ErrInvalidUseItemIntent
+	}
+	if err := validateUseItemIntent(intent); err != nil {
+		return err
+	}
+	intent.ItemArchetypeID = strings.TrimSpace(intent.ItemArchetypeID)
+	payload := intent
+	return r.queue.tryPush(useActionCommand{sessionID: id, sequence: sequence, useItem: &payload})
 }
 
 // spawnItemDrop materializes one generic authoritative pickup entity. Ground drops are deliberately
@@ -148,5 +183,79 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		return
 	}
 	r.world.Remove(request.DropEntityID)
+	r.sessionInventoryPending[s.ID] = struct{}{}
+}
+
+func (r *Runtime) applyUseItem(name string, command useActionCommand, report *StepReport) {
+	if command.useItem == nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrInvalidUseItemIntent})
+		return
+	}
+	if command.ownership.Valid() {
+		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+			return
+		}
+	}
+	s, ok := r.sessions.Get(command.sessionID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: session.ErrSessionNotFound})
+		return
+	}
+	if err := s.ValidateActionSequence(command.sequence); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+		return
+	}
+	// Reliable item-use is consumed exactly once by the world owner even when gameplay rejects it.
+	// This prevents a full-health/dead/invalid request from being replayed after state later changes.
+	s.MarkProcessedAction(command.sequence)
+
+	inv := r.inventories[s.CharacterIdentity.ID]
+	if inv == nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
+		return
+	}
+	request := *command.useItem
+	definition, ok := defaultItemUseCatalog.Resolve(request.ItemArchetypeID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemNotUsable})
+		return
+	}
+	if inv.Quantity(definition.ItemArchetypeID) == 0 {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: inventory.ErrInsufficient})
+		return
+	}
+
+	state, ok := r.characters.State(s.EntityID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterNotFound})
+		return
+	}
+	if state.Defeated {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterDefeated})
+		return
+	}
+
+	var err error
+	switch definition.Resource {
+	case itemuse.ResourceHP:
+		_, err = r.characters.RestoreHP(s.EntityID, definition.RestoreAmount)
+	case itemuse.ResourceMP:
+		_, err = r.characters.RestoreMP(s.EntityID, definition.RestoreAmount)
+	default:
+		err = ErrItemNotUsable
+	}
+	if err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+		return
+	}
+
+	// This owner path is single-threaded. Quantity was checked immediately before resource mutation,
+	// so Remove cannot race another inventory writer. A successful consumable therefore produces one
+	// vitals mutation and one inventory decrement in the same authoritative command application.
+	if err := inv.Remove(definition.ItemArchetypeID, 1); err != nil {
+		panic("worldruntime: item-use inventory invariant violated: " + err.Error())
+	}
+	r.markEntityVitalsDirty(s.EntityID)
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
