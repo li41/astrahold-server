@@ -9,10 +9,9 @@ import (
 )
 
 const (
-	grayWolfArchetypeID       = "wolf-gray-01"
-	grayWolfPeltArchetypeID   = "item_gray_wolf_pelt"
 	itemPickupRangeMeters     = float32(2.5)
 	itemDropSpawnOffsetMeters = float32(0.75)
+	itemDropCollisionRadius   = float32(0.15)
 	// Existing JSON EntitySpawn encodes entity_id as a number. Keep generated drop IDs below
 	// IEEE-754's exact integer ceiling so Unreal JSON parsing never rounds authoritative identity.
 	firstItemDropEntityID = world.EntityID(8_000_000_000_000_000)
@@ -21,6 +20,7 @@ const (
 
 var (
 	ErrInvalidPickupIntent = errors.New("worldruntime: invalid pickup intent")
+	ErrInvalidItemDrop     = errors.New("worldruntime: invalid item drop")
 	ErrItemDropNotFound    = errors.New("worldruntime: item drop not found")
 	ErrItemDropWrongLayer  = errors.New("worldruntime: item drop wrong layer")
 	ErrItemDropOutOfRange  = errors.New("worldruntime: item drop out of range")
@@ -45,30 +45,50 @@ func (r *Runtime) EnqueuePickupItem(id session.ID, sequence uint32, intent proto
 	return r.queue.tryPush(useActionCommand{sessionID: id, sequence: sequence, pickup: &payload})
 }
 
-func (r *Runtime) spawnMonsterItemDrop(monster world.EntityState, actionInstanceID uint64, report *StepReport) {
-	if monster.Kind != world.EntityMonster || monster.ArchetypeID != grayWolfArchetypeID {
-		return
+// spawnItemDrop materializes one generic authoritative pickup entity. The caller owns source/drop
+// policy; this primitive owns only collision-safe identity allocation and world membership.
+func (r *Runtime) spawnItemDrop(itemArchetypeID string, position world.Position) (world.EntityID, error) {
+	if itemArchetypeID == "" {
+		return 0, ErrInvalidItemDrop
 	}
-	if actionInstanceID == 0 || actionInstanceID > uint64(maxJsonExactEntityID-firstItemDropEntityID) {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: ErrItemDropIDExhausted})
-		return
+	dropID, err := r.allocateItemDropEntityID()
+	if err != nil {
+		return 0, err
 	}
-	dropID := firstItemDropEntityID + world.EntityID(actionInstanceID)
-	if _, exists := r.world.Entity(dropID); exists {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: ErrItemDropIDExhausted})
-		return
-	}
-
-	position := monster.Transform.Position
-	position.X += itemDropSpawnOffsetMeters
 	entity := world.EntityState{
 		ID:          dropID,
 		Kind:        world.EntityItemDrop,
-		ArchetypeID: grayWolfPeltArchetypeID,
+		ArchetypeID: itemArchetypeID,
 		Transform:   world.Transform{Position: position},
 	}
-	if err := r.world.Spawn(entity, 0, 0.15, 0); err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "spawn_item_drop", Err: err})
+	if err := r.world.Spawn(entity, 0, itemDropCollisionRadius, 0); err != nil {
+		return 0, err
+	}
+	return dropID, nil
+}
+
+// allocateItemDropEntityID never intentionally reuses a generated ID during this Runtime lifetime.
+// That keeps a fresh drop from racing any observer's Reliable EntityDespawn knowledge.
+func (r *Runtime) allocateItemDropEntityID() (world.EntityID, error) {
+	id := r.nextItemDropEntityID
+	if id < firstItemDropEntityID || id > maxJsonExactEntityID {
+		return 0, ErrItemDropIDExhausted
+	}
+	for {
+		if _, exists := r.world.Entity(id); !exists {
+			if id == maxJsonExactEntityID {
+				r.nextItemDropEntityID = 0
+			} else {
+				r.nextItemDropEntityID = id + 1
+			}
+			return id, nil
+		}
+		if id == maxJsonExactEntityID {
+			r.nextItemDropEntityID = 0
+			return 0, ErrItemDropIDExhausted
+		}
+		id++
+		r.nextItemDropEntityID = id
 	}
 }
 
