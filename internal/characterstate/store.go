@@ -63,7 +63,7 @@ type Snapshot struct {
 	Position  world.Position
 	Yaw       float32
 	Respawn   DefeatedRespawn
-	Inventory *InventoryState
+	Inventory InventoryState
 }
 
 type Record struct {
@@ -108,7 +108,7 @@ type wireRecord struct {
 	Layer           world.LayerID         `json:"layer"`
 	Yaw             float32               `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
-	Inventory        *InventoryState       `json:"inventory,omitempty"`
+	Inventory        InventoryState        `json:"inventory,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -121,8 +121,8 @@ func Open(root string) (*Store, error) {
 func (s *Store) Path() string { return s.root }
 
 // Load accepts v1-v4 records. v1/v2 predate MP and migrate to the legacy full resource pool.
-// v1-v3 predate inventory persistence and load with Snapshot.Inventory=nil. A v4 empty inventory
-// is represented by a non-nil zero InventoryState, preserving the migration/bootstrap distinction.
+// v1-v3 predate inventory persistence and remain Inventory.Initialized=false. A genuinely empty
+// v4 inventory has Initialized=true with an empty canonical stack payload.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -131,7 +131,9 @@ func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 
 func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64, snapshot Snapshot) (Record, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, err }
-	snapshot.Inventory = CanonicalInventoryState(snapshot.Inventory)
+	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
+	if err != nil { return Record{}, err }
+	snapshot.Inventory = inventoryState
 	if err := validateSnapshotV4(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
@@ -165,17 +167,18 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		return Record{}, false, ErrCorruptRecord
 	}
 	if wire.SchemaVersion == LegacySchemaVersion && wire.DefeatedRespawn != nil { return Record{}, false, ErrCorruptRecord }
-	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory != nil { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory != (InventoryState{}) { return Record{}, false, ErrCorruptRecord }
 
 	mp, maxMP := wire.MP, wire.MaxMP
 	if wire.SchemaVersion < ResourceSchemaVersion {
 		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
 	}
-	var inventoryState *InventoryState
+	inventoryState := InventoryState{}
 	if wire.SchemaVersion >= InventorySchemaVersion {
-		// Presence is mandatory for v4 so omitted inventory cannot be mistaken for a genuinely empty one.
-		if wire.Inventory == nil { return Record{}, false, ErrCorruptRecord }
-		inventoryState = CanonicalInventoryState(wire.Inventory)
+		if !wire.Inventory.Initialized { return Record{}, false, ErrCorruptRecord }
+		var err error
+		inventoryState, err = CanonicalInventoryState(wire.Inventory)
+		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
@@ -210,12 +213,14 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 }
 
 func (s *Store) writeLocked(record Record) error {
+	inventoryState, err := CanonicalInventoryState(record.Snapshot.Inventory)
+	if err != nil { return err }
 	wire := wireRecord{
 		SchemaVersion: SchemaVersion, CharacterID: string(record.CharacterID), Revision: record.Revision,
 		WorldID: record.Snapshot.World.WorldID, WorldRevision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256,
 		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
 		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
-		Inventory: CanonicalInventoryState(record.Snapshot.Inventory),
+		Inventory: inventoryState,
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
