@@ -87,7 +87,12 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case protocol.EntityVitalsState:
 		return json.Marshal(entityVitalsState{EntityID: uint64(m.EntityID), HP: m.HP, MaxHP: m.MaxHP, MP: m.MP, MaxMP: m.MaxMP, Defeated: m.Defeated, ReviveProtectionUntilTick: m.ReviveProtectionUntilTick})
 	case protocol.InventorySnapshot:
-		out := inventorySnapshot{Revision: m.Revision, Items: make([]inventoryItemStack, len(m.Items))}
+		out := inventorySnapshot{
+			Revision:           m.Revision,
+			CurrentCarryWeight: m.CurrentCarryWeight,
+			MaxCarryWeight:     m.MaxCarryWeight,
+			Items:              make([]inventoryItemStack, len(m.Items)),
+		}
 		for i, item := range m.Items {
 			out.Items[i] = inventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity}
 		}
