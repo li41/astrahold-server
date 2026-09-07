@@ -23,12 +23,12 @@ const (
 )
 
 var (
-	ErrInvalidPickupIntent = errors.New("worldruntime: invalid pickup intent")
-	ErrInvalidItemDrop     = errors.New("worldruntime: invalid item drop")
-	ErrItemDropNotFound    = errors.New("worldruntime: item drop not found")
-	ErrItemDropWrongLayer  = errors.New("worldruntime: item drop wrong layer")
-	ErrItemDropOutOfRange  = errors.New("worldruntime: item drop out of range")
-	ErrItemDropIDExhausted = errors.New("worldruntime: item drop entity id exhausted")
+	ErrInvalidPickupIntent  = errors.New("worldruntime: invalid pickup intent")
+	ErrInvalidItemDrop      = errors.New("worldruntime: invalid item drop")
+	ErrItemDropNotFound     = errors.New("worldruntime: item drop not found")
+	ErrItemDropWrongLayer   = errors.New("worldruntime: item drop wrong layer")
+	ErrItemDropOutOfRange   = errors.New("worldruntime: item drop out of range")
+	ErrItemDropIDExhausted  = errors.New("worldruntime: item drop entity id exhausted")
 	ErrInvalidUseItemIntent = errors.New("worldruntime: invalid use-item intent")
 	ErrItemNotUsable        = errors.New("worldruntime: item is not a usable consumable")
 )
@@ -210,43 +210,58 @@ func (r *Runtime) applyUseItem(name string, command useActionCommand, report *St
 	// This prevents a full-health/dead/invalid request from being replayed after state later changes.
 	s.MarkProcessedAction(command.sequence)
 
+	request := *command.useItem
 	inv := r.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
+		err := errors.New("worldruntime: inventory unavailable")
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, err, 0, report)
 		return
 	}
-	request := *command.useItem
 	definition, ok := defaultItemUseCatalog.Resolve(request.ItemArchetypeID)
 	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemNotUsable})
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, ErrItemNotUsable, 0, report)
 		return
 	}
 	if inv.Quantity(definition.ItemArchetypeID) == 0 {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: inventory.ErrInsufficient})
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, inventory.ErrInsufficient, 0, report)
 		return
 	}
 
 	state, ok := r.characters.State(s.EntityID)
 	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterNotFound})
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, character.ErrCharacterNotFound, 0, report)
 		return
 	}
 	if state.Defeated {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterDefeated})
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, character.ErrCharacterDefeated, 0, report)
+		return
+	}
+	if readyTick, active := r.itemUseCooldown(s.CharacterIdentity.ID, definition.CooldownGroup, report.Tick); active {
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, ErrItemUseCooldown, readyTick, report)
 		return
 	}
 
-	var err error
+	var (
+		restoredState character.State
+		err           error
+		appliedAmount uint32
+	)
 	switch definition.Resource {
 	case itemuse.ResourceHP:
-		_, err = r.characters.RestoreHP(s.EntityID, definition.RestoreAmount)
+		restoredState, err = r.characters.RestoreHP(s.EntityID, definition.RestoreAmount)
+		if err == nil {
+			appliedAmount = restoredState.HP - state.HP
+		}
 	case itemuse.ResourceMP:
-		_, err = r.characters.RestoreMP(s.EntityID, definition.RestoreAmount)
+		restoredState, err = r.characters.RestoreMP(s.EntityID, definition.RestoreAmount)
+		if err == nil {
+			appliedAmount = restoredState.MP - state.MP
+		}
 	default:
 		err = ErrItemNotUsable
 	}
 	if err != nil {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, err, 0, report)
 		return
 	}
 
@@ -256,6 +271,14 @@ func (r *Runtime) applyUseItem(name string, command useActionCommand, report *St
 	if err := inv.Remove(definition.ItemArchetypeID, 1); err != nil {
 		panic("worldruntime: item-use inventory invariant violated: " + err.Error())
 	}
+	readyTick := r.commitItemUseCooldown(s.CharacterIdentity.ID, definition.CooldownGroup, report.Tick, definition.CooldownTicks)
 	r.markEntityVitalsDirty(s.EntityID)
 	r.sessionInventoryPending[s.ID] = struct{}{}
+	r.sendItemUseResult(s, protocol.ItemUseResult{
+		ClientActionSequence: command.sequence,
+		ItemArchetypeID:      definition.ItemArchetypeID,
+		Outcome:              protocol.ItemUseOutcomeUsed,
+		AppliedAmount:        appliedAmount,
+		CooldownReadyTick:    readyTick,
+	}, report)
 }
