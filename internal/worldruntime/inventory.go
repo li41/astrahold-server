@@ -8,8 +8,28 @@ import (
 	"github.com/li41/astrahold-server/internal/session"
 )
 
+const defaultInventoryCarryCapacity = uint64(100)
+
+// First playable weight profile. Unknown future ItemArchetypeIDs still receive the policy's
+// one-unit default rather than becoming weightless; authored overrides can move to content data
+// when the item catalog grows beyond this vertical slice.
+var defaultInventoryUnitWeights = map[string]uint32{
+	"item_minor_healing_potion": 1,
+	"item_minor_mana_potion":    1,
+	"item_training_blade":       8,
+	"item_gray_wolf_pelt":       2,
+}
+
+func newCharacterInventory(maxStacks int) *inventory.Inventory {
+	return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{
+		MaxWeight:         defaultInventoryCarryCapacity,
+		DefaultUnitWeight: 1,
+		UnitWeights:       defaultInventoryUnitWeights,
+	})
+}
+
 func validateStarterInventory(maxStacks int, stacks []inventory.Stack) error {
-	inv := inventory.New(maxStacks)
+	inv := newCharacterInventory(maxStacks)
 	for _, stack := range stacks {
 		if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil {
 			return err
@@ -24,7 +44,7 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 	}
 	identity := s.CharacterIdentity.ID
 	if _, ok := r.inventories[identity]; !ok {
-		inv := inventory.New(r.config.InventoryMaxStacks)
+		inv := newCharacterInventory(r.config.InventoryMaxStacks)
 		for _, stack := range r.config.StarterInventory {
 			// New validates this exact bootstrap contract. Keeping mutation here inside the
 			// world owner makes the authoritative creation point explicit.
