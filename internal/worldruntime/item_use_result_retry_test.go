@@ -99,8 +99,11 @@ func TestItemUseResultBacklogIsBoundedAndClosesSourceBeforeFurtherMutation(t *te
 	default:
 		t.Fatal("source connection remained open after item-use feedback backlog reached its cap")
 	}
-	if got := s.LastProcessedActionSequence(); got != maxPendingItemUseResultsPerSession {
-		t.Fatalf("last processed action=%d want=%d", got, maxPendingItemUseResultsPerSession)
+	if err := s.ValidateActionSequence(maxPendingItemUseResultsPerSession); !errors.Is(err, session.ErrStaleAction) {
+		t.Fatalf("sequence at backlog cap should be processed, err=%v", err)
+	}
+	if err := s.ValidateActionSequence(maxPendingItemUseResultsPerSession + 1); err != nil {
+		t.Fatalf("overflow sequence was consumed before backlog guard, err=%v", err)
 	}
 	state, _ := runtime.characters.State(s.EntityID)
 	if state.HP != 850 || inv.Quantity("item_minor_healing_potion") != 4 {
