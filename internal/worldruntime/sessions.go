@@ -2,6 +2,7 @@ package worldruntime
 
 import (
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -95,10 +96,18 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	entity := request.Entity
 	var restoredState *character.State
 	var defeatedRestore *preparedDefeatedRestore
+	var restoredInventory *inventory.Inventory
 	if request.Restore != nil {
 		if err := r.validateCharacterRestore(request.Session, *request.Restore); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 			return
+		}
+		if request.Restore.Inventory.Initialized {
+			restoredInventory, err = restoreCharacterInventory(r.config.InventoryMaxStacks, request.Restore.Inventory)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+				return
+			}
 		}
 		entity.Transform = request.Restore.Transform
 		state := character.State{
@@ -156,6 +165,9 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
+	}
+	if restoredInventory != nil {
+		r.inventories[request.Session.CharacterIdentity.ID] = restoredInventory
 	}
 	r.characterIdentities.bindSession(request.Session)
 	if request.AdmissionLease != nil { r.characterIdentities.consumeAdmission(*request.AdmissionLease) }
