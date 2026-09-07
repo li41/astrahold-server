@@ -123,6 +123,7 @@ func TestUseHealingPotionRestoresAuthoritativeHPAndConsumesOne(t *testing.T) {
 	}
 	inv := runtime.inventories[s.CharacterIdentity.ID]
 	beforeRevision := inv.Revision()
+	beforeVitalsRevision := runtime.entityVitalsRevision[s.EntityID]
 
 	if err := runtime.EnqueueUseItem(s.ID, 1, protocol.ClientUseItem{ItemArchetypeID: "item_minor_healing_potion"}); err != nil {
 		t.Fatal(err)
@@ -144,8 +145,8 @@ func TestUseHealingPotionRestoresAuthoritativeHPAndConsumesOne(t *testing.T) {
 	if got := inv.Revision(); got != beforeRevision+1 {
 		t.Fatalf("inventory revision = %d, want %d", got, beforeRevision+1)
 	}
-	if _, dirty := runtime.dirtyVitalsEntities[s.EntityID]; !dirty {
-		t.Fatal("successful item-use did not mark vitals dirty")
+	if got := runtime.entityVitalsRevision[s.EntityID]; got <= beforeVitalsRevision {
+		t.Fatalf("vitals revision = %d, want > %d", got, beforeVitalsRevision)
 	}
 }
 
