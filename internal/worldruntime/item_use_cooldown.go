@@ -10,7 +10,12 @@ import (
 	"github.com/li41/astrahold-server/internal/session"
 )
 
-var ErrItemUseCooldown = errors.New("worldruntime: item-use cooldown active")
+const maxPendingItemUseResultsPerSession = 64
+
+var (
+	ErrItemUseCooldown          = errors.New("worldruntime: item-use cooldown active")
+	ErrItemUseFeedbackBacklog   = errors.New("worldruntime: item-use feedback backlog full")
+)
 
 type itemUseCooldownKey struct {
 	CharacterID characteridentity.ID
@@ -37,6 +42,33 @@ func (r *Runtime) pruneItemUseCooldowns(tick uint64) {
 			delete(r.itemUseCooldownReadyTick, key)
 		}
 	}
+}
+
+// guardItemUseFeedbackCapacity runs before any item-use gameplay mutation. Once a client has
+// accumulated the bounded maximum of undeliverable correlated results, more item-use work would
+// either grow memory without bound or create gameplay changes whose result cannot be retained.
+// Close that source connection instead; the normal network/session lifecycle removes it.
+func (r *Runtime) guardItemUseFeedbackCapacity(name string, s *session.Session, report *StepReport) bool {
+	if s == nil || report == nil {
+		return false
+	}
+	if len(r.pendingItemUseResults[s.ID]) < maxPendingItemUseResultsPerSession {
+		return true
+	}
+	report.CommandErrors = append(report.CommandErrors, CommandError{
+		Command:   name,
+		SessionID: s.ID,
+		Err:       ErrItemUseFeedbackBacklog,
+	})
+	if err := s.Connection().Close(); err != nil {
+		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
+			SessionID:   s.ID,
+			Delivery:    protocol.DeliveryReliableOrdered,
+			MessageType: protocol.MessageItemUseResult,
+			Err:         err,
+		})
+	}
+	return false
 }
 
 func (r *Runtime) rejectItemUse(
@@ -66,6 +98,8 @@ func (r *Runtime) sendItemUseResult(s *session.Session, result protocol.ItemUseR
 		return
 	}
 	if len(r.pendingItemUseResults[s.ID]) > 0 {
+		// guardItemUseFeedbackCapacity is required before processing each item-use command, so this
+		// append can reach the fixed cap but cannot exceed it.
 		r.pendingItemUseResults[s.ID] = append(r.pendingItemUseResults[s.ID], result)
 		return
 	}
