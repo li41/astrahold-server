@@ -45,13 +45,17 @@ func (r *Runtime) EnqueueSpawnEntity(request SpawnEntityRequest) error {
 }
 
 func (r *Runtime) applySpawnEntity(name string, request SpawnEntityRequest, report *StepReport) {
-	if err := r.world.Spawn(request.Entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
+	entity := request.Entity
+	// BodySize becomes part of authoritative world state only on the world-owner spawn path.
+	// Client presentation scale never reaches this assignment.
+	entity.BodySize = world.EntityBodySize(request.BodySize)
+	if err := r.world.Spawn(entity, request.Speed, request.Radius, request.MaxStepHeight); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}); return
 	}
-	if err := r.characters.RegisterState(character.State{EntityID: request.Entity.ID, HP: request.HP, MaxHP: request.MaxHP}); err != nil {
-		r.world.Remove(request.Entity.ID)
+	if err := r.characters.RegisterState(character.State{EntityID: entity.ID, HP: request.HP, MaxHP: request.MaxHP}); err != nil {
+		r.world.Remove(entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}); return
 	}
-	r.ensureEntityVitalsRevision(request.Entity.ID)
-	r.trackMonsterLootEntity(request.Entity)
+	r.ensureEntityVitalsRevision(entity.ID)
+	r.trackMonsterLootEntity(entity)
 }
