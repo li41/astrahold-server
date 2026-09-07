@@ -161,10 +161,22 @@ func (i *Inventory) unequip(slot *string) (string, error) {
 }
 
 // Equipped items remain part of authoritative carried load, so equip/unequip never changes currentWeight.
-func (i *Inventory) EquipMainHand(archetypeID string) error { return i.equip(archetypeID, &i.mainHand) }
-func (i *Inventory) UnequipMainHand() (string, error) { return i.unequip(&i.mainHand) }
-func (i *Inventory) EquipOffHand(archetypeID string) error { return i.equip(archetypeID, &i.offHand) }
-func (i *Inventory) UnequipOffHand() (string, error) { return i.unequip(&i.offHand) }
+func (i *Inventory) EquipMainHand(archetypeID string) error {
+	if i == nil { return ErrInsufficient }
+	return i.equip(archetypeID, &i.mainHand)
+}
+func (i *Inventory) UnequipMainHand() (string, error) {
+	if i == nil { return "", ErrEquipmentSlotEmpty }
+	return i.unequip(&i.mainHand)
+}
+func (i *Inventory) EquipOffHand(archetypeID string) error {
+	if i == nil { return ErrInsufficient }
+	return i.equip(archetypeID, &i.offHand)
+}
+func (i *Inventory) UnequipOffHand() (string, error) {
+	if i == nil { return "", ErrEquipmentSlotEmpty }
+	return i.unequip(&i.offHand)
+}
 
 func (i *Inventory) Quantity(archetypeID string) uint32 { if i == nil { return 0 }; return i.stacks[archetypeID] }
 
