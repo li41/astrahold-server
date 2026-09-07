@@ -36,6 +36,13 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			return nil, ErrUnsupportedMessage
 		}
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
+	case protocol.ClientUseItem:
+		return json.Marshal(clientUseItem{ItemArchetypeID: m.ItemArchetypeID})
+	case *protocol.ClientUseItem:
+		if m == nil {
+			return nil, ErrUnsupportedMessage
+		}
+		return json.Marshal(clientUseItem{ItemArchetypeID: m.ItemArchetypeID})
 	case protocol.ClientInteractNPC:
 		return json.Marshal(clientInteractNPC{NPCEntityID: uint64(m.NPCEntityID)})
 	case *protocol.ClientInteractNPC:
