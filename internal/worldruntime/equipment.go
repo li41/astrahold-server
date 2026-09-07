@@ -4,40 +4,56 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 )
 
 const trainingBladeArchetypeID = "item_training_blade"
 
-var ErrEquipmentItemNotAllowed = errors.New("worldruntime: equipment item not allowed")
+var (
+	ErrEquipmentItemNotAllowed = errors.New("worldruntime: equipment item not allowed")
+	defaultEquipmentCatalog    = mustDefaultEquipmentCatalog()
+)
+
+func mustDefaultEquipmentCatalog() *equipmentcatalog.Catalog {
+	catalog, err := equipmentcatalog.Default()
+	if err != nil { panic(err) }
+	return catalog
+}
 
 func validateEquipmentIntent(command protocol.ClientEquipmentCommand) error {
-	if command.Slot != protocol.EquipmentSlotMainHand {
+	switch command.Slot {
+	case protocol.EquipmentSlotMainHand, protocol.EquipmentSlotOffHand:
+	default:
 		return errors.New("worldruntime: invalid equipment slot")
 	}
 	switch command.Operation {
 	case protocol.EquipmentOperationEquip:
-		if strings.TrimSpace(command.ItemArchetypeID) == "" {
-			return errors.New("worldruntime: invalid equipment item")
-		}
+		if strings.TrimSpace(command.ItemArchetypeID) == "" { return errors.New("worldruntime: invalid equipment item") }
 	case protocol.EquipmentOperationUnequip:
-		if command.ItemArchetypeID != "" {
-			return errors.New("worldruntime: unequip must not specify an item")
-		}
+		if command.ItemArchetypeID != "" { return errors.New("worldruntime: unequip must not specify an item") }
 	default:
 		return errors.New("worldruntime: invalid equipment operation")
 	}
 	return nil
 }
 
+func mainHandItemAllowed(itemArchetypeID string) bool {
+	itemArchetypeID = strings.TrimSpace(itemArchetypeID)
+	if itemArchetypeID == trainingBladeArchetypeID { return true }
+	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID)
+	return ok && definition.Kind == equipmentcatalog.KindWeapon && definition.Slot == equipmentcatalog.SlotMainHand
+}
+
+func offHandItemAllowed(itemArchetypeID string) bool {
+	definition, ok := defaultEquipmentCatalog.Resolve(strings.TrimSpace(itemArchetypeID))
+	return ok && definition.Kind == equipmentcatalog.KindShield && definition.Slot == equipmentcatalog.SlotOffHand
+}
+
 func (r *Runtime) EnqueueEquipmentCommand(id session.ID, sequence uint32, equipment protocol.ClientEquipmentCommand) error {
-	if id == 0 || sequence == 0 {
-		return errors.New("worldruntime: invalid equipment intent")
-	}
-	if err := validateEquipmentIntent(equipment); err != nil {
-		return err
-	}
+	if id == 0 || sequence == 0 { return errors.New("worldruntime: invalid equipment intent") }
+	if err := validateEquipmentIntent(equipment); err != nil { return err }
 	payload := equipment
 	return r.queue.tryPush(equipmentCommand{sessionID: id, sequence: sequence, equipment: &payload})
 }
@@ -62,10 +78,7 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
-	// Reliable equipment intent is consumed once the authoritative world owner processes it,
-	// even when gameplay validation rejects the requested transaction.
 	s.MarkProcessedAction(command.sequence)
-
 	inv := r.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
@@ -74,23 +87,27 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 
 	request := *command.equipment
 	var err error
-	switch request.Operation {
-	case protocol.EquipmentOperationEquip:
-		if request.ItemArchetypeID != trainingBladeArchetypeID {
-			err = ErrEquipmentItemNotAllowed
-		} else {
-			err = inv.EquipMainHand(request.ItemArchetypeID)
+	switch request.Slot {
+	case protocol.EquipmentSlotMainHand:
+		switch request.Operation {
+		case protocol.EquipmentOperationEquip:
+			if !mainHandItemAllowed(request.ItemArchetypeID) { err = ErrEquipmentItemNotAllowed } else { err = inv.EquipMainHand(request.ItemArchetypeID) }
+		case protocol.EquipmentOperationUnequip:
+			_, err = inv.UnequipMainHand()
 		}
-	case protocol.EquipmentOperationUnequip:
-		_, err = inv.UnequipMainHand()
+	case protocol.EquipmentSlotOffHand:
+		switch request.Operation {
+		case protocol.EquipmentOperationEquip:
+			if !offHandItemAllowed(request.ItemArchetypeID) { err = ErrEquipmentItemNotAllowed } else { err = inv.EquipOffHand(request.ItemArchetypeID) }
+		case protocol.EquipmentOperationUnequip:
+			_, err = inv.UnequipOffHand()
+		}
 	default:
-		err = errors.New("worldruntime: invalid equipment operation")
+		err = errors.New("worldruntime: invalid equipment slot")
 	}
 	if err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
-
-	// One pending marker drives the paired authoritative Inventory + Equipment snapshots.
 	r.sessionInventoryPending[command.sessionID] = struct{}{}
 }
