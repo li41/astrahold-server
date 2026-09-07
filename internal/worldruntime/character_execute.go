@@ -84,6 +84,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if target.Kind == world.EntityMonster && actualDamage > 0 {
 			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
 		}
+		r.applyEquippedWeaponDamageHit(actor.ID, sessionID, actualDamage, report)
 		if state.Defeated {
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
