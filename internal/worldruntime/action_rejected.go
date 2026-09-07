@@ -54,10 +54,10 @@ func (r *Runtime) rejectClientAction(
 	}
 	if sendErr := s.Connection().TrySend(envelope); sendErr != nil {
 		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-			SessionID: sourceSessionID,
-			Delivery: protocol.DeliveryReliableOrdered,
+			SessionID:   sourceSessionID,
+			Delivery:    protocol.DeliveryReliableOrdered,
 			MessageType: protocol.MessageActionRejected,
-			Err: sendErr,
+			Err:         sendErr,
 		})
 	}
 }
@@ -83,6 +83,7 @@ func actionRejectionReason(err error) protocol.ActionRejectionReason {
 	case errors.Is(err, combat.ErrTargetNotAllowed),
 		errors.Is(err, ErrInvalidEntityTarget),
 		errors.Is(err, ErrSelfTarget),
+		errors.Is(err, ErrEntityEvading),
 		errors.Is(err, ErrResurrectionTargetNotPlayer),
 		errors.Is(err, character.ErrCharacterNotDefeated),
 		errors.Is(err, siege.ErrUnknownGate),
