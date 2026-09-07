@@ -172,6 +172,10 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 	distanceSq := actor.Transform.Position.DistanceXZSquared(target.Transform.Position)
 	attackRangeSq := agent.config.AttackRange * agent.config.AttackRange
 	if distanceSq <= attackRangeSq {
+		r.setAutonomousFacing(actor.ID, world.Vec3{
+			X: target.Transform.Position.X - actor.Transform.Position.X,
+			Z: target.Transform.Position.Z - actor.Transform.Position.Z,
+		}, report)
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
 		if readyTick := r.combat.ActionCooldownReadyTick(actor.ID, agent.config.ActionID); readyTick != 0 && tick < readyTick {
 			return
@@ -323,6 +327,12 @@ func (r *Runtime) acquireAutonomousMeleeTarget(actor world.EntityState, config A
 func (r *Runtime) setAutonomousMove(entityID world.EntityID, direction world.Vec3, report *StepReport) {
 	if err := r.world.SetMoveInput(entityID, movement.Input{Direction: direction}); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "autonomous_melee_move", Err: err})
+	}
+}
+
+func (r *Runtime) setAutonomousFacing(entityID world.EntityID, direction world.Vec3, report *StepReport) {
+	if err := r.world.SetFacingDirection(entityID, direction); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "autonomous_melee_face", Err: err})
 	}
 }
 
