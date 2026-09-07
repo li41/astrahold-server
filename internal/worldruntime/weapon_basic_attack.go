@@ -54,17 +54,8 @@ func (r *Runtime) entityWeaponBodySize(entityID world.EntityID) equipmentcatalog
 			return equipmentcatalog.BodySizeGiant
 		}
 	}
-	// Compatibility for tests or worlds that existed before SpawnEntityRequest retained BodySize.
-	// Lifecycle-authored size is still Server data; new accepted spawns store it directly on EntityState.
-	for i := range r.monsterLifecycles {
-		spawn := r.monsterLifecycles[i].config.Spawn
-		if spawn.Entity.ID == entityID {
-			if spawn.BodySize != "" { return spawn.BodySize }
-			break
-		}
-	}
-	// Unclassified content intentionally uses the small compatibility table. This is not an
-	// authored classification and must not be presented to the Client as one.
+	// Only the current authoritative EntityState may classify this incarnation. An unclassified
+	// current entity must never inherit a stale size from lifecycle configuration sharing its ID.
 	return equipmentcatalog.BodySizeSmall
 }
 
