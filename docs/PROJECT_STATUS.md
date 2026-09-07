@@ -20,25 +20,57 @@ Server 與 Client 分開施工。Server agent 對 Client repository 只讀；Cli
 
 基礎 infrastructure / security / siege 歷史能力仍保留，但新的施工排序優先玩家可見、可玩的 gameplay vertical slice，除非 authority、data integrity、security 或 production correctness 要求先處理底層問題。
 
-## Current Server stack
+## Canonical Three.js integration target
 
-截至 2026-09-07，近期 Server gameplay work 以 `sol/monster-loot-owner-v19` 為共同 gameplay baseline，並有以下待整合 PR：
+截至 2026-09-07，正式 Three.js Client 的唯一 Server integration target 是：
 
-- PR #133 — monster loot ownership / pickup baseline，Protocol v19 stack base。
-- PR #136 — authoritative carry weight replication，`InventorySnapshot` 增加 current/max carry weight；Protocol v20 sibling contract。
-- PR #137 — Server-authored probabilistic monster loot；playtest wolf pelt 目前為 70% authored chance；Protocol 不變，基於 #133。
-- PR #138 — deterministic authored idle patrol；基於 #137；Protocol 不變。
+- Branch: `integration/threejs-canonical-v20`
+- PR: #141 — `integration: establish canonical Three.js Server v20 target`
+- Protocol: **v20**
+- Exact validated head: `cca0171adfe102ab7c94e3093e007108b10bae5d`
+- Server CI run: `34098742964`
+  - `go test ./...` PASS
+  - `go vet ./...` PASS
+  - configured race detector PASS
 
-這些 PR 的 merge / rebase / retarget 順序必須以 GitHub 當下狀態重新確認，不能把本段文字當成永久 branch topology。
+Canonical branch 以 PR #138 gameplay head 為基底，並整合：
 
-## Current integration note
+- v19 player restart / monster corpse-respawn / loot pickup / evade / damage-weighted nearby loot / authored loot chance / idle patrol gameplay stack
+- PR #136 的 v20 authoritative carry-weight `InventorySnapshot`
+- Browser WebSocket ASTR adapter
+- exclusive loopback `browserws-dev` worldd hosting
 
-正式 Three.js Client 由另一個 Client agent 維護。Server 不替 Client 追 Protocol、不代改 Client decoder，也不把 Client 尚未消費某個 Server contract 視為 Server gameplay truth 的理由。
+`browserws-dev` 只負責 transport / ingress hosting，仍進同一個 `gateway.Ingress`、`worldruntime`、combat、inventory、loot 與 AI authority path，不是第二套 gameplay runtime。
 
-Protocol compatibility / handoff 流程見：
+Server Issue #139 已回覆 canonical target。Server -> Client 正式 handoff 已開在 Client repo Issue #7：
 
-- `docs/PROTOCOL_SYNC.md`
-- `docs/CLIENT_INTEGRATION.md`
+`[gpt-server] Adopt canonical Server Protocol v20 integration target`
+
+目前 Server source-level canonical target 已驗證；下一個跨 repo checkpoint 是 gpt-client 消費 v20 並做 live Three.js BrowserWS runtime / presentation validation。
+
+## Protocol v13 -> v20 Client-visible delta
+
+- v14: `InventorySnapshot`
+- v15: `ClientEquipmentCommand` + `EquipmentSnapshot`
+- v16: `ClientPickupItem` + authoritative item-drop lifecycle
+- v17: `ClientInteractNPC` + `NPCInteraction`
+- v18: `ClientShopCommand` + `ShopSnapshot`
+- v19: `ClientRespawnRequest`
+- v20: `InventorySnapshot.current_carry_weight` + `max_carry_weight`
+
+Monster evade、loot chance、patrol 等 Server-only gameplay semantics 不要求 Client 建立對應 gameplay rule；Client 只呈現 authoritative state / events。
+
+## Current Server PR stack
+
+主要近期 PR：
+
+- PR #133 — nearby monster loot distribution / carry capacity gameplay baseline。
+- PR #136 — authoritative carry-weight snapshot v20。
+- PR #137 — Server-authored probabilistic monster loot。
+- PR #138 — deterministic authored idle patrol。
+- PR #141 — canonical Three.js Server v20 integration target；目前 Ready for review。
+
+實際 merge / rebase / retarget 順序每次以 GitHub 當下狀態重新確認；本文件不是永久 branch topology。
 
 ## Known validation debt
 
@@ -57,10 +89,10 @@ Protocol compatibility / handoff 流程見：
 
 近期優先順序：
 
-1. 收斂 monster PvE loop：movement / facing / aggro / attack / evade / death / respawn / loot / pickup。
-2. 收斂 inventory / equipment / carry capacity 與可靠 replication contract。
-3. 只在 meaningful integration checkpoint 推進 Protocol / Client consumption。
-4. 再擴充更多 monster archetype、loot table、NPC / shop / usable item 等內容，不為單一內容複製 gameplay system。
+1. 等待 / 回應 gpt-client 對 Protocol v20 canonical target 的 integration feedback；Client source 由 gpt-client 自己修改。
+2. Server 可繼續收斂 PvE loop，不因 Client presentation 開發停止 authoritative gameplay work。
+3. 下一批 Server gameplay 優先 movement / facing / combat readability / loot / item use 等玩家可感知缺口。
+4. 不先擴張大型 guild / auction / crafting / siege framework，除非當前 playable loop 已需要。
 
 每次選下一個 slice 時，先問：
 
