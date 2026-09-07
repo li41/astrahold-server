@@ -11,6 +11,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+const testShopCostArchetypeID = "item_gray_wolf_pelt"
+
 func testShopCatalog(t *testing.T) *shopcatalog.Catalog {
 	t.Helper()
 	catalog, err := shopcatalog.New(shopcatalog.Definition{
@@ -22,7 +24,7 @@ func testShopCatalog(t *testing.T) *shopcatalog.Catalog {
 				ID:              "trade_gray_pelt_for_healing_potion",
 				ItemArchetypeID: "item_minor_healing_potion",
 				Quantity:        1,
-				CostArchetypeID: grayWolfPeltArchetypeID,
+				CostArchetypeID: testShopCostArchetypeID,
 				CostQuantity:    1,
 			}},
 		}},
@@ -56,7 +58,7 @@ func TestOpenShopEmitsAuthoritativeSnapshot(t *testing.T) {
 			t.Fatalf("snapshot = %#v", snapshot)
 		}
 		offer := snapshot.Offers[0]
-		if offer.OfferID != "trade_gray_pelt_for_healing_potion" || offer.ItemArchetypeID != "item_minor_healing_potion" || offer.CostArchetypeID != grayWolfPeltArchetypeID {
+		if offer.OfferID != "trade_gray_pelt_for_healing_potion" || offer.ItemArchetypeID != "item_minor_healing_potion" || offer.CostArchetypeID != testShopCostArchetypeID {
 			t.Fatalf("offer = %#v", offer)
 		}
 	default:
@@ -72,7 +74,7 @@ func TestBuyShopOfferExchangesInventoryAtomically(t *testing.T) {
 	if inv == nil {
 		t.Fatal("inventory missing")
 	}
-	if err := inv.Add(grayWolfPeltArchetypeID, 1); err != nil {
+	if err := inv.Add(testShopCostArchetypeID, 1); err != nil {
 		t.Fatal(err)
 	}
 	if got := inv.Revision(); got != 4 {
@@ -86,7 +88,7 @@ func TestBuyShopOfferExchangesInventoryAtomically(t *testing.T) {
 	if len(report.CommandErrors) != 0 {
 		t.Fatalf("buy errors: %#v", report.CommandErrors)
 	}
-	if got := inv.Quantity(grayWolfPeltArchetypeID); got != 0 {
+	if got := inv.Quantity(testShopCostArchetypeID); got != 0 {
 		t.Fatalf("pelt quantity = %d, want 0", got)
 	}
 	if got := inv.Quantity("item_minor_healing_potion"); got != 6 {

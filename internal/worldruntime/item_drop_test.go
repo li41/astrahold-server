@@ -14,6 +14,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+const testItemDropArchetypeID = "item_test_pelt"
+
 func newItemDropTestRuntime(t *testing.T, playerPosition world.Position) (*Runtime, *simulation.World, *session.Session) {
 	t.Helper()
 	sim := simulation.New(
@@ -48,28 +50,17 @@ func newItemDropTestRuntime(t *testing.T, playerPosition world.Position) (*Runti
 	return runtime, sim, s
 }
 
-func spawnTestWolfDrop(t *testing.T, runtime *Runtime, sim *simulation.World, monsterPosition world.Position, actionInstanceID uint64) world.EntityID {
+func spawnTestItemDrop(t *testing.T, runtime *Runtime, sim *simulation.World, position world.Position) world.EntityID {
 	t.Helper()
-	monster := world.EntityState{
-		ID:          9001,
-		Kind:        world.EntityMonster,
-		ArchetypeID: grayWolfArchetypeID,
-		Transform:   world.Transform{Position: monsterPosition},
-	}
-	if err := sim.Spawn(monster, 0, 0.35, 0); err != nil {
+	dropID, err := runtime.spawnItemDrop(testItemDropArchetypeID, position)
+	if err != nil {
 		t.Fatal(err)
 	}
-	report := StepReport{}
-	runtime.spawnMonsterItemDrop(monster, actionInstanceID, &report)
-	if len(report.CommandErrors) != 0 {
-		t.Fatalf("drop spawn errors: %#v", report.CommandErrors)
-	}
-	dropID := firstItemDropEntityID + world.EntityID(actionInstanceID)
 	drop, ok := sim.Entity(dropID)
 	if !ok {
 		t.Fatal("expected item drop in authoritative world")
 	}
-	if drop.Kind != world.EntityItemDrop || drop.ArchetypeID != grayWolfPeltArchetypeID {
+	if drop.Kind != world.EntityItemDrop || drop.ArchetypeID != testItemDropArchetypeID {
 		t.Fatalf("drop = %#v", drop)
 	}
 	return dropID
@@ -77,7 +68,7 @@ func spawnTestWolfDrop(t *testing.T, runtime *Runtime, sim *simulation.World, mo
 
 func TestPickupItemAddsInventoryAndRemovesWorldDrop(t *testing.T) {
 	runtime, sim, s := newItemDropTestRuntime(t, world.Position{})
-	dropID := spawnTestWolfDrop(t, runtime, sim, world.Position{X: 1}, 1)
+	dropID := spawnTestItemDrop(t, runtime, sim, world.Position{X: 1})
 
 	if err := runtime.EnqueuePickupItem(s.ID, 1, protocol.ClientPickupItem{DropEntityID: dropID}); err != nil {
 		t.Fatal(err)
@@ -93,8 +84,8 @@ func TestPickupItemAddsInventoryAndRemovesWorldDrop(t *testing.T) {
 	if inv == nil {
 		t.Fatal("inventory missing")
 	}
-	if got := inv.Quantity(grayWolfPeltArchetypeID); got != 1 {
-		t.Fatalf("pelt quantity = %d, want 1", got)
+	if got := inv.Quantity(testItemDropArchetypeID); got != 1 {
+		t.Fatalf("item quantity = %d, want 1", got)
 	}
 	if got := inv.Revision(); got != 4 {
 		t.Fatalf("inventory revision = %d, want 4", got)
@@ -103,7 +94,7 @@ func TestPickupItemAddsInventoryAndRemovesWorldDrop(t *testing.T) {
 
 func TestPickupItemRejectsOutOfRangeWithoutMutation(t *testing.T) {
 	runtime, sim, s := newItemDropTestRuntime(t, world.Position{})
-	dropID := spawnTestWolfDrop(t, runtime, sim, world.Position{X: 10}, 2)
+	dropID := spawnTestItemDrop(t, runtime, sim, world.Position{X: 10})
 
 	if err := runtime.EnqueuePickupItem(s.ID, 1, protocol.ClientPickupItem{DropEntityID: dropID}); err != nil {
 		t.Fatal(err)
@@ -116,8 +107,8 @@ func TestPickupItemRejectsOutOfRangeWithoutMutation(t *testing.T) {
 		t.Fatal("rejected pickup removed authoritative drop")
 	}
 	inv := runtime.inventories[s.CharacterIdentity.ID]
-	if got := inv.Quantity(grayWolfPeltArchetypeID); got != 0 {
-		t.Fatalf("pelt quantity = %d, want 0", got)
+	if got := inv.Quantity(testItemDropArchetypeID); got != 0 {
+		t.Fatalf("item quantity = %d, want 0", got)
 	}
 	if got := inv.Revision(); got != 3 {
 		t.Fatalf("inventory revision = %d, want 3", got)
