@@ -60,7 +60,7 @@ Canonical branch 在 Client integration 期間維持 frozen；後續 Server game
 - v19: `ClientRespawnRequest`
 - v20: `InventorySnapshot.current_carry_weight` + `max_carry_weight`
 
-Monster evade、loot chance、patrol 等 Server-only gameplay semantics 不要求 Client 建立對應 gameplay rule；Client 只呈現 authoritative state / events。
+Monster evade、loot chance、patrol、retaliation、ground-drop expiry 等 Server-only gameplay semantics 不要求 Client 建立對應 gameplay rule；Client 只呈現 authoritative state / events。
 
 ## Current Server PR stack
 
@@ -73,10 +73,13 @@ Monster evade、loot chance、patrol 等 Server-only gameplay semantics 不要�
 - PR #141 — canonical Three.js Server v20 integration target；Ready for review；frozen for Client integration。
 - PR #142 — stationary authoritative melee target facing；基於 #141；Server CI test / vet / race PASS。
 - PR #143 — ranged opening retaliation aggro；基於 #142；Server CI test / vet / race PASS。
+- PR #144 — authoritative ground item-drop expiry；基於 #143；Server CI test / vet / race PASS。
 
 PR #142 修正怪物進入近戰距離停步後 yaw 不再跟目標更新的問題；狼會只轉向、不滑步，cooldown 等待期間仍追蹤目標 facing。
 
 PR #143 修正合法遠程先手在 proximity aggro 外命中怪物後，怪物同 tick evade / 補滿的問題；未交戰怪會對實際造成傷害的玩家反擊，但不搶換既有目標、不打斷 evade，也沒有提前建立完整 threat table。
+
+PR #144 為未撿取的 public ground loot 加上 authoritative lifetime；正式 20Hz cadence 下預設 60 秒。到期由 world-owner tick 移除 `EntityItemDrop`，Client 透過既有 `EntityDespawn` 得知，不增加 Protocol message / intent，也不把 cleanup timer 下放 Client。
 
 實際 merge / rebase / retarget 順序每次以 GitHub 當下狀態重新確認；本文件不是永久 branch topology。
 
