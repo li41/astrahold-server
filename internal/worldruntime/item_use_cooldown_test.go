@@ -71,7 +71,7 @@ func TestHealingPotionCooldownRejectsSpamAndAllowsExactReadyTick(t *testing.T) {
 	}
 }
 
-func TestHealingAndManaPotionsShareCooldownGroup(t *testing.T) {
+func TestHealingAndManaPotionsHaveIndependentCooldowns(t *testing.T) {
 	runtime, _, s := newItemDropTestRuntime(t, world.Position{})
 	connection := s.Connection().(*session.QueueConnection)
 	drainReliable(connection)
@@ -96,17 +96,29 @@ func TestHealingAndManaPotionsShareCooldownGroup(t *testing.T) {
 	if err := runtime.EnqueueUseItem(s.ID, 2, protocol.ClientUseItem{ItemArchetypeID: "item_minor_mana_potion"}); err != nil {
 		t.Fatal(err)
 	}
-	blocked := runtime.Step(3, 50*time.Millisecond)
-	if len(blocked.CommandErrors) != 1 || !errors.Is(blocked.CommandErrors[0].Err, ErrItemUseCooldown) {
-		t.Fatalf("mana errors=%#v", blocked.CommandErrors)
+	manaUse := runtime.Step(3, 50*time.Millisecond)
+	if len(manaUse.CommandErrors) != 0 {
+		t.Fatalf("mana errors=%#v", manaUse.CommandErrors)
 	}
 	manaResult := requireSingleItemUseResult(t, connection)
-	if manaResult.ItemArchetypeID != "item_minor_mana_potion" || manaResult.Reason != protocol.ItemUseRejectionCooldown || manaResult.CooldownReadyTick != 42 {
+	if manaResult.ItemArchetypeID != "item_minor_mana_potion" || manaResult.Outcome != protocol.ItemUseOutcomeUsed || manaResult.AppliedAmount != 25 || manaResult.CooldownReadyTick != 43 {
 		t.Fatalf("mana result=%#v", manaResult)
 	}
 	state, _ := runtime.characters.State(s.EntityID)
-	if state.MP != 50 || runtime.inventories[s.CharacterIdentity.ID].Quantity("item_minor_mana_potion") != 3 {
-		t.Fatalf("mana cooldown mutated state=%#v inventory=%#v", state, runtime.inventories[s.CharacterIdentity.ID].Snapshot())
+	if state.MP != 75 || runtime.inventories[s.CharacterIdentity.ID].Quantity("item_minor_mana_potion") != 2 {
+		t.Fatalf("mana use state=%#v inventory=%#v", state, runtime.inventories[s.CharacterIdentity.ID].Snapshot())
+	}
+
+	if err := runtime.EnqueueUseItem(s.ID, 3, protocol.ClientUseItem{ItemArchetypeID: "item_minor_mana_potion"}); err != nil {
+		t.Fatal(err)
+	}
+	blocked := runtime.Step(4, 50*time.Millisecond)
+	if len(blocked.CommandErrors) != 1 || !errors.Is(blocked.CommandErrors[0].Err, ErrItemUseCooldown) {
+		t.Fatalf("mana repeat errors=%#v", blocked.CommandErrors)
+	}
+	blockedResult := requireSingleItemUseResult(t, connection)
+	if blockedResult.Reason != protocol.ItemUseRejectionCooldown || blockedResult.CooldownReadyTick != 43 {
+		t.Fatalf("mana repeat result=%#v", blockedResult)
 	}
 }
 
