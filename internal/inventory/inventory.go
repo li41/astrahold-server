@@ -167,7 +167,12 @@ func (i *Inventory) Remove(archetypeID string, quantity uint32) error {
 	} else {
 		i.stacks[archetypeID] = remaining
 	}
-	i.currentWeight -= i.weightFor(archetypeID, quantity)
+	removedWeight := i.weightFor(archetypeID, quantity)
+	if removedWeight >= i.currentWeight {
+		i.currentWeight = 0
+	} else {
+		i.currentWeight -= removedWeight
+	}
 	i.revision++
 	return nil
 }
@@ -192,22 +197,24 @@ func (i *Inventory) Exchange(removeArchetypeID string, removeQuantity uint32, ad
 		return ErrInsufficient
 	}
 
+	removedWeight := i.weightFor(removeArchetypeID, removeQuantity)
+	baseWeight := uint64(0)
+	if removedWeight < i.currentWeight {
+		baseWeight = i.currentWeight - removedWeight
+	}
+	addedWeight := i.weightFor(addArchetypeID, addQuantity)
+	if i.maxWeight > 0 && (addedWeight > i.maxWeight || baseWeight > i.maxWeight-addedWeight) {
+		return ErrWeightExceeded
+	}
+
 	if removeArchetypeID == addArchetypeID {
 		remaining := uint64(removeCurrent - removeQuantity)
 		final := remaining + uint64(addQuantity)
 		if final > math.MaxUint32 {
 			return ErrQuantityOverflow
 		}
-		removedWeight := i.weightFor(removeArchetypeID, removeQuantity)
-		addedWeight := i.weightFor(addArchetypeID, addQuantity)
-		if i.maxWeight > 0 {
-			baseWeight := i.currentWeight - removedWeight
-			if addedWeight > i.maxWeight || baseWeight > i.maxWeight-addedWeight {
-				return ErrWeightExceeded
-			}
-		}
 		i.stacks[removeArchetypeID] = uint32(final)
-		i.currentWeight = i.currentWeight - removedWeight + addedWeight
+		i.currentWeight = baseWeight + addedWeight
 		i.revision++
 		return nil
 	}
@@ -225,15 +232,6 @@ func (i *Inventory) Exchange(removeArchetypeID string, removeQuantity uint32, ad
 		return ErrFull
 	}
 
-	removedWeight := i.weightFor(removeArchetypeID, removeQuantity)
-	addedWeight := i.weightFor(addArchetypeID, addQuantity)
-	if i.maxWeight > 0 {
-		baseWeight := i.currentWeight - removedWeight
-		if addedWeight > i.maxWeight || baseWeight > i.maxWeight-addedWeight {
-			return ErrWeightExceeded
-		}
-	}
-
 	remaining := removeCurrent - removeQuantity
 	if remaining == 0 {
 		delete(i.stacks, removeArchetypeID)
@@ -241,7 +239,7 @@ func (i *Inventory) Exchange(removeArchetypeID string, removeQuantity uint32, ad
 		i.stacks[removeArchetypeID] = remaining
 	}
 	i.stacks[addArchetypeID] = addCurrent + addQuantity
-	i.currentWeight = i.currentWeight - removedWeight + addedWeight
+	i.currentWeight = baseWeight + addedWeight
 	i.revision++
 	return nil
 }
