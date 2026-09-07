@@ -31,6 +31,15 @@ func validateEquipmentIntent(command protocol.ClientEquipmentCommand) error {
 	return nil
 }
 
+func mainHandItemAllowed(itemArchetypeID string) bool {
+	itemArchetypeID = strings.TrimSpace(itemArchetypeID)
+	if itemArchetypeID == trainingBladeArchetypeID {
+		return true
+	}
+	_, ok := defaultWeaponEffectCatalog.Resolve(itemArchetypeID)
+	return ok
+}
+
 func (r *Runtime) EnqueueEquipmentCommand(id session.ID, sequence uint32, equipment protocol.ClientEquipmentCommand) error {
 	if id == 0 || sequence == 0 {
 		return errors.New("worldruntime: invalid equipment intent")
@@ -76,7 +85,7 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 	var err error
 	switch request.Operation {
 	case protocol.EquipmentOperationEquip:
-		if request.ItemArchetypeID != trainingBladeArchetypeID {
+		if !mainHandItemAllowed(request.ItemArchetypeID) {
 			err = ErrEquipmentItemNotAllowed
 		} else {
 			err = inv.EquipMainHand(request.ItemArchetypeID)
