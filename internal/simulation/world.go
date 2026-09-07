@@ -98,10 +98,27 @@ func (w *World) SetMoveInput(id world.EntityID, input movement.Input) error {
 	if err := w.movement.AcceptInput(&a.move, input); err != nil {
 		return err
 	}
-	if a.move.Direction.X != 0 || a.move.Direction.Z != 0 {
-		a.entity.Transform.Yaw = float32(math.Atan2(float64(a.move.Direction.Z), float64(a.move.Direction.X)) * 180 / math.Pi)
-	}
+	setActorFacingDirection(a, a.move.Direction)
 	return nil
+}
+
+// SetFacingDirection rotates authoritative gameplay facing without changing movement input.
+// This is a Server-owned primitive for gameplay such as a stationary melee actor tracking its target.
+// A zero XZ direction intentionally preserves the previous yaw.
+func (w *World) SetFacingDirection(id world.EntityID, direction world.Vec3) error {
+	a, ok := w.actors[id]
+	if !ok {
+		return ErrEntityNotFound
+	}
+	setActorFacingDirection(a, direction.NormalizedXZ())
+	return nil
+}
+
+func setActorFacingDirection(a *actor, direction world.Vec3) {
+	if a == nil || (direction.X == 0 && direction.Z == 0) {
+		return
+	}
+	a.entity.Transform.Yaw = float32(math.Atan2(float64(direction.Z), float64(direction.X)) * 180 / math.Pi)
 }
 
 // Tick 由 server clock 推進世界。
