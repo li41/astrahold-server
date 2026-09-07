@@ -44,6 +44,7 @@ type Config struct {
 	MaxCharacterStateAutosavesPerTick    int
 	InventoryMaxStacks                   int
 	StarterInventory                     []inventory.Stack
+	ItemDropLifetimeTicks                uint64
 	ShopCatalog                          *shop.Catalog
 	SiegeCompletedMinHold                time.Duration
 	SiegeCompletedMaxHold                time.Duration
@@ -73,6 +74,7 @@ func DefaultConfig() Config {
 			{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
 			{ArchetypeID: "item_training_blade", Quantity: 1},
 		},
+		ItemDropLifetimeTicks:                defaultItemDropLifetimeTicks,
 		SiegeCompletedMinHold:                2 * time.Second,
 		SiegeCompletedMaxHold:                10 * time.Second,
 		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
@@ -110,6 +112,7 @@ type StepMetrics struct {
 	CommandQueueDepthAfter                   int
 	CommandsDrained                          int
 	EntityActionsApplied                     int
+	ItemDropsExpired                         int
 	CharacterStateSaveIntentsEnqueued        int
 	CharacterStateSaveIntentFailures         int
 	CharacterStateAutosaveBudget             int
@@ -230,6 +233,7 @@ type Runtime struct {
 	monsterLootStates              map[world.EntityID]*monsterLootState
 	monsterLootEntityIDs           []world.EntityID
 	nextItemDropEntityID           world.EntityID
+	itemDropExpireTick             map[world.EntityID]uint64
 	respawnPolicy                  *respawnpolicy.Service
 	deathPenalty                   *deathpenalty.Service
 	deathOutbox                    *deathoutcome.Outbox
@@ -274,6 +278,9 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.InventoryMaxStacks <= 0 {
 		config.InventoryMaxStacks = 32
+	}
+	if config.ItemDropLifetimeTicks == 0 {
+		config.ItemDropLifetimeTicks = defaultItemDropLifetimeTicks
 	}
 	if err := validateStarterInventory(config.InventoryMaxStacks, config.StarterInventory); err != nil {
 		panic(err)
@@ -323,6 +330,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config:                         config,
 		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
 		nextItemDropEntityID:           firstItemDropEntityID,
+		itemDropExpireTick:             make(map[world.EntityID]uint64),
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
 		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),
