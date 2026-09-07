@@ -124,7 +124,12 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		for i, item := range in.Items {
 			items[i] = protocol.InventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity}
 		}
-		return protocol.InventorySnapshot{Revision: in.Revision, Items: items}, nil
+		return protocol.InventorySnapshot{
+			Revision:           in.Revision,
+			CurrentCarryWeight: in.CurrentCarryWeight,
+			MaxCarryWeight:     in.MaxCarryWeight,
+			Items:              items,
+		}, nil
 	case protocol.MessageEquipmentSnapshot:
 		var in equipmentSnapshot
 		if err := decodeStrict(data, &in); err != nil {
