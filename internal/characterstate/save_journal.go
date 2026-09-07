@@ -562,7 +562,7 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: character identity: %v", ErrCorruptSaveJournal, err)
 	}
 	intent := SaveIntent{
-		IntentID: intentID(wire.IntentID),
+		IntentID: wire.IntentID,
 		Identity: identity,
 		Snapshot: saveJournalWireToSnapshot(wire.SchemaVersion, wire.Snapshot),
 	}
