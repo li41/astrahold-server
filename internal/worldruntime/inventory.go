@@ -106,6 +106,7 @@ func (r *Runtime) removeSessionInventoryDelivery(id session.ID) {
 }
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
+	r.pruneItemUseCooldowns(tick)
 	if len(r.sessionInventoryPending) == 0 {
 		return
 	}
