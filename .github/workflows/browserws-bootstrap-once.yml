@@ -1,0 +1,36 @@
+name: browserws-bootstrap-once
+
+on:
+  push:
+    branches: [feat/websocket-browser-adapter]
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/websocket-browser-adapter
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Normalize module and source
+        run: |
+          go mod tidy
+          gofmt -w internal/netadapter/browserws
+      - name: Test Browser WebSocket adapter
+        run: go test ./internal/netadapter/browserws
+      - name: Commit normalized files
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum internal/netadapter/browserws
+          git commit -m "build: normalize Browser WebSocket adapter"
+          git push origin HEAD:feat/websocket-browser-adapter
