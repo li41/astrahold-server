@@ -49,6 +49,20 @@ func TestExchangeChecksFinalCarryWeightAtomically(t *testing.T) {
 		t.Fatalf("rejected exchange mutated inventory coins=%d heavy=%d weight=%d revision=%d",
 			inv.Quantity("coin"), inv.Quantity("heavy"), inv.CurrentWeight(), inv.Revision())
 	}
+
+	fitting := NewWithWeightPolicy(8, WeightPolicy{
+		MaxWeight: 5, DefaultUnitWeight: 1,
+		UnitWeights: map[string]uint32{"coin": 1, "blade": 4},
+	})
+	if err := fitting.Add("coin", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := fitting.Exchange("coin", 1, "blade", 1); err != nil {
+		t.Fatalf("fitting exchange rejected: %v", err)
+	}
+	if fitting.Quantity("coin") != 0 || fitting.Quantity("blade") != 1 || fitting.CurrentWeight() != 4 {
+		t.Fatalf("fitting exchange state coins=%d blade=%d weight=%d", fitting.Quantity("coin"), fitting.Quantity("blade"), fitting.CurrentWeight())
+	}
 }
 
 func TestEquipmentPreservesCarryWeight(t *testing.T) {
