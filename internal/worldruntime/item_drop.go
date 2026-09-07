@@ -202,6 +202,12 @@ func (r *Runtime) applyUseItem(name string, command useActionCommand, report *St
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: session.ErrSessionNotFound})
 		return
 	}
+	// Bound correlated feedback before consuming the action sequence or touching gameplay state.
+	// A client that does not read Reliable traffic cannot grow Server memory by continuing to send
+	// item-use intents; the source connection is closed once its retained result budget is full.
+	if !r.guardItemUseFeedbackCapacity(name, s, report) {
+		return
+	}
 	if err := s.ValidateActionSequence(command.sequence); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
