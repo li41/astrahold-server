@@ -109,17 +109,17 @@ func (r *Runtime) stepAutonomousMeleeAgents(tick uint64, delta time.Duration, re
 func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uint64, delta time.Duration, report *StepReport) {
 	actor, ok := r.world.Entity(agent.config.EntityID)
 	if !ok {
-		r.resetAutonomousMeleeAgentState(agent)
+		resetAutonomousMeleeAgentState(agent)
 		return
 	}
 	state, ok := r.combatantState(actor.ID)
 	if !ok || state.Defeated {
-		r.resetAutonomousMeleeAgentState(agent)
+		resetAutonomousMeleeAgentState(agent)
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
 		return
 	}
 	if actor.Kind != world.EntityMonster || actor.Transform.Position.Layer != agent.config.Home.Layer {
-		r.resetAutonomousMeleeAgentState(agent)
+		resetAutonomousMeleeAgentState(agent)
 		r.setAutonomousMove(actor.ID, world.Vec3{}, report)
 		return
 	}
