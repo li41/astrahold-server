@@ -2,8 +2,10 @@ package worldruntime
 
 import (
 	"testing"
+	"time"
 
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 )
 
@@ -20,6 +22,25 @@ func TestLowTierWeaponDamageRangesUseTargetSizeAndExtraDamage(t *testing.T) {
 	if !ok { t.Fatal("mace missing") }
 	if got := rollWeaponDamage(mace, equipmentcatalog.BodySizeSmall, 0); got != 7 { t.Fatalf("mace min + extra = %d", got) }
 	if got := rollWeaponDamage(mace, equipmentcatalog.BodySizeSmall, 3); got != 10 { t.Fatalf("mace max + extra = %d", got) }
+}
+
+func TestWeaponAttackIntervalsPreserveAuthoredTicksAt20Hz(t *testing.T) {
+	cases := []struct {
+		milliseconds uint32
+		wantTicks    uint64
+	}{
+		{850, 17},
+		{1000, 20},
+		{1100, 22},
+		{1150, 23},
+	}
+	for _, tc := range cases {
+		definition := combat.ActionDefinition{CooldownSeconds: weaponAttackCooldownSeconds(tc.milliseconds)}
+		got := combat.CooldownReadyTick(definition, 10, 50*time.Millisecond) - 10
+		if got != tc.wantTicks {
+			t.Fatalf("interval %dms = %d ticks, want %d", tc.milliseconds, got, tc.wantTicks)
+		}
+	}
 }
 
 func TestRestoreCharacterInventoryPreservesMainAndOffHand(t *testing.T) {
