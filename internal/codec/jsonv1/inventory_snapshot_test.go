@@ -10,7 +10,9 @@ import (
 func TestInventorySnapshotRoundTrip(t *testing.T) {
 	codec := Codec{}
 	want := protocol.InventorySnapshot{
-		Revision: 7,
+		Revision:           7,
+		CurrentCarryWeight: 19,
+		MaxCarryWeight:     100,
 		Items: []protocol.InventoryItemStack{
 			{ArchetypeID: "item_minor_healing_potion", Quantity: 3},
 			{ArchetypeID: "item_minor_mana_potion", Quantity: 2},
@@ -37,7 +39,7 @@ func TestInventorySnapshotRoundTrip(t *testing.T) {
 
 func TestInventorySnapshotStrictDecodeRejectsUnknownFields(t *testing.T) {
 	codec := Codec{}
-	_, err := codec.Unmarshal(protocol.MessageInventorySnapshot, []byte(`{"revision":1,"items":[],"client_owned":true}`))
+	_, err := codec.Unmarshal(protocol.MessageInventorySnapshot, []byte(`{"revision":1,"current_carry_weight":0,"max_carry_weight":100,"items":[],"client_owned":true}`))
 	if err == nil {
 		t.Fatal("expected strict decoder to reject unknown inventory field")
 	}
