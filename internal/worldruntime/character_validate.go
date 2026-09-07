@@ -39,6 +39,11 @@ func (r *Runtime) validateEntityTarget(actor world.EntityState, prepared combat.
 		if state.Defeated {
 			return 0, character.ErrCharacterDefeated
 		}
+		// Encounter reset is authoritative combat state. A monster returning home cannot be
+		// damaged until evade completes, otherwise players can continue grinding HP during leash.
+		if prepared.Definition.Effect == combat.EffectDamage && target.Kind == world.EntityMonster && r.autonomousMeleeReturningHome(targetID) {
+			return 0, ErrEntityEvading
+		}
 	}
 
 	if actor.Transform.Position.Layer != target.Transform.Position.Layer {
