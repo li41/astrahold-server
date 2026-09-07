@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	LegacySchemaVersion  uint16 = 1
-	RespawnSchemaVersion uint16 = 2
-	SchemaVersion        uint16 = 3
-	LegacyDefaultMaxMP   uint32 = 100
+	LegacySchemaVersion    uint16 = 1
+	RespawnSchemaVersion   uint16 = 2
+	ResourceSchemaVersion  uint16 = 3
+	InventorySchemaVersion uint16 = 4
+	SchemaVersion          uint16 = InventorySchemaVersion
+	LegacyDefaultMaxMP     uint32 = 100
 )
 
 var (
@@ -42,8 +44,6 @@ type WorldRef struct {
 	GameplaySHA256 string
 }
 
-// DefeatedRespawn is the minimum settled authoritative gameplay truth needed to
-// reconstruct an already-defeated character without re-running death policy.
 type DefeatedRespawn struct {
 	Context        respawnpolicy.DeathContext
 	SpawnPointID   string
@@ -54,15 +54,16 @@ type DefeatedRespawn struct {
 }
 
 type Snapshot struct {
-	World    WorldRef
-	HP       uint32
-	MaxHP    uint32
-	MP       uint32
-	MaxMP    uint32
-	Defeated bool
-	Position world.Position
-	Yaw      float32
-	Respawn  DefeatedRespawn
+	World     WorldRef
+	HP        uint32
+	MaxHP     uint32
+	MP        uint32
+	MaxMP     uint32
+	Defeated  bool
+	Position  world.Position
+	Yaw       float32
+	Respawn   DefeatedRespawn
+	Inventory InventoryState
 }
 
 type Record struct {
@@ -107,6 +108,7 @@ type wireRecord struct {
 	Layer           world.LayerID         `json:"layer"`
 	Yaw             float32               `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
+	Inventory        InventoryState        `json:"inventory,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -118,8 +120,9 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1/v2 records. Those schemas predate MP, so they migrate to a full 100/100
-// resource pool in memory and will be rewritten as v3 on the next successful save.
+// Load accepts v1-v4 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// v1-v3 predate inventory persistence and remain explicitly Inventory.Initialized=false so
+// worldruntime can preserve starter-inventory bootstrap semantics on the first post-upgrade join.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -128,7 +131,8 @@ func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 
 func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64, snapshot Snapshot) (Record, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, err }
-	if err := validateSnapshotV3(snapshot); err != nil { return Record{}, err }
+	snapshot.Inventory = CanonicalInventoryState(snapshot.Inventory)
+	if err := validateSnapshotV4(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -157,14 +161,19 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		if err == nil { return Record{}, false, fmt.Errorf("%w: trailing JSON value", ErrCorruptRecord) }
 		return Record{}, false, fmt.Errorf("%w: trailing data: %v", ErrCorruptRecord, err)
 	}
-	if (wire.SchemaVersion != LegacySchemaVersion && wire.SchemaVersion != RespawnSchemaVersion && wire.SchemaVersion != SchemaVersion) || wire.CharacterID != string(identity.ID) || wire.Revision == 0 {
+	if wire.SchemaVersion < LegacySchemaVersion || wire.SchemaVersion > SchemaVersion || wire.CharacterID != string(identity.ID) || wire.Revision == 0 {
 		return Record{}, false, ErrCorruptRecord
 	}
 	if wire.SchemaVersion == LegacySchemaVersion && wire.DefeatedRespawn != nil { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory.Initialized { return Record{}, false, ErrCorruptRecord }
 
 	mp, maxMP := wire.MP, wire.MaxMP
-	if wire.SchemaVersion < SchemaVersion {
+	if wire.SchemaVersion < ResourceSchemaVersion {
 		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
+	}
+	inventoryState := InventoryState{}
+	if wire.SchemaVersion >= InventorySchemaVersion {
+		inventoryState = CanonicalInventoryState(wire.Inventory)
 	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
@@ -174,6 +183,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 			World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
 			HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
+			Inventory: inventoryState,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
@@ -188,8 +198,11 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion >= RespawnSchemaVersion {
 		if err := validateRespawnSnapshot(record.Snapshot); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
-	if wire.SchemaVersion == SchemaVersion {
-		if err := validateSnapshotV3(record.Snapshot); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	if wire.SchemaVersion >= ResourceSchemaVersion {
+		if record.Snapshot.MaxMP == 0 || record.Snapshot.MP > record.Snapshot.MaxMP { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
+	}
+	if wire.SchemaVersion >= InventorySchemaVersion {
+		if err := validateInventoryState(record.Snapshot.Inventory); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
 	return record, true, nil
 }
@@ -200,6 +213,7 @@ func (s *Store) writeLocked(record Record) error {
 		WorldID: record.Snapshot.World.WorldID, WorldRevision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256,
 		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
 		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
+		Inventory: CanonicalInventoryState(record.Snapshot.Inventory),
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
@@ -231,6 +245,11 @@ func (s *Store) recordPath(id characteridentity.ID) string {
 func validateTrustedIdentity(identity characteridentity.Binding) error {
 	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted { return ErrIdentityNotDurable }
 	return nil
+}
+
+func validateSnapshotV4(snapshot Snapshot) error {
+	if err := validateSnapshotV3(snapshot); err != nil { return err }
+	return validateInventoryState(snapshot.Inventory)
 }
 
 func validateSnapshotV3(snapshot Snapshot) error {
