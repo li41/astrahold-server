@@ -44,6 +44,18 @@ func (r *Runtime) applyEquippedBasicAttackTiming(prepared *combat.PreparedAction
 }
 
 func (r *Runtime) entityWeaponBodySize(entityID world.EntityID) equipmentcatalog.BodySize {
+	if entity, ok := r.world.Entity(entityID); ok {
+		switch entity.BodySize {
+		case world.EntityBodySizeSmall:
+			return equipmentcatalog.BodySizeSmall
+		case world.EntityBodySizeLarge:
+			return equipmentcatalog.BodySizeLarge
+		case world.EntityBodySizeGiant:
+			return equipmentcatalog.BodySizeGiant
+		}
+	}
+	// Compatibility for tests or worlds that existed before SpawnEntityRequest retained BodySize.
+	// Lifecycle-authored size is still Server data; new accepted spawns store it directly on EntityState.
 	for i := range r.monsterLifecycles {
 		spawn := r.monsterLifecycles[i].config.Spawn
 		if spawn.Entity.ID == entityID {
