@@ -24,6 +24,8 @@ jobs:
           gofmt -w internal/netadapter/browserws
       - name: Test Browser WebSocket adapter
         run: go test ./internal/netadapter/browserws
+      - name: Test Server
+        run: go test ./...
       - name: Commit normalized files
         run: |
           if git diff --quiet; then
