@@ -13,6 +13,12 @@ def replace_once(old: str, new: str, label: str) -> None:
 
 
 replace_once(
+    '\t"github.com/li41/astrahold-server/internal/codec/gamev1"\n',
+    "",
+    "remove legacy gamev1 import",
+)
+
+replace_once(
     '\t\ttcpAddress                       = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")\n\t\tudpAddress                       = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")',
     '\t\tnetworkMode                      = flag.String("network-mode", worldNetworkTCPUDP, "Network adapter: tcpudp or browserws-dev (ephemeral loopback development/E2E)")\n\t\ttcpAddress                       = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")\n\t\tudpAddress                       = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")\n\t\tbrowserWSAddress                 = flag.String("browser-ws", "127.0.0.1:7779", "Browser WebSocket listen address for browserws-dev mode")',
     "network flags",
