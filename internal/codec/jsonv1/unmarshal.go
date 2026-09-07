@@ -31,6 +31,12 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 			return nil, err
 		}
 		return protocol.ClientPickupItem{DropEntityID: world.EntityID(in.DropEntityID)}, nil
+	case protocol.MessageClientUseItem:
+		var in clientUseItem
+		if err := decodeStrict(data, &in); err != nil {
+			return nil, err
+		}
+		return protocol.ClientUseItem{ItemArchetypeID: in.ItemArchetypeID}, nil
 	case protocol.MessageClientInteractNPC:
 		var in clientInteractNPC
 		if err := decodeStrict(data, &in); err != nil {
