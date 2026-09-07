@@ -138,6 +138,11 @@ func (r *Runtime) resetMonsterLootContributions(monsterID world.EntityID) {
 // immediately-public ground drop. Eligible nearby contributors may receive it directly; if direct
 // inventory insertion cannot succeed, the same public drop simply remains in the world.
 func (r *Runtime) stepMonsterLoot(report *StepReport) {
+	// Expiry belongs to this post-simulation loot/lifecycle stage even when no catalog is installed.
+	// Defer makes same-tick auto-loot/rollback visible to cleanup and registers fresh public drops
+	// before the authoritative deadline check runs.
+	defer r.stepItemDropExpiry(report.Tick, report)
+
 	if r.monsterLootCatalog == nil {
 		return
 	}
@@ -167,7 +172,7 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 		spawned := make([]world.EntityID, 0, len(resolved))
 		failed := false
 		for spawnIndex, resolvedDrop := range resolved {
-			dropID, err := r.spawnItemDrop(resolvedDrop.drop.ItemArchetypeID, monsterLootDropPosition(monster.Transform.Position, spawnIndex))
+			dropID, err := r.spawnExpiringItemDrop(resolvedDrop.drop.ItemArchetypeID, monsterLootDropPosition(monster.Transform.Position, spawnIndex), report.Tick)
 			if err != nil {
 				for _, spawnedID := range spawned {
 					r.world.Remove(spawnedID)
