@@ -18,6 +18,7 @@ type fullFakeRuntime struct {
 	*fakeRuntime
 	equipment chan protocol.ClientEquipmentCommand
 	pickups   chan protocol.ClientPickupItem
+	itemUses  chan protocol.ClientUseItem
 	npcs      chan protocol.ClientInteractNPC
 	shops     chan protocol.ClientShopCommand
 	respawns  chan protocol.ClientRespawnRequest
@@ -28,6 +29,7 @@ func newFullFakeRuntime() *fullFakeRuntime {
 		fakeRuntime: newFakeRuntime(),
 		equipment:   make(chan protocol.ClientEquipmentCommand, 4),
 		pickups:     make(chan protocol.ClientPickupItem, 4),
+		itemUses:    make(chan protocol.ClientUseItem, 4),
 		npcs:        make(chan protocol.ClientInteractNPC, 4),
 		shops:       make(chan protocol.ClientShopCommand, 4),
 		respawns:    make(chan protocol.ClientRespawnRequest, 4),
@@ -41,6 +43,11 @@ func (r *fullFakeRuntime) EnqueueEquipmentCommand(_ session.ID, _ uint32, comman
 
 func (r *fullFakeRuntime) EnqueuePickupItem(_ session.ID, _ uint32, intent protocol.ClientPickupItem) error {
 	r.pickups <- intent
+	return nil
+}
+
+func (r *fullFakeRuntime) EnqueueUseItem(_ session.ID, _ uint32, intent protocol.ClientUseItem) error {
+	r.itemUses <- intent
 	return nil
 }
 
@@ -103,7 +110,17 @@ func TestHandlerRoutesModernReliableIntentsThroughGateway(t *testing.T) {
 		t.Fatal("timed out waiting for pickup intent")
 	}
 
-	writeBrowserIntent(t, ctx, conn, codec, 3, protocol.ClientInteractNPC{NPCEntityID: 7001})
+	writeBrowserIntent(t, ctx, conn, codec, 3, protocol.ClientUseItem{ItemArchetypeID: "item_minor_healing_potion"})
+	select {
+	case got := <-runtime.itemUses:
+		if got.ItemArchetypeID != "item_minor_healing_potion" {
+			t.Fatalf("item-use intent changed: %#v", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for item-use intent")
+	}
+
+	writeBrowserIntent(t, ctx, conn, codec, 4, protocol.ClientInteractNPC{NPCEntityID: 7001})
 	select {
 	case got := <-runtime.npcs:
 		if got.NPCEntityID != 7001 {
@@ -113,7 +130,7 @@ func TestHandlerRoutesModernReliableIntentsThroughGateway(t *testing.T) {
 		t.Fatal("timed out waiting for npc intent")
 	}
 
-	writeBrowserIntent(t, ctx, conn, codec, 4, protocol.ClientShopCommand{
+	writeBrowserIntent(t, ctx, conn, codec, 5, protocol.ClientShopCommand{
 		Operation:   protocol.ShopOperationOpen,
 		NPCEntityID: 7001,
 	})
@@ -126,7 +143,7 @@ func TestHandlerRoutesModernReliableIntentsThroughGateway(t *testing.T) {
 		t.Fatal("timed out waiting for shop intent")
 	}
 
-	writeBrowserIntent(t, ctx, conn, codec, 5, protocol.ClientRespawnRequest{})
+	writeBrowserIntent(t, ctx, conn, codec, 6, protocol.ClientRespawnRequest{})
 	select {
 	case <-runtime.respawns:
 	case <-ctx.Done():
