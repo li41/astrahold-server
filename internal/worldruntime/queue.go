@@ -89,14 +89,16 @@ type spawnEntityCommand struct{ request SpawnEntityRequest }
 
 func (spawnEntityCommand) name() string { return "spawn_entity" }
 
-// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment, pickup and
-// respawn keep their own typed protocol payloads and are routed before combat preparation; none is a skill.
+// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment, pickup,
+// item-use and respawn keep their own typed protocol payloads and are routed before combat
+// preparation; none is a skill/action alias.
 type useActionCommand struct {
 	sessionID session.ID
 	sequence  uint32
 	action    protocol.ClientUseAction
 	equipment *protocol.ClientEquipmentCommand
 	pickup    *protocol.ClientPickupItem
+	useItem   *protocol.ClientUseItem
 	respawn   *protocol.ClientRespawnRequest
 	ownership SessionOwnershipFence
 }
@@ -107,6 +109,9 @@ func (c useActionCommand) name() string {
 	}
 	if c.pickup != nil {
 		return "pickup_item"
+	}
+	if c.useItem != nil {
+		return "use_item"
 	}
 	if c.respawn != nil {
 		return "respawn_request"
