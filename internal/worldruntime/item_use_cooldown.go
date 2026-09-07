@@ -58,24 +58,78 @@ func (r *Runtime) rejectItemUse(
 	}, report)
 }
 
+// sendItemUseResult preserves per-session result order across temporary Reliable backpressure.
+// Authoritative gameplay has already been decided before this presentation/correlation result is
+// emitted, so retry only re-sends the result message and never re-applies item consumption/vitals.
 func (r *Runtime) sendItemUseResult(s *session.Session, result protocol.ItemUseResult, report *StepReport) {
 	if s == nil || report == nil {
 		return
 	}
-	envelope := protocol.Envelope{
-		Delivery:   protocol.DeliveryReliableOrdered,
-		Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
-		ServerTick: report.Tick,
-		Message:    result,
+	if len(r.pendingItemUseResults[s.ID]) > 0 {
+		r.pendingItemUseResults[s.ID] = append(r.pendingItemUseResults[s.ID], result)
+		return
 	}
-	report.Metrics.OutboundMessages++
-	if err := s.Connection().TrySend(envelope); err != nil {
+	if err := r.trySendItemUseResult(s, result, report.Tick, report); err != nil {
+		if errors.Is(err, session.ErrBackpressure) {
+			r.pendingItemUseResults[s.ID] = append(r.pendingItemUseResults[s.ID], result)
+			return
+		}
 		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
 			SessionID:   s.ID,
-			Delivery:    envelope.Delivery,
+			Delivery:    protocol.DeliveryReliableOrdered,
 			MessageType: protocol.MessageItemUseResult,
 			Err:         err,
 		})
+	}
+}
+
+func (r *Runtime) trySendItemUseResult(s *session.Session, result protocol.ItemUseResult, tick uint64, report *StepReport) error {
+	envelope := protocol.Envelope{
+		Delivery:   protocol.DeliveryReliableOrdered,
+		Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
+		ServerTick: tick,
+		Message:    result,
+	}
+	report.Metrics.OutboundMessages++
+	return s.Connection().TrySend(envelope)
+}
+
+// retryPendingItemUseResults drains retained results in FIFO order. Backpressure keeps the
+// remaining suffix for a later tick. A non-backpressure transport error is terminal for this
+// source session's presentation feedback; gameplay truth remains recoverable from snapshots.
+func (r *Runtime) retryPendingItemUseResults(tick uint64, report *StepReport) {
+	if report == nil || len(r.pendingItemUseResults) == 0 {
+		return
+	}
+	for _, s := range r.sessions.List() {
+		pending := r.pendingItemUseResults[s.ID]
+		for len(pending) > 0 {
+			result := pending[0]
+			if err := r.trySendItemUseResult(s, result, tick, report); err != nil {
+				if errors.Is(err, session.ErrBackpressure) {
+					break
+				}
+				report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
+					SessionID:   s.ID,
+					Delivery:    protocol.DeliveryReliableOrdered,
+					MessageType: protocol.MessageItemUseResult,
+					Err:         err,
+				})
+				pending = nil
+				break
+			}
+			pending = pending[1:]
+		}
+		if len(pending) == 0 {
+			delete(r.pendingItemUseResults, s.ID)
+		} else {
+			r.pendingItemUseResults[s.ID] = pending
+		}
+	}
+	for id := range r.pendingItemUseResults {
+		if _, ok := r.sessions.Get(id); !ok {
+			delete(r.pendingItemUseResults, id)
+		}
 	}
 }
 
