@@ -24,7 +24,6 @@ var (
 	ErrItemDropNotFound    = errors.New("worldruntime: item drop not found")
 	ErrItemDropWrongLayer  = errors.New("worldruntime: item drop wrong layer")
 	ErrItemDropOutOfRange  = errors.New("worldruntime: item drop out of range")
-	ErrItemDropNotOwned    = errors.New("worldruntime: item drop reserved for another character")
 	ErrItemDropIDExhausted = errors.New("worldruntime: item drop entity id exhausted")
 )
 
@@ -46,8 +45,9 @@ func (r *Runtime) EnqueuePickupItem(id session.ID, sequence uint32, intent proto
 	return r.queue.tryPush(useActionCommand{sessionID: id, sequence: sequence, pickup: &payload})
 }
 
-// spawnItemDrop materializes one generic authoritative pickup entity. The caller owns source/drop
-// policy; this primitive owns only collision-safe identity allocation and world membership.
+// spawnItemDrop materializes one generic authoritative pickup entity. Ground drops are deliberately
+// public immediately; the caller decides only whether auto-loot removes the public entity in the same
+// owner tick after a successful inventory grant.
 func (r *Runtime) spawnItemDrop(itemArchetypeID string, position world.Position) (world.EntityID, error) {
 	if itemArchetypeID == "" {
 		return 0, ErrInvalidItemDrop
@@ -127,10 +127,6 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropNotFound})
 		return
 	}
-	if owner, restricted := r.itemDropPickupOwner(request.DropEntityID); restricted && owner != s.CharacterIdentity.ID {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropNotOwned})
-		return
-	}
 	if player.Transform.Position.Layer != dropEntity.Transform.Position.Layer {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropWrongLayer})
 		return
@@ -145,13 +141,12 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
 		return
 	}
-	// First slice drops exactly one unit. Add validates stack capacity/overflow before any world
-	// removal; World.Remove is infallible inside the single world owner, so no half-state remains.
+	// Add enforces both stack and carry-weight capacity before world removal. If it rejects, the
+	// public item remains on the ground and another player may attempt pickup immediately.
 	if err := inv.Add(dropEntity.ArchetypeID, 1); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
 	r.world.Remove(request.DropEntityID)
-	r.clearItemDropPickupOwner(request.DropEntityID)
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
