@@ -1,0 +1,103 @@
+# Astrahold Server — Protocol Synchronization
+
+本文件描述 **穩定的 Protocol governance**。Current Protocol version、active contract PR、Client consumption 狀態與 exact SHA 放 `docs/PROJECT_STATUS.md` 或對應 GitHub Issue / PR，不在這裡硬編碼。
+
+## Authority
+
+Gameplay / Protocol semantics 以正式 Server source 為準。
+
+主要 source-of-truth：
+
+- `internal/protocol/`
+- `internal/codec/`
+- `internal/gateway/`
+- `internal/worldruntime/`
+- transport / bootstrap 對應 source
+- compatibility / codec / ingress tests
+
+歷史 `docs/S2_PROTOCOL.md` 等 milestone 文件只保留當時設計證據，不是 current wire contract。
+
+## Fixed direction
+
+```text
+Client Intent
+    -> ingress validates message / delivery / ownership
+    -> authoritative Server decision
+    -> authoritative state / event
+    -> Client presentation
+```
+
+Client message 不得攜帶或決定：
+
+- final position
+- hit / damage
+- HP / MP outcome
+- death / respawn outcome
+- cooldown truth
+- inventory / equipment transaction result
+- loot winner / pickup legality
+- monster AI decision
+- siege / persistence truth
+
+## When to bump Protocol
+
+需要升 Protocol fence 的典型情況：
+
+- 新增或移除 live wire message。
+- 修改 live message 的 required shape / field semantics，舊 decoder 無法安全接受。
+- strict decoder 會因新增欄位拒絕舊/new peer。
+- delivery class / sequencing / acknowledgement semantics 改變。
+- 同一 payload 在新舊版本會產生不同 gameplay interpretation。
+- transport framing / codec 產生 wire incompatibility。
+
+通常不需要 bump：
+
+- Server-only gameplay tuning。
+- AI policy / loot chance / combat values 改動但 wire shape 不變。
+- Client animation / VFX / camera / UI presentation-only 改動。
+- internal refactor 不改 public contract。
+
+不要為「可能未來會用」的 dormant type 提前 bump，也不要為避免協作麻煩而把不相容欄位偷偷塞進舊版。
+
+## Server change workflow
+
+Protocol-affecting Server slice：
+
+1. 先定義 authoritative gameplay semantics。
+2. 更新 Server protocol DTO / codec / ingress / runtime consumer / replication producer。
+3. 補 strict round-trip、unknown-field、version fence、ingress legality 與 gameplay authority tests。
+4. 若 wire-incompatible，升 Protocol fence。
+5. Server exact head 跑 `docs/VALIDATION.md` 定義的 gate。
+6. gpt-server 到 `li41/astrahold-client-three.js` 建 `[gpt-server]` Issue，附 exact Server PR / SHA 與 Client handoff。
+7. gpt-client 在 Client repo 自行完成 decoder / presentation / runtime integration。
+8. meaningful integration checkpoint 再做兩端 runtime 驗證。
+
+## Client Issue handoff minimum
+
+Server -> Client Issue 至少寫清楚：
+
+- change goal
+- old / new semantics
+- message type / field name / delivery class
+- required / optional / zero-value semantics
+- version compatibility
+- ordering / lifecycle guarantees
+- rejection / error behavior
+- Server PR / exact commit
+- Server validation results
+- Client expected work
+- integration acceptance criteria
+
+不要只說「Server 已升 vXX，Client 跟一下」。
+
+## Compatibility discipline
+
+- Strict decode 是否接受 unknown field，要以實際 codec source / tests 為準，不憑印象。
+- Protocol version 是 compatibility fence，不是 milestone counter。
+- Server 不維護第二套 Client-specific gameplay contract。
+- Client 不手寫與 Server 不同的 gameplay rules engine。
+- 若 codegen / shared schema 能減少 drift，可以逐步引入，但不得為了 schema tooling 阻塞玩家 gameplay slice。
+
+## Current version lookup
+
+永遠從 current Server branch / PR source 與 `docs/PROJECT_STATUS.md` 查版本；不要從 Project Instructions、歷史對話或舊 milestone 文件推測。
