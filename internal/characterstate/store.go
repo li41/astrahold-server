@@ -122,7 +122,8 @@ func (s *Store) Path() string { return s.root }
 
 // Load accepts v1-v4 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence and remain Inventory.Initialized=false. A genuinely empty
-// v4 inventory has Initialized=true with an empty canonical stack payload.
+// v4 inventory has Initialized=true with an empty canonical stack payload. A v4 record may also
+// carry Initialized=false when an old save-journal command is migrated through the current Store.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -175,7 +176,6 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	}
 	inventoryState := InventoryState{}
 	if wire.SchemaVersion >= InventorySchemaVersion {
-		if !wire.Inventory.Initialized { return Record{}, false, ErrCorruptRecord }
 		var err error
 		inventoryState, err = CanonicalInventoryState(wire.Inventory)
 		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
