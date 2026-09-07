@@ -160,5 +160,6 @@ func testSnapshot() Snapshot {
 		World: WorldRef{WorldID:"castle-sandbox",Revision:"s3d-001",GameplaySHA256:testGameplaySHA},
 		HP:900, MaxHP:1000, MP:100, MaxMP:100, Defeated:false,
 		Position:world.Position{X:4,Y:2,Z:-7,Layer:1}, Yaw:0.75,
+		Inventory: InventoryState{Initialized: true},
 	}
 }
