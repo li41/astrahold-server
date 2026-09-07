@@ -43,15 +43,21 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 		recordCharacterStateSaveFailure(report, sessionID, ErrSessionEntityNotFound)
 		return false
 	}
+	inventoryState, err := durableInventoryState(r.inventories[binding.ID])
+	if err != nil {
+		recordCharacterStateSaveFailure(report, sessionID, err)
+		return false
+	}
 	snapshot := characterstate.Snapshot{
-		World:    r.characterStateWorld,
-		HP:       state.HP,
-		MaxHP:    state.MaxHP,
-		MP:       state.MP,
-		MaxMP:    state.MaxMP,
-		Defeated: state.Defeated,
-		Position: entity.Transform.Position,
-		Yaw:      entity.Transform.Yaw,
+		World:     r.characterStateWorld,
+		HP:        state.HP,
+		MaxHP:     state.MaxHP,
+		MP:        state.MP,
+		MaxMP:     state.MaxMP,
+		Defeated:  state.Defeated,
+		Position:  entity.Transform.Position,
+		Yaw:       entity.Transform.Yaw,
+		Inventory: inventoryState,
 	}
 	if state.Defeated {
 		// Defeated records are written only when the already-established death-time binding exists.
