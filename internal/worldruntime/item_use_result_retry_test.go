@@ -1,6 +1,7 @@
 package worldruntime
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -64,6 +65,49 @@ func TestItemUseResultBackpressureRetriesWithoutReapplyingGameplay(t *testing.T)
 		if result, ok := envelope.Message.(protocol.ItemUseResult); ok {
 			t.Fatalf("delivered result duplicated on later tick: %#v", result)
 		}
+	}
+}
+
+func TestItemUseResultBacklogIsBoundedAndClosesSourceBeforeFurtherMutation(t *testing.T) {
+	runtime, _, s := newItemDropTestRuntime(t, world.Position{})
+	connection := s.Connection().(*session.QueueConnection)
+	drainReliable(connection)
+	if _, err := runtime.characters.ApplyDamage(s.EntityID, 400); err != nil {
+		t.Fatal(err)
+	}
+	inv := runtime.inventories[s.CharacterIdentity.ID]
+	fillReliableQueue(t, s, connection)
+
+	for sequence := uint32(1); sequence <= maxPendingItemUseResultsPerSession+1; sequence++ {
+		if err := runtime.EnqueueUseItem(s.ID, sequence, protocol.ClientUseItem{ItemArchetypeID: "item_minor_healing_potion"}); err != nil {
+			t.Fatalf("enqueue sequence %d: %v", sequence, err)
+		}
+	}
+	report := runtime.Step(2, 50*time.Millisecond)
+
+	var backlogErrors int
+	for _, commandErr := range report.CommandErrors {
+		if errors.Is(commandErr.Err, ErrItemUseFeedbackBacklog) {
+			backlogErrors++
+		}
+	}
+	if backlogErrors != 1 {
+		t.Fatalf("backlog errors=%d command_errors=%#v", backlogErrors, report.CommandErrors)
+	}
+	select {
+	case <-connection.Done():
+	default:
+		t.Fatal("source connection remained open after item-use feedback backlog reached its cap")
+	}
+	if got := s.LastProcessedActionSequence(); got != maxPendingItemUseResultsPerSession {
+		t.Fatalf("last processed action=%d want=%d", got, maxPendingItemUseResultsPerSession)
+	}
+	state, _ := runtime.characters.State(s.EntityID)
+	if state.HP != 850 || inv.Quantity("item_minor_healing_potion") != 4 {
+		t.Fatalf("overflow command mutated gameplay hp=%d quantity=%d", state.HP, inv.Quantity("item_minor_healing_potion"))
+	}
+	if pending := len(runtime.pendingItemUseResults[s.ID]); pending > maxPendingItemUseResultsPerSession {
+		t.Fatalf("pending item-use results=%d exceeds cap=%d", pending, maxPendingItemUseResultsPerSession)
 	}
 }
 
