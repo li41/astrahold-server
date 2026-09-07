@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
@@ -35,8 +34,10 @@ const (
 
 func main() {
 	var (
+		networkMode                      = flag.String("network-mode", worldNetworkTCPUDP, "Network adapter: tcpudp or browserws-dev (ephemeral loopback development/E2E)")
 		tcpAddress                       = flag.String("tcp", "127.0.0.1:7777", "Reliable TCP listen address")
 		udpAddress                       = flag.String("udp", "127.0.0.1:7778", "Realtime UDP listen address")
+		browserWSAddress                 = flag.String("browser-ws", "127.0.0.1:7779", "Browser WebSocket listen address for browserws-dev mode")
 		tickRate                         = flag.Int("tick-rate", 20, "World simulation tick rate (Hz)")
 		snapshotRate                     = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
 		worldPath                        = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
@@ -55,6 +56,9 @@ func main() {
 		playtestMonster                  = flag.Bool("playtest-monster", false, "Spawn the fixed Monster fixture for the local Unreal playtest")
 	)
 	flag.Parse()
+	if err := validateWorldNetworkMode(*networkMode); err != nil {
+		log.Fatal(err)
+	}
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
 		log.Fatal(err)
 	}
@@ -65,6 +69,9 @@ func main() {
 	trustedTLSConfig, err := loadTrustedTLSIngressConfig(*trustedTLSListen, *trustedTLSCertFile, *trustedTLSKeyFile, *tcpAddress, trustedCharacterAuthenticator != nil)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *networkMode == worldNetworkBrowserWSDev && (trustedCharacterAuthenticator != nil || trustedTLSConfig != nil) {
+		log.Fatal("browserws-dev is ephemeral local/E2E only and cannot enable trusted character authentication or trusted TLS ingress")
 	}
 	protectionTicks, err := reviveProtectionTicks(*postReviveProtectionSeconds, *tickRate)
 	if err != nil {
@@ -225,26 +232,30 @@ func main() {
 		log.Fatal(err)
 	}
 
-	networkConfig := tcpudp.DefaultConfig()
-	networkConfig.TCPAddress = *tcpAddress
-	networkConfig.UDPAddress = *udpAddress
-	networkConfig.TickRateHz = uint16(*tickRate)
-	networkConfig.SnapshotRateHz = uint16(*snapshotRate)
-	networkConfig.WorldIdentity = worldIdentity
-	networkConfig.PlayerFactory = newWorldPlayerFactory(freshSpawn, loadedWorld.Definition.Agent)
-	networkConfig.CharacterRestoreFactory = characterStatePersistence.LoadRestore
-	if trustedCharacterAuthenticator != nil {
-		networkConfig.TrustedCharacterConnectionAuthenticator = trustedCharacterAuthenticator
-	}
-	server := tcpudp.NewServer(networkConfig, runtime, gamev1.Codec{})
-	if trustedCharacterAuthRuntime != nil {
-		initialScopes := activeTrustedCharacterAuthenticationScopes(trustedCharacterAuthRuntime.provider.snapshot(), time.Now().UTC())
-		server.ReplaceTrustedCharacterAuthenticationScopes(initialScopes)
-	}
-	if err := server.Open(); err != nil {
+	playerFactory := newWorldPlayerFactory(freshSpawn, loadedWorld.Definition.Agent)
+	network, err := openWorldNetwork(worldNetworkConfig{
+		Mode:                 *networkMode,
+		TCPAddress:           *tcpAddress,
+		UDPAddress:           *udpAddress,
+		BrowserWSAddress:     *browserWSAddress,
+		TickRateHz:           uint16(*tickRate),
+		SnapshotRateHz:       uint16(*snapshotRate),
+		WorldIdentity:        worldIdentity,
+		PlayerFactory:        playerFactory,
+		CharacterRestore:     characterStatePersistence.LoadRestore,
+		TrustedAuthenticator: trustedCharacterAuthenticator,
+	}, runtime)
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer server.Close()
+	defer network.Close()
+	if trustedCharacterAuthRuntime != nil {
+		if network.tcp == nil {
+			log.Fatal("trusted character authentication requires tcpudp network mode")
+		}
+		initialScopes := activeTrustedCharacterAuthenticationScopes(trustedCharacterAuthRuntime.provider.snapshot(), time.Now().UTC())
+		network.tcp.ReplaceTrustedCharacterAuthenticationScopes(initialScopes)
+	}
 
 	var tlsIngress *trustedTLSIngress
 	if trustedTLSConfig != nil {
@@ -261,7 +272,7 @@ func main() {
 		reloadSignals := make(chan os.Signal, 1)
 		signal.Notify(reloadSignals, syscall.SIGHUP)
 		defer signal.Stop(reloadSignals)
-		go runTrustedCharacterAuthRuntime(ctx, reloadSignals, trustedCharacterAuthRuntime, server.ReplaceTrustedCharacterAuthenticationScopes, log.Printf)
+		go runTrustedCharacterAuthRuntime(ctx, reloadSignals, trustedCharacterAuthRuntime, network.tcp.ReplaceTrustedCharacterAuthenticationScopes, log.Printf)
 	}
 	if tlsIngress != nil {
 		go func() {
@@ -273,7 +284,9 @@ func main() {
 	}
 	loopDone := make(chan error, 1)
 	go func() { loopDone <- loop.RunObserved(ctx, logStepReport) }()
-	go logNetworkErrors(ctx, server.Errors())
+	if network.tcp != nil {
+		go logNetworkErrors(ctx, network.tcp.Errors())
+	}
 
 	journalCtx, stopJournal := context.WithCancel(context.Background())
 	journalDone := make(chan error, 1)
@@ -297,7 +310,7 @@ func main() {
 		characterStateDone <- err
 	}()
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d siege_match_revision=%s siege_match=%s attacker=%s defender=%s breach_gate=%s throne=%s respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d character_state_save_journal_id=%s character_state_save_journal_last_record=%d character_state_save_checkpoint_record=%d character_state_save_recovered_records=%d character_state_autosave_ticks=%d character_state_autosaves_per_tick=%d post_revive_protection_ticks=%d playtest_monster=%t spawn_points=%d tcp=%s udp=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), loadedSiegeMatch.Revision, loadedSiegeMatch.Definition.ID, loadedSiegeMatch.Definition.AttackerID, loadedSiegeMatch.Definition.DefenderID, loadedSiegeMatch.Definition.BreachGateID, loadedSiegeMatch.Definition.ThroneObjectiveID, respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, characterStateSaveJournal.ID(), characterStateSaveJournal.LastRecordID(), characterStateSaveCheckpoint.RecordID, recoveredCharacterStateSaves, autosaveTicks, *characterStateAutosavesPerTick, protectionTicks, *playtestMonster, respawnService.SpawnPointCount(), server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d siege_match_revision=%s siege_match=%s attacker=%s defender=%s breach_gate=%s throne=%s respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d character_state_save_journal_id=%s character_state_save_journal_last_record=%d character_state_save_checkpoint_record=%d character_state_save_recovered_records=%d character_state_autosave_ticks=%d character_state_autosaves_per_tick=%d post_revive_protection_ticks=%d playtest_monster=%t spawn_points=%d tcp=%s udp=%s browser_ws=%s network_mode=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), loadedSiegeMatch.Revision, loadedSiegeMatch.Definition.ID, loadedSiegeMatch.Definition.AttackerID, loadedSiegeMatch.Definition.DefenderID, loadedSiegeMatch.Definition.BreachGateID, loadedSiegeMatch.Definition.ThroneObjectiveID, respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, characterStateSaveJournal.ID(), characterStateSaveJournal.LastRecordID(), characterStateSaveCheckpoint.RecordID, recoveredCharacterStateSaves, autosaveTicks, *characterStateAutosavesPerTick, protectionTicks, *playtestMonster, respawnService.SpawnPointCount(), network.TCPAddr(), network.UDPAddr(), network.BrowserWSAddr(), network.Mode(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("death outcome durability: journal=%s checkpoint=%s append_fsync=true checkpoint_atomic_rename=true", deathJournal.Path(), deathCheckpointStore.Path())
 	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true save_journal=%s save_checkpoint=%s journal_append_fsync=true checkpoint_atomic_rename=true startup_recovery=true restore_exact_world=true defeated_restore=true autosave_ticks=%d autosaves_per_tick=%d autosave_capture_process_local=true", characterStateStore.Path(), characterStateOutbox.Capacity(), characterStateSaveJournal.Path(), characterStateSaveCheckpointStore.Path(), autosaveTicks, *characterStateAutosavesPerTick)
 	log.Printf("siege ownership durability: world=%s dir=%s revision=%d owner=%s previous_owner=%s last_transfer_match=%s created=%t single_writer=true optimistic_revision=true temp_fsync=true atomic_rename=true directory_fsync=true startup_recovery=true completion_barrier=true", loadedWorld.Definition.WorldID, siegeOwnershipPersistence.Path(), siegeOwnership.Revision, siegeOwnership.OwnerID, siegeOwnership.PreviousOwnerID, siegeOwnership.LastTransferMatchID, siegeOwnershipCreated)
@@ -313,7 +326,10 @@ func main() {
 		log.Printf("trusted TLS ingress: enabled=false")
 		log.Printf("development transport is for local/controlled environments; do not expose it directly to the Internet")
 	}
-	if err := server.Serve(ctx); err != nil {
+	if network.browser != nil {
+		log.Printf("browser WebSocket development adapter: enabled=true listen=%s ephemeral_identity=true loopback_only=true authoritative_runtime=shared", network.BrowserWSAddr())
+	}
+	if err := network.Serve(ctx); err != nil {
 		stop()
 		log.Printf("network server stopped with error: %v", err)
 	}

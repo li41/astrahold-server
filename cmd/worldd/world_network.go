@@ -23,16 +23,16 @@ const (
 )
 
 type worldNetworkConfig struct {
-	Mode                  string
-	TCPAddress            string
-	UDPAddress            string
-	BrowserWSAddress      string
-	TickRateHz            uint16
-	SnapshotRateHz        uint16
-	WorldIdentity         protocol.WorldIdentity
-	PlayerFactory         tcpudp.PlayerFactory
-	CharacterRestore      tcpudp.CharacterRestoreFactory
-	TrustedAuthenticator  tcpudp.TrustedCharacterConnectionAuthenticator
+	Mode                 string
+	TCPAddress           string
+	UDPAddress           string
+	BrowserWSAddress     string
+	TickRateHz           uint16
+	SnapshotRateHz       uint16
+	WorldIdentity        protocol.WorldIdentity
+	PlayerFactory        tcpudp.PlayerFactory
+	CharacterRestore     tcpudp.CharacterRestoreFactory
+	TrustedAuthenticator tcpudp.TrustedCharacterConnectionAuthenticator
 }
 
 type openedWorldNetwork struct {

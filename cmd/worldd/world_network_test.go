@@ -39,7 +39,7 @@ func TestAdaptBrowserPlayerFactoryPreservesGameplayBootstrap(t *testing.T) {
 	factory := tcpudp.PlayerFactory(func(_ session.ID, entityID world.EntityID) tcpudp.PlayerSpec {
 		return tcpudp.PlayerSpec{
 			Entity: world.EntityState{ID: entityID, Kind: world.EntityPlayer},
-			Speed: 5.25, Radius: 0.4, MaxStepHeight: 0.6, AOIRadius: 72,
+			Speed:  5.25, Radius: 0.4, MaxStepHeight: 0.6, AOIRadius: 72,
 		}
 	})
 	adapted := adaptBrowserPlayerFactory(factory)
