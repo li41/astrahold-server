@@ -1,15 +1,19 @@
 {
-  "revision": "item-use-1",
+  "revision": "item-use-2",
   "items": [
     {
       "item_archetype_id": "item_minor_healing_potion",
       "resource": "hp",
-      "restore_amount": 250
+      "restore_amount": 250,
+      "cooldown_group": "resource_potion",
+      "cooldown_ticks": 40
     },
     {
       "item_archetype_id": "item_minor_mana_potion",
       "resource": "mp",
-      "restore_amount": 25
+      "restore_amount": 25,
+      "cooldown_group": "resource_potion",
+      "cooldown_ticks": 40
     }
   ]
 }
