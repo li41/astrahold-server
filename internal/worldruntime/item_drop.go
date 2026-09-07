@@ -24,6 +24,7 @@ var (
 	ErrItemDropNotFound    = errors.New("worldruntime: item drop not found")
 	ErrItemDropWrongLayer  = errors.New("worldruntime: item drop wrong layer")
 	ErrItemDropOutOfRange  = errors.New("worldruntime: item drop out of range")
+	ErrItemDropNotOwned    = errors.New("worldruntime: item drop reserved for another character")
 	ErrItemDropIDExhausted = errors.New("worldruntime: item drop entity id exhausted")
 )
 
@@ -126,6 +127,10 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropNotFound})
 		return
 	}
+	if owner, restricted := r.itemDropPickupOwner(request.DropEntityID); restricted && owner != s.CharacterIdentity.ID {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropNotOwned})
+		return
+	}
 	if player.Transform.Position.Layer != dropEntity.Transform.Position.Layer {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrItemDropWrongLayer})
 		return
@@ -147,5 +152,6 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		return
 	}
 	r.world.Remove(request.DropEntityID)
+	r.clearItemDropPickupOwner(request.DropEntityID)
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
