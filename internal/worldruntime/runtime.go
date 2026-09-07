@@ -210,6 +210,7 @@ type Runtime struct {
 	characterStateAutosaveCursor   int
 	characterStateAutosaveNextTick uint64
 	inventories                    map[characteridentity.ID]*inventory.Inventory
+	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	sessionInventoryPending        map[session.ID]struct{}
 	replication                    *replication.Service
 	replicationFrameBuilder        *simulation.ReplicationFrameBuilder
@@ -315,6 +316,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characterIdentities:            newCharacterIdentityRegistry(),
 		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
 		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
+		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		sessionInventoryPending:        make(map[session.ID]struct{}),
 		replication:                    replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),
