@@ -4,20 +4,29 @@ package loot
 
 import "errors"
 
+const ChanceBasisPointsScale uint16 = 10_000
+
 var (
 	ErrInvalidDefinition        = errors.New("loot: invalid definition")
 	ErrDuplicateSourceArchetype = errors.New("loot: duplicate source archetype")
 )
 
-// Drop describes one authoritative item-drop entity to materialize when a source table resolves.
+// Drop describes one authoritative item-drop entity candidate when a source table resolves.
+// ChanceBasisPoints uses 1..10_000 after Catalog construction. Definition input may use zero as
+// a backwards-compatible shorthand for guaranteed (10_000). A 0% entry should simply be omitted.
 // Quantity is intentionally not encoded here because the current item-drop protocol represents one
-// item entity per pickup. Multiple guaranteed units can be authored as multiple Drop entries.
+// item entity per pickup. Multiple guaranteed units can still be authored as multiple Drop entries.
 type Drop struct {
-	ItemArchetypeID string
+	ItemArchetypeID   string
+	ChanceBasisPoints uint16
 }
 
-// Table maps one gameplay source archetype to its guaranteed first-slice drops. Chance/weight
-// policy can be added inside this package later without coupling worldruntime to monster types.
+func (d Drop) IncludesRoll(roll uint16) bool {
+	return d.ChanceBasisPoints > 0 && roll < d.ChanceBasisPoints
+}
+
+// Table maps one gameplay source archetype to its Server-authored drop candidates. Runtime supplies
+// unpredictable Server-private rolls; this package owns the authored probability threshold semantics.
 type Table struct {
 	SourceArchetypeID string
 	Drops             []Drop
@@ -52,8 +61,11 @@ func New(def Definition) (*Catalog, error) {
 		}
 		drops := make([]Drop, len(table.Drops))
 		for i, drop := range table.Drops {
-			if drop.ItemArchetypeID == "" {
+			if drop.ItemArchetypeID == "" || drop.ChanceBasisPoints > ChanceBasisPointsScale {
 				return nil, ErrInvalidDefinition
+			}
+			if drop.ChanceBasisPoints == 0 {
+				drop.ChanceBasisPoints = ChanceBasisPointsScale
 			}
 			drops[i] = drop
 		}
