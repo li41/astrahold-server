@@ -1,0 +1,13 @@
+{
+  "revision": "low-tier-equipment-v1",
+  "items": [
+    {"item_archetype_id":"item_militia_iron_sword","kind":"weapon","slot":"main_hand","weight":7,"material":"iron","weapon":{"small_damage":{"min":6,"max":9},"large_damage":{"min":6,"max":8},"extra_damage":0,"accuracy_modifier":0,"basic_attack_interval_ms":1000}},
+    {"item_archetype_id":"item_light_guard_sword","kind":"weapon","slot":"main_hand","weight":6,"material":"iron","weapon":{"small_damage":{"min":5,"max":8},"large_damage":{"min":5,"max":7},"extra_damage":0,"accuracy_modifier":2,"basic_attack_interval_ms":850}},
+    {"item_archetype_id":"item_gladiator_iron_sword","kind":"weapon","slot":"main_hand","weight":8,"material":"iron","weapon":{"small_damage":{"min":7,"max":10},"large_damage":{"min":6,"max":9},"extra_damage":0,"accuracy_modifier":0,"basic_attack_interval_ms":1100}},
+    {"item_archetype_id":"item_militia_battle_axe","kind":"weapon","slot":"main_hand","weight":10,"material":"iron_wood","weapon":{"small_damage":{"min":5,"max":8},"large_damage":{"min":8,"max":12},"extra_damage":0,"accuracy_modifier":-1,"basic_attack_interval_ms":1150}},
+    {"item_archetype_id":"item_iron_war_mace","kind":"weapon","slot":"main_hand","weight":9,"material":"iron_wood","weapon":{"small_damage":{"min":6,"max":9},"large_damage":{"min":6,"max":9},"extra_damage":1,"accuracy_modifier":1,"basic_attack_interval_ms":1150}},
+    {"item_archetype_id":"item_iron_rim_round_shield","kind":"shield","slot":"off_hand","weight":6,"material":"wood_iron","shield":{"physical_defense":3,"block_chance_percent":8,"block_damage_reduction_percent":25,"magic_damage_reduction_percent":0}},
+    {"item_archetype_id":"item_guard_shield","kind":"shield","slot":"off_hand","weight":8,"material":"wood_iron","shield":{"physical_defense":4,"block_chance_percent":10,"block_damage_reduction_percent":30,"magic_damage_reduction_percent":0}},
+    {"item_archetype_id":"item_runed_square_shield","kind":"shield","slot":"off_hand","weight":6,"material":"wood_iron_low_enchantment","shield":{"physical_defense":2,"block_chance_percent":6,"block_damage_reduction_percent":20,"magic_damage_reduction_percent":8}}
+  ]
+}
