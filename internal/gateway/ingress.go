@@ -28,6 +28,9 @@ type EquipmentCommandSink interface {
 type PickupCommandSink interface {
 	EnqueuePickupItem(session.ID, uint32, protocol.ClientPickupItem) error
 }
+type ItemUseCommandSink interface {
+	EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error
+}
 type NPCCommandSink interface {
 	EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error
 }
@@ -115,6 +118,22 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 			return ErrInvalidClientDelivery
 		}
 		return g.enqueuePickupItem(sessionID, envelope.Sequence, *message)
+	case protocol.ClientUseItem:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered {
+			return ErrInvalidClientDelivery
+		}
+		if strings.TrimSpace(message.ItemArchetypeID) == "" {
+			return ErrInvalidClientEnvelope
+		}
+		return g.enqueueUseItem(sessionID, envelope.Sequence, message)
+	case *protocol.ClientUseItem:
+		if message == nil || strings.TrimSpace(message.ItemArchetypeID) == "" {
+			return ErrInvalidClientEnvelope
+		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered {
+			return ErrInvalidClientDelivery
+		}
+		return g.enqueueUseItem(sessionID, envelope.Sequence, *message)
 	case protocol.ClientInteractNPC:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered {
 			return ErrInvalidClientDelivery
@@ -234,6 +253,13 @@ func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, inten
 		return ErrUnsupportedClientMessage
 	}
 	return sink.EnqueuePickupItem(sessionID, sequence, intent)
+}
+func (g *Ingress) enqueueUseItem(sessionID session.ID, sequence uint32, intent protocol.ClientUseItem) error {
+	sink, ok := g.sink.(ItemUseCommandSink)
+	if !ok {
+		return ErrUnsupportedClientMessage
+	}
+	return sink.EnqueueUseItem(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueInteractNPC(sessionID session.ID, sequence uint32, intent protocol.ClientInteractNPC) error {
 	sink, ok := g.sink.(NPCCommandSink)
