@@ -7,13 +7,15 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 const manaSiphonStaffArchetypeID = "item_mana_siphon_staff"
 
-func equipManaSiphonStaffForCombatTest(t *testing.T, rt *Runtime, sessionID uint64) {
+func equipManaSiphonStaffForCombatTest(t *testing.T, rt *Runtime, sessionID session.ID) {
 	t.Helper()
-	s, ok := rt.sessions.Get(session.ID(sessionID))
+	s, ok := rt.sessions.Get(sessionID)
 	if !ok {
 		t.Fatalf("session %d not found", sessionID)
 	}
@@ -100,7 +102,10 @@ func TestNonEffectMainHandDoesNotRestoreMP(t *testing.T) {
 	rt.Step(1, 50*time.Millisecond)
 	drainConnection(conn1)
 	drainConnection(conn2)
-	s, _ := rt.sessions.Get(1)
+	s, ok := rt.sessions.Get(1)
+	if !ok {
+		t.Fatal("session 1 not found")
+	}
 	inv := rt.inventories[s.CharacterIdentity.ID]
 	if err := inv.EquipMainHand(trainingBladeArchetypeID); err != nil {
 		t.Fatal(err)
@@ -124,11 +129,6 @@ func TestNonEffectMainHandDoesNotRestoreMP(t *testing.T) {
 
 func TestManaSiphonStaffUsesFormalEquipmentAndDurableRestorePaths(t *testing.T) {
 	rt, _, s, connection := newNPCTestRuntime(t, world.Position{})
-	report := rt.Step(1, 50*time.Millisecond)
-	if len(report.CommandErrors) != 0 {
-		t.Fatalf("initial errors = %#v", report.CommandErrors)
-	}
-	drainConnection(connection)
 	inv := rt.inventories[s.CharacterIdentity.ID]
 	if err := inv.Add(manaSiphonStaffArchetypeID, 1); err != nil {
 		t.Fatal(err)
@@ -144,6 +144,7 @@ func TestManaSiphonStaffUsesFormalEquipmentAndDurableRestorePaths(t *testing.T) 
 	if inv.MainHand() != manaSiphonStaffArchetypeID {
 		t.Fatalf("main hand = %q, want staff", inv.MainHand())
 	}
+	assertReplicatedMainHand(t, connection, manaSiphonStaffArchetypeID)
 
 	durable, err := durableInventoryState(inv)
 	if err != nil {
@@ -187,6 +188,25 @@ func assertReplicatedMP(t *testing.T, conn *session.QueueConnection, entityID wo
 			return
 		default:
 			t.Fatalf("missing vitals replication for entity %d MP %d", entityID, want)
+		}
+	}
+}
+
+func assertReplicatedMainHand(t *testing.T, conn *session.QueueConnection, want string) {
+	t.Helper()
+	for {
+		select {
+		case envelope := <-conn.Reliable():
+			equipment, ok := envelope.Message.(protocol.EquipmentSnapshot)
+			if !ok {
+				continue
+			}
+			if len(equipment.Slots) != 1 || equipment.Slots[0].Slot != protocol.EquipmentSlotMainHand || equipment.Slots[0].ItemArchetypeID != want {
+				t.Fatalf("equipment snapshot = %#v, want main hand %q", equipment, want)
+			}
+			return
+		default:
+			t.Fatalf("missing equipment snapshot for main hand %q", want)
 		}
 	}
 }
