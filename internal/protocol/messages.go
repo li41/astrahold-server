@@ -265,3 +265,38 @@ type CombatEvent struct {
 }
 
 func (CombatEvent) Type() MessageType { return MessageCombatEvent }
+
+type SiegeTeam string
+
+const (
+	SiegeTeamUnknown  SiegeTeam = "unknown"
+	SiegeTeamAttacker SiegeTeam = "attacker"
+	SiegeTeamDefender SiegeTeam = "defender"
+)
+
+type SiegePhase string
+
+const (
+	SiegePhaseUnknown   SiegePhase = "unknown"
+	SiegePhaseGate      SiegePhase = "gate"
+	SiegePhaseThrone    SiegePhase = "throne"
+	SiegePhaseCompleted SiegePhase = "completed"
+)
+
+type SiegeMatchState struct {
+	Revision          uint64
+	Round             uint64
+	MatchID           string
+	AttackerID        string
+	DefenderID        string
+	YourTeam          SiegeTeam
+	Phase             SiegePhase
+	BreachGateID      string
+	ThroneObjectiveID string
+	GateBreached      bool
+	WinnerTeam        SiegeTeam
+	WinnerID          string
+	CastleOwnerID     string
+}
+
+func (SiegeMatchState) Type() MessageType { return MessageSiegeMatchState }
