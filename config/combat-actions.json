@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-classes-v1-008",
+  "revision": "vertical-slice-classes-v1-009",
   "actions": [
     {
       "id": "basic-attack",
@@ -51,6 +51,17 @@
       "damage_type": "physical",
       "blockable": true,
       "cooldown_seconds": 1.1
+    },
+    {
+      "id": "ranger-armor-piercing-arrow",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 12.0,
+      "base_damage": 210,
+      "damage_type": "physical",
+      "blockable": true,
+      "physical_defense_ignore_percent": 25,
+      "cooldown_seconds": 7.0
     },
     {
       "id": "starfire-fire-bolt",

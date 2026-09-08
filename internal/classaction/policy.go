@@ -14,6 +14,7 @@ const (
 	BreakerHeavySlash          = "breaker-heavy-slash"
 	BreakerStaggerStrike       = "breaker-stagger-strike"
 	RangerHuntingShot          = "ranger-hunting-shot"
+	RangerArmorPiercingArrow   = "ranger-armor-piercing-arrow"
 	StarfireFireBolt           = "starfire-fire-bolt"
 	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
 	ShadowbladeDualBladeStrike = "shadowblade-dual-blade-strike"
@@ -74,6 +75,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Breaker, CostResource: classresource.Momentum, CostAmount: 20}, true
 	case RangerHuntingShot:
 		return Policy{RequiredClass: classid.Ranger, HitResource: classresource.HuntMomentum, HitGain: 8}, true
+	case RangerArmorPiercingArrow:
+		return Policy{RequiredClass: classid.Ranger, CostResource: classresource.HuntMomentum, CostAmount: 30}, true
 	case StarfireFireBolt:
 		return Policy{RequiredClass: classid.StarfireMage, AcceptedResource: classresource.StarHeat, AcceptedGain: 8}, true
 	case OathhealerOathlightStrike:
