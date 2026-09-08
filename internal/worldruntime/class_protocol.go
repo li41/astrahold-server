@@ -54,8 +54,10 @@ func (r *Runtime) guardInitialClassSelectionFeedbackCapacity(name string, s *ses
 	if s == nil || report == nil {
 		return false
 	}
-	// A successful selection emits state first and then its correlated result.
-	if len(r.pendingClassMessages[s.ID])+2 <= maxPendingClassMessagesPerSession {
+	// Preserve two FIFO slots for a durable completion's authoritative state + committed result,
+	// plus one slot for the current request if it is rejected immediately. This prevents later
+	// assignment_pending rejections from consuming the capacity promised to an earlier selection.
+	if len(r.pendingClassMessages[s.ID])+3 <= maxPendingClassMessagesPerSession {
 		return true
 	}
 	report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: s.ID, Err: ErrInitialClassSelectionFeedbackBacklog})
