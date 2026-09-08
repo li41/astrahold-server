@@ -13,7 +13,7 @@ var (
 )
 
 // AssignInitialClass performs the only supported ClassID mutation: unassigned -> one canonical
-// class. There is intentionally no general SetClassID or transfer path.
+// class. The runtime combat resource is initialized from that same canonical class transition.
 func (s *Service) AssignInitialClass(id world.EntityID, target classid.ID) (State, error) {
 	state, ok := s.states[id]
 	if !ok {
@@ -26,6 +26,7 @@ func (s *Service) AssignInitialClass(id world.EntityID, target classid.ID) (Stat
 		return state, ErrClassAlreadyAssigned
 	}
 	state.ClassID = target
+	initializeClassResource(&state)
 	s.states[id] = state
 	return state, nil
 }
