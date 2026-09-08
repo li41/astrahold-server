@@ -24,16 +24,17 @@ var (
 )
 
 type State struct {
-	EntityID             world.EntityID
-	ClassID              classid.ID
-	HP                   uint32
-	MaxHP                uint32
-	MP                   uint32
-	MaxMP                uint32
-	ClassResourceID      classresource.ID
-	ClassResource        uint32
-	MaxClassResource     uint32
-	Defeated             bool
+	EntityID              world.EntityID
+	ClassID               classid.ID
+	HP                    uint32
+	MaxHP                 uint32
+	MP                    uint32
+	MaxMP                 uint32
+	ClassResourceID       classresource.ID
+	ClassResource         uint32
+	MaxClassResource      uint32
+	ClassResourceProgress uint32
+	Defeated              bool
 }
 
 type Service struct {
@@ -93,11 +94,13 @@ func initializeClassResource(state *State) {
 		state.ClassResourceID = classresource.Empty
 		state.ClassResource = 0
 		state.MaxClassResource = 0
+		state.ClassResourceProgress = 0
 		return
 	}
 	state.ClassResourceID = definition.ID
 	state.ClassResource = 0
 	state.MaxClassResource = definition.Max
+	state.ClassResourceProgress = 0
 }
 
 func validateState(state State) error {
@@ -110,11 +113,17 @@ func validateState(state State) error {
 	if state.ClassResource > state.MaxClassResource {
 		return ErrInvalidState
 	}
-	if state.ClassResourceID == classresource.Empty && (state.ClassResource != 0 || state.MaxClassResource != 0) {
+	if state.ClassResourceID == classresource.Empty && (state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0) {
 		return ErrInvalidState
 	}
 	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 {
 		return ErrInvalidState
+	}
+	if state.ClassResourceProgress > 0 {
+		definition, ok := classresource.PrimaryForClass(state.ClassID)
+		if !ok || definition.ID != state.ClassResourceID || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource {
+			return ErrInvalidState
+		}
 	}
 	if state.Defeated {
 		if state.HP != 0 {
@@ -164,6 +173,44 @@ func (s *Service) GainClassResource(id world.EntityID, resourceID classresource.
 	state.ClassResource += amount
 	s.states[id] = state
 	return state, nil
+}
+
+// GainClassResourceProgress advances one Server-only progress meter and converts each full authored
+// threshold into one visible primary-resource unit. The progress meter remains combat-incarnation
+// runtime truth in this service; only the converted primary resource is eligible for Protocol state.
+func (s *Service) GainClassResourceProgress(id world.EntityID, resourceID classresource.ID, amount uint32) (State, bool, error) {
+	state, ok := s.states[id]
+	if !ok {
+		return State{}, false, ErrCharacterNotFound
+	}
+	if state.Defeated {
+		return state, false, ErrCharacterDefeated
+	}
+	definition, defined := classresource.PrimaryForClass(state.ClassID)
+	if !defined || resourceID == classresource.Empty || state.ClassResourceID != resourceID || definition.ID != resourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 {
+		return state, false, classresource.ErrResourceMismatch
+	}
+	if amount == 0 || state.ClassResource >= state.MaxClassResource {
+		return state, false, nil
+	}
+
+	totalProgress := uint64(state.ClassResourceProgress) + uint64(amount)
+	threshold := uint64(definition.ProgressThreshold)
+	gained := uint32(totalProgress / threshold)
+	state.ClassResourceProgress = uint32(totalProgress % threshold)
+	visibleChanged := gained > 0
+	if gained > 0 {
+		missing := state.MaxClassResource - state.ClassResource
+		if gained >= missing {
+			state.ClassResource = state.MaxClassResource
+			// Do not bank hidden progress behind a full visible resource cap.
+			state.ClassResourceProgress = 0
+		} else {
+			state.ClassResource += gained
+		}
+	}
+	s.states[id] = state
+	return state, visibleChanged, nil
 }
 
 // SpendMP performs one world-owner-authoritative resource transition. A rejected spend does

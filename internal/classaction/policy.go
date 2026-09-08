@@ -9,20 +9,23 @@ import (
 )
 
 const (
-	OathguardSwordStrike = "oathguard-sword-strike"
-	BreakerHeavySlash    = "breaker-heavy-slash"
-	RangerHuntingShot    = "ranger-hunting-shot"
-	StarfireFireBolt     = "starfire-fire-bolt"
+	OathguardSwordStrike       = "oathguard-sword-strike"
+	BreakerHeavySlash          = "breaker-heavy-slash"
+	RangerHuntingShot          = "ranger-hunting-shot"
+	StarfireFireBolt           = "starfire-fire-bolt"
+	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
 )
 
 var ErrWrongClass = errors.New("classaction: action unavailable for class")
 
 type Policy struct {
-	RequiredClass    classid.ID
-	AcceptedResource classresource.ID
-	AcceptedGain     uint32
-	HitResource      classresource.ID
-	HitGain          uint32
+	RequiredClass       classid.ID
+	AcceptedResource    classresource.ID
+	AcceptedGain        uint32
+	HitResource         classresource.ID
+	HitGain             uint32
+	HitProgressResource classresource.ID
+	HitProgressGain     uint32
 }
 
 func ForAction(actionID string) (Policy, bool) {
@@ -35,6 +38,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Ranger, HitResource: classresource.HuntMomentum, HitGain: 8}, true
 	case StarfireFireBolt:
 		return Policy{RequiredClass: classid.StarfireMage, AcceptedResource: classresource.StarHeat, AcceptedGain: 8}, true
+	case OathhealerOathlightStrike:
+		return Policy{RequiredClass: classid.Oathhealer, HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
 	default:
 		return Policy{}, false
 	}

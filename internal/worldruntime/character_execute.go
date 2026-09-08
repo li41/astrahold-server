@@ -120,13 +120,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		}
 		r.markEntityVitalsDirty(targetID)
 		r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
-		if policy, ok := classaction.ForAction(prepared.Definition.ID); ok && policy.HitResource != "" && policy.HitGain > 0 {
-			if _, err := r.characters.GainClassResource(actor.ID, policy.HitResource, policy.HitGain); err != nil {
-				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
-			} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actor.ID {
-				r.sendCurrentClassResourceState(sourceSession, report)
-			}
-		}
+		r.applyHitClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{
 			ActionInstanceID:  prepared.ActionInstanceID,
@@ -157,5 +151,29 @@ func (r *Runtime) applyAcceptedActionClassResource(name string, sessionID sessio
 	}
 	if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
 		r.sendCurrentClassResourceState(sourceSession, report)
+	}
+}
+
+func (r *Runtime) applyHitClassResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
+	policy, ok := classaction.ForAction(actionID)
+	if !ok {
+		return
+	}
+	if policy.HitResource != "" && policy.HitGain > 0 {
+		if _, err := r.characters.GainClassResource(actorID, policy.HitResource, policy.HitGain); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+		} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
+			r.sendCurrentClassResourceState(sourceSession, report)
+		}
+	}
+	if policy.HitProgressResource != "" && policy.HitProgressGain > 0 {
+		_, visibleChanged, err := r.characters.GainClassResourceProgress(actorID, policy.HitProgressResource, policy.HitProgressGain)
+		if err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+		} else if visibleChanged {
+			if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
+				r.sendCurrentClassResourceState(sourceSession, report)
+			}
+		}
 	}
 }
