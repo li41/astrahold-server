@@ -7,6 +7,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/classresource"
+	"github.com/li41/astrahold-server/internal/targetresource"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -38,259 +39,94 @@ type State struct {
 }
 
 type Service struct {
-	defaultMaxHP uint32
-	defaultMaxMP uint32
-	states       map[world.EntityID]State
+	defaultMaxHP    uint32
+	defaultMaxMP    uint32
+	states          map[world.EntityID]State
+	targetResources *targetresource.Store
 }
 
-// NewService remains for focused character tests and legacy callers. Runtime code may use
-// NewServiceWithResources when a different authored default MP pool is introduced.
-func NewService(defaultMaxHP uint32) (*Service, error) {
-	return NewServiceWithResources(defaultMaxHP, DefaultMaxMP)
-}
-
+func NewService(defaultMaxHP uint32) (*Service, error) { return NewServiceWithResources(defaultMaxHP, DefaultMaxMP) }
 func NewServiceWithResources(defaultMaxHP, defaultMaxMP uint32) (*Service, error) {
-	if defaultMaxHP == 0 {
-		return nil, ErrInvalidMaxHP
-	}
-	if defaultMaxMP == 0 {
-		return nil, ErrInvalidMaxMP
-	}
-	return &Service{defaultMaxHP: defaultMaxHP, defaultMaxMP: defaultMaxMP, states: make(map[world.EntityID]State)}, nil
+	if defaultMaxHP == 0 { return nil, ErrInvalidMaxHP }
+	if defaultMaxMP == 0 { return nil, ErrInvalidMaxMP }
+	return &Service{defaultMaxHP: defaultMaxHP, defaultMaxMP: defaultMaxMP, states: make(map[world.EntityID]State), targetResources: targetresource.NewStore()}, nil
 }
 
-func (s *Service) Register(id world.EntityID) error {
-	return s.RegisterState(State{EntityID: id, HP: s.defaultMaxHP, MaxHP: s.defaultMaxHP, MP: s.defaultMaxMP, MaxMP: s.defaultMaxMP})
-}
-
-// RegisterState installs an already-authoritative character state for a newly spawned world
-// incarnation. Class combat resources are runtime state: persisted restores deliberately reinitialize
-// them from the canonical ClassID instead of reading them from durable character snapshots.
+func (s *Service) Register(id world.EntityID) error { return s.RegisterState(State{EntityID: id, HP: s.defaultMaxHP, MaxHP: s.defaultMaxHP, MP: s.defaultMaxMP, MaxMP: s.defaultMaxMP}) }
 func (s *Service) RegisterState(state State) error {
-	if state.EntityID == 0 {
-		return ErrCharacterNotFound
-	}
-	if _, exists := s.states[state.EntityID]; exists {
-		return ErrCharacterExists
-	}
-	if state.MP == 0 && state.MaxMP == 0 {
-		state.MP = s.defaultMaxMP
-		state.MaxMP = s.defaultMaxMP
-	}
+	if state.EntityID == 0 { return ErrCharacterNotFound }
+	if _, exists := s.states[state.EntityID]; exists { return ErrCharacterExists }
+	if state.MP == 0 && state.MaxMP == 0 { state.MP = s.defaultMaxMP; state.MaxMP = s.defaultMaxMP }
 	initializeClassResource(&state)
-	if err := validateState(state); err != nil {
-		return err
-	}
+	if err := validateState(state); err != nil { return err }
 	s.states[state.EntityID] = state
 	return nil
 }
 
 func initializeClassResource(state *State) {
-	if state == nil {
-		return
-	}
+	if state == nil { return }
 	definition, ok := classresource.PrimaryForClass(state.ClassID)
 	if !ok {
-		state.ClassResourceID = classresource.Empty
-		state.ClassResource = 0
-		state.MaxClassResource = 0
-		state.ClassResourceProgress = 0
+		state.ClassResourceID = classresource.Empty; state.ClassResource = 0; state.MaxClassResource = 0; state.ClassResourceProgress = 0
 		return
 	}
-	state.ClassResourceID = definition.ID
-	state.ClassResource = 0
-	state.MaxClassResource = definition.Max
-	state.ClassResourceProgress = 0
+	state.ClassResourceID = definition.ID; state.ClassResource = 0; state.MaxClassResource = definition.Max; state.ClassResourceProgress = 0
 }
 
 func validateState(state State) error {
-	if state.ClassID != "" && !classid.IsCanonical(state.ClassID) {
-		return ErrInvalidState
-	}
-	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP {
-		return ErrInvalidState
-	}
-	if state.ClassResource > state.MaxClassResource {
-		return ErrInvalidState
-	}
-	if state.ClassResourceID == classresource.Empty && (state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0) {
-		return ErrInvalidState
-	}
-	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 {
-		return ErrInvalidState
-	}
+	if state.ClassID != "" && !classid.IsCanonical(state.ClassID) { return ErrInvalidState }
+	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP { return ErrInvalidState }
+	if state.ClassResource > state.MaxClassResource { return ErrInvalidState }
+	if state.ClassResourceID == classresource.Empty && (state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0) { return ErrInvalidState }
+	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 { return ErrInvalidState }
 	if state.ClassResourceProgress > 0 {
 		definition, ok := classresource.PrimaryForClass(state.ClassID)
-		if !ok || definition.ID != state.ClassResourceID || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource {
-			return ErrInvalidState
-		}
+		if !ok || definition.ID != state.ClassResourceID || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource { return ErrInvalidState }
 	}
-	if state.Defeated {
-		if state.HP != 0 {
-			return ErrInvalidState
-		}
-	} else if state.HP == 0 {
-		return ErrInvalidState
-	}
+	if state.Defeated { if state.HP != 0 { return ErrInvalidState } } else if state.HP == 0 { return ErrInvalidState }
 	return nil
 }
 
-func (s *Service) Remove(id world.EntityID) { delete(s.states, id) }
-
-func (s *Service) State(id world.EntityID) (State, bool) {
-	state, ok := s.states[id]
-	return state, ok
-}
-
+func (s *Service) Remove(id world.EntityID) { delete(s.states, id); s.targetResources.ClearEntity(id) }
+func (s *Service) State(id world.EntityID) (State, bool) { state, ok := s.states[id]; return state, ok }
 func (s *Service) States() []State {
-	out := make([]State, 0, len(s.states))
-	for _, state := range s.states {
-		out = append(out, state)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].EntityID < out[j].EntityID })
-	return out
+	out := make([]State, 0, len(s.states)); for _, state := range s.states { out = append(out, state) }
+	sort.Slice(out, func(i, j int) bool { return out[i].EntityID < out[j].EntityID }); return out
 }
 
-// GainClassResource performs one world-owner-authoritative class-resource transition and clamps at Max.
 func (s *Service) GainClassResource(id world.EntityID, resourceID classresource.ID, amount uint32) (State, error) {
-	state, ok := s.states[id]
-	if !ok {
-		return State{}, ErrCharacterNotFound
-	}
-	if state.Defeated {
-		return state, ErrCharacterDefeated
-	}
-	if resourceID == classresource.Empty || state.ClassResourceID != resourceID || state.MaxClassResource == 0 {
-		return state, classresource.ErrResourceMismatch
-	}
-	if amount == 0 || state.ClassResource >= state.MaxClassResource {
-		return state, nil
-	}
-	missing := state.MaxClassResource - state.ClassResource
-	if amount > missing {
-		amount = missing
-	}
-	state.ClassResource += amount
-	s.states[id] = state
-	return state, nil
+	state, ok := s.states[id]; if !ok { return State{}, ErrCharacterNotFound }; if state.Defeated { return state, ErrCharacterDefeated }
+	if resourceID == classresource.Empty || state.ClassResourceID != resourceID || state.MaxClassResource == 0 { return state, classresource.ErrResourceMismatch }
+	if amount == 0 || state.ClassResource >= state.MaxClassResource { return state, nil }
+	missing := state.MaxClassResource - state.ClassResource; if amount > missing { amount = missing }; state.ClassResource += amount; s.states[id] = state; return state, nil
 }
 
-// GainClassResourceProgress advances one Server-only progress meter and converts each full authored
-// threshold into one visible primary-resource unit. The progress meter remains combat-incarnation
-// runtime truth in this service; only the converted primary resource is eligible for Protocol state.
 func (s *Service) GainClassResourceProgress(id world.EntityID, resourceID classresource.ID, amount uint32) (State, bool, error) {
-	state, ok := s.states[id]
-	if !ok {
-		return State{}, false, ErrCharacterNotFound
-	}
-	if state.Defeated {
-		return state, false, ErrCharacterDefeated
-	}
+	state, ok := s.states[id]; if !ok { return State{}, false, ErrCharacterNotFound }; if state.Defeated { return state, false, ErrCharacterDefeated }
 	definition, defined := classresource.PrimaryForClass(state.ClassID)
-	if !defined || resourceID == classresource.Empty || state.ClassResourceID != resourceID || definition.ID != resourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 {
-		return state, false, classresource.ErrResourceMismatch
-	}
-	if amount == 0 || state.ClassResource >= state.MaxClassResource {
-		return state, false, nil
-	}
-
-	totalProgress := uint64(state.ClassResourceProgress) + uint64(amount)
-	threshold := uint64(definition.ProgressThreshold)
-	gained := uint32(totalProgress / threshold)
-	state.ClassResourceProgress = uint32(totalProgress % threshold)
-	visibleChanged := gained > 0
-	if gained > 0 {
-		missing := state.MaxClassResource - state.ClassResource
-		if gained >= missing {
-			state.ClassResource = state.MaxClassResource
-			// Do not bank hidden progress behind a full visible resource cap.
-			state.ClassResourceProgress = 0
-		} else {
-			state.ClassResource += gained
-		}
-	}
-	s.states[id] = state
-	return state, visibleChanged, nil
+	if !defined || resourceID == classresource.Empty || state.ClassResourceID != resourceID || definition.ID != resourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 { return state, false, classresource.ErrResourceMismatch }
+	if amount == 0 || state.ClassResource >= state.MaxClassResource { return state, false, nil }
+	totalProgress := uint64(state.ClassResourceProgress) + uint64(amount); threshold := uint64(definition.ProgressThreshold); gained := uint32(totalProgress / threshold); state.ClassResourceProgress = uint32(totalProgress % threshold); visibleChanged := gained > 0
+	if gained > 0 { missing := state.MaxClassResource - state.ClassResource; if gained >= missing { state.ClassResource = state.MaxClassResource; state.ClassResourceProgress = 0 } else { state.ClassResource += gained } }
+	s.states[id] = state; return state, visibleChanged, nil
 }
 
-// SpendMP performs one world-owner-authoritative resource transition. A rejected spend does
-// not mutate state; callers should invoke it only after target/range/LOS legality has passed.
+func (s *Service) GainTargetResource(sourceID, targetID world.EntityID, resourceID targetresource.ID, amount, max uint32, tick, nextReadyTick uint64) (targetresource.State, bool, error) {
+	source, ok := s.states[sourceID]; if !ok { return targetresource.State{}, false, ErrCharacterNotFound }; if source.Defeated { return targetresource.State{}, false, ErrCharacterDefeated }
+	return s.targetResources.TryGain(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}, amount, max, tick, nextReadyTick)
+}
+func (s *Service) TargetResourceState(sourceID, targetID world.EntityID, resourceID targetresource.ID) (targetresource.State, bool) { return s.targetResources.State(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}) }
+func (s *Service) ClearTargetResourcesForEntity(entityID world.EntityID) []targetresource.State { return s.targetResources.ClearEntity(entityID) }
+
 func (s *Service) SpendMP(id world.EntityID, amount uint32) (State, error) {
-	state, ok := s.states[id]
-	if !ok {
-		return State{}, ErrCharacterNotFound
-	}
-	if state.Defeated {
-		return state, ErrCharacterDefeated
-	}
-	if amount == 0 {
-		return state, nil
-	}
-	if state.MP < amount {
-		return state, ErrInsufficientResource
-	}
-	state.MP -= amount
-	s.states[id] = state
-	return state, nil
+	state, ok := s.states[id]; if !ok { return State{}, ErrCharacterNotFound }; if state.Defeated { return state, ErrCharacterDefeated }; if amount == 0 { return state, nil }; if state.MP < amount { return state, ErrInsufficientResource }; state.MP -= amount; s.states[id] = state; return state, nil
 }
-
-// RestoreHP applies an authoritative consumable/resource recovery transition. It rejects full HP
-// so callers can validate before consuming an inventory item; successful recovery clamps to MaxHP.
 func (s *Service) RestoreHP(id world.EntityID, amount uint32) (State, error) {
-	state, ok := s.states[id]
-	if !ok {
-		return State{}, ErrCharacterNotFound
-	}
-	if state.Defeated {
-		return state, ErrCharacterDefeated
-	}
-	if state.HP >= state.MaxHP {
-		return state, ErrResourceFull
-	}
-	missing := state.MaxHP - state.HP
-	if amount > missing {
-		amount = missing
-	}
-	state.HP += amount
-	s.states[id] = state
-	return state, nil
+	state, ok := s.states[id]; if !ok { return State{}, ErrCharacterNotFound }; if state.Defeated { return state, ErrCharacterDefeated }; if state.HP >= state.MaxHP { return state, ErrResourceFull }; missing := state.MaxHP - state.HP; if amount > missing { amount = missing }; state.HP += amount; s.states[id] = state; return state, nil
 }
-
-// RestoreMP mirrors RestoreHP for the authoritative MP pool.
 func (s *Service) RestoreMP(id world.EntityID, amount uint32) (State, error) {
-	state, ok := s.states[id]
-	if !ok {
-		return State{}, ErrCharacterNotFound
-	}
-	if state.Defeated {
-		return state, ErrCharacterDefeated
-	}
-	if state.MP >= state.MaxMP {
-		return state, ErrResourceFull
-	}
-	missing := state.MaxMP - state.MP
-	if amount > missing {
-		amount = missing
-	}
-	state.MP += amount
-	s.states[id] = state
-	return state, nil
+	state, ok := s.states[id]; if !ok { return State{}, ErrCharacterNotFound }; if state.Defeated { return state, ErrCharacterDefeated }; if state.MP >= state.MaxMP { return state, ErrResourceFull }; missing := state.MaxMP - state.MP; if amount > missing { amount = missing }; state.MP += amount; s.states[id] = state; return state, nil
 }
-
 func (s *Service) ApplyDamage(id world.EntityID, amount uint32) (State, error) {
-	state, ok := s.states[id]
-	if !ok {
-		return State{}, ErrCharacterNotFound
-	}
-	if state.Defeated {
-		return state, ErrCharacterDefeated
-	}
-	if amount >= state.HP {
-		state.HP = 0
-		state.Defeated = true
-	} else {
-		state.HP -= amount
-	}
-	s.states[id] = state
-	return state, nil
+	state, ok := s.states[id]; if !ok { return State{}, ErrCharacterNotFound }; if state.Defeated { return state, ErrCharacterDefeated }; if amount >= state.HP { state.HP = 0; state.Defeated = true } else { state.HP -= amount }; s.states[id] = state; return state, nil
 }

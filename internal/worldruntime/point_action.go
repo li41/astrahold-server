@@ -2,6 +2,7 @@ package worldruntime
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -12,7 +13,7 @@ import (
 
 // applyPointAction resolves a selected endpoint according to the Server-owned action definition.
 // The source chooses only the endpoint; range, LOS, target selection and damage remain Server-owned.
-func (r *Runtime) applyPointAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
+func (r *Runtime) applyPointAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, tick uint64, delta time.Duration, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, hit, err := r.resolvePointActionTarget(actor, prepared)
 	if err != nil {
 		if err == ErrDynamicWorldUnavailable {
@@ -42,7 +43,7 @@ func (r *Runtime) applyPointAction(name string, sessionID session.ID, clientActi
 
 	resolved := prepared
 	resolved.Target = combat.Target{Kind: combat.TargetEntity, ID: strconv.FormatUint(uint64(targetID), 10)}
-	return r.applyEntityAction(name, sessionID, clientActionSequence, actor, resolved, prepared, tick, cooldownReadyTick, report)
+	return r.applyEntityAction(name, sessionID, clientActionSequence, actor, resolved, prepared, tick, delta, cooldownReadyTick, report)
 }
 
 func (r *Runtime) resolvePointActionTarget(actor world.EntityState, prepared combat.PreparedAction) (world.EntityID, bool, error) {
