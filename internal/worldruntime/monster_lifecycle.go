@@ -95,6 +95,7 @@ func (r *Runtime) stepMonsterLifecycles(tick uint64, report *StepReport) {
 			if _, exists := r.world.Entity(entityID); !exists {
 				continue
 			}
+			r.clearTargetResourcesForEntity(entityID, report)
 			r.world.Remove(entityID)
 			r.characters.Remove(entityID)
 			r.removeEntityVitals(entityID)

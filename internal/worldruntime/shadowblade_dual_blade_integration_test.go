@@ -81,6 +81,26 @@ func TestShadowbladeDualBladeOutOfRangeDoesNotDamageOrBuildFlaw(t *testing.T) {
 	if monster.HP != 500 { t.Fatalf("monster hp=%d want 500", monster.HP) }
 }
 
+func TestShadowbladeDualBladeRejectsWrongClassBeforeDamageOrFlaw(t *testing.T) {
+	rt, s, conn, targetID := newShadowbladeDualBladeRuntime(t, world.Position{X: 3, Layer: 0}, 0)
+	if _, err := rt.characters.AssignInitialClass(s.EntityID, classid.Oathguard); err != nil { t.Fatal(err) }
+	drainReliable(conn)
+	if err := rt.EnqueueUseAction(s.ID, 1, protocol.ClientUseAction{ActionID: classaction.ShadowbladeDualBladeStrike, TargetKind: protocol.ActionTargetEntity, TargetID: "9603"}); err != nil { t.Fatal(err) }
+	report := rt.Step(2, 50*time.Millisecond)
+	if len(report.ActionRejections) != 1 { t.Fatalf("wrong-class report=%#v", report) }
+	if _, ok := rt.characters.TargetResourceState(s.EntityID, targetID, targetresource.Flaw); ok { t.Fatal("wrong-class request built Flaw") }
+	monster, _ := rt.combatantState(targetID)
+	if monster.HP != 500 { t.Fatalf("wrong class changed monster hp=%d", monster.HP) }
+	found := false
+	for _, envelope := range drainReliable(conn) {
+		if rejected, ok := envelope.Message.(protocol.ActionRejected); ok && rejected.ActionID == classaction.ShadowbladeDualBladeStrike {
+			found = true
+			if rejected.Reason != protocol.ActionRejectionWrongClass { t.Fatalf("reason=%q want wrong_class", rejected.Reason) }
+		}
+	}
+	if !found { t.Fatal("missing wrong_class ActionRejected") }
+}
+
 func newShadowbladeDualBladeRuntime(t *testing.T, targetPosition world.Position, targetYaw float32) (*Runtime, *session.Session, *session.QueueConnection, world.EntityID) {
 	t.Helper()
 	definition := gameplayworld.Definition{SchemaVersion: gameplayworld.SchemaVersion, WorldID: "shadowblade-dual-blade-test", Revision: "r1", Units: "meters", Agent: gameplayworld.AgentDefaults{Radius: .35, Height: 1.8, MaxStepHeight: .5}, Surfaces: []gameplayworld.Surface{{ID: "ground", Layer: 0, Bounds: gameplayworld.BoundsXZ{MinX: -20, MaxX: 20, MinZ: -20, MaxZ: 20}}}}
