@@ -11,6 +11,7 @@ import (
 const (
 	OathguardSwordStrike = "oathguard-sword-strike"
 	BreakerHeavySlash    = "breaker-heavy-slash"
+	RangerHuntingShot    = "ranger-hunting-shot"
 )
 
 var ErrWrongClass = errors.New("classaction: action unavailable for class")
@@ -27,6 +28,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Oathguard, HitResource: classresource.Resolve, HitGain: 8}, true
 	case BreakerHeavySlash:
 		return Policy{RequiredClass: classid.Breaker, HitResource: classresource.Momentum, HitGain: 10}, true
+	case RangerHuntingShot:
+		return Policy{RequiredClass: classid.Ranger, HitResource: classresource.HuntMomentum, HitGain: 8}, true
 	default:
 		return Policy{}, false
 	}
