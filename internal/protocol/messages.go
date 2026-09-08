@@ -1,4 +1,4 @@
-// Package protocol 定義 Astrahold 自有協定的語意層；不綁定特定 wire codec 或 transport。
+// Package protocol defines Astrahold protocol semantics independently from wire codec and transport.
 package protocol
 
 import (
@@ -7,23 +7,23 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// Version 在 wire-incompatible contract 或會造成舊 Client/Server 行為歧義的 gameplay protocol 語意變更時必須遞增。
+// Version increments for wire-incompatible contracts or gameplay protocol semantics that would
+// make old Client/Server pairs ambiguous.
+// v24: CombatEvent adds Server-authoritative shield block outcome; damage now reflects final mitigated damage.
 // v23: Equipment semantics add authoritative off_hand so shields are distinct from MainHand weapons.
-// v22: Reliable ItemUseResult returns authoritative consumable outcome/cooldown feedback; Server owns shared potion cooldown legality.
+// v22: Reliable ItemUseResult returns authoritative consumable outcome/cooldown feedback.
 // v21: Reliable ClientUseItem intent lets the Server authoritatively consume inventory items and restore HP/MP.
-// v20: InventorySnapshot adds Server-authoritative current/max carry weight so clients present capacity without reimplementing item-weight gameplay rules.
-// v19: Reliable ClientRespawnRequest lets a defeated player request restart without reconnecting; Server retains respawn destination/timing authority.
+// v20: InventorySnapshot adds Server-authoritative current/max carry weight.
+// v19: Reliable ClientRespawnRequest lets a defeated player request restart without reconnecting.
 // v18: Server-authoritative NPC shop open/buy barter vertical slice.
-// v17: Reliable ClientInteractNPC intent plus source-session authoritative NPCInteraction dialogue response.
-// v16: Server-owned item-drop entity lifecycle plus Reliable ClientPickupItem intent.
+// v17: Reliable ClientInteractNPC plus source-session authoritative NPCInteraction.
+// v16: Server-owned item-drop lifecycle plus Reliable ClientPickupItem.
 // v15: Reliable authoritative MainHand equipment intent/snapshot vertical slice.
-// v14: Server production emits Reliable InventorySnapshot and the Unreal client decodes message 110 as authoritative inventory truth.
-// v13: EntityVitalsState 新增 MP/MaxMP authoritative resource truth，並新增 insufficient_resource action rejection。
-// v12: valid point-target ClientUseAction ingress semantics 納入 compatibility fence；舊版會把合法 point intent
-// 當 malformed transport message關閉連線，不能再與新 Client 成功握手後延遲到第一次施法才失敗。
-// v11: 新增 Reliable ActionRejected，讓 Server 對已處理的 action intent 明確回覆 authoritative rejection reason。
-// ActionStarted 仍只代表 Server accepted；CombatEvent / EntityVitalsState 仍分別是 resolved outcome / vitals truth。
-const Version uint16 = 23
+// v14: Server emits Reliable InventorySnapshot.
+// v13: EntityVitalsState adds authoritative MP/MaxMP and insufficient_resource rejection.
+// v12: valid point-target ClientUseAction ingress semantics are compatibility-fenced.
+// v11: Reliable ActionRejected returns authoritative action rejection reason.
+const Version uint16 = 24
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -55,6 +55,7 @@ const (
 )
 
 type Message interface{ Type() MessageType }
+
 type Envelope struct {
 	Delivery   Delivery
 	Sequence   uint32
@@ -98,7 +99,6 @@ const (
 	ActionTargetPoint  ActionTargetKind = "point"
 )
 
-// TargetX/TargetZ are present only for point-target actions. Entity/gate callers keep using TargetID.
 type ClientUseAction struct {
 	ActionID   string
 	TargetKind ActionTargetKind
@@ -109,9 +109,8 @@ type ClientUseAction struct {
 
 func (ClientUseAction) Type() MessageType { return MessageClientUseAction }
 
-// ActionStarted means the Server has accepted the action far enough that it will consume gameplay
-// execution/cooldown/resource cost. Target fields preserve the accepted target spec, not the later resolved hit target.
-// CombatEvent / EntityVitalsState remain the outcome and vitals truth respectively.
+// ActionStarted means the Server accepted the action far enough to consume gameplay
+// execution/cooldown/resource cost. CombatEvent and EntityVitalsState remain outcome/vitals truth.
 type ActionStarted struct {
 	ActionInstanceID uint64
 	ActorEntityID    world.EntityID
@@ -139,10 +138,6 @@ const (
 	ActionRejectionServerRejected       ActionRejectionReason = "server_rejected"
 )
 
-// ActionRejected is source-session-only authoritative legality feedback. ClientActionSequence is
-// the Reliable ClientUseAction envelope sequence already consumed by the Server; clients must not
-// invent Reason when this message is absent. CooldownReadyTick is supplied only when the Server
-// has an authoritative ready tick for a cooldown rejection.
 type ActionRejected struct {
 	ClientActionSequence uint32
 	ActorEntityID        world.EntityID
@@ -173,7 +168,6 @@ type EntityTransform struct {
 	Yaw      float32
 }
 
-// ArchetypeID is stable content/presentation identity only; gameplay authority remains server-side.
 type EntitySpawn struct {
 	EntityID    world.EntityID
 	Kind        world.EntityKind
@@ -195,6 +189,7 @@ type WorldSnapshot struct {
 }
 
 func (WorldSnapshot) Type() MessageType { return MessageWorldSnapshot }
+
 func (s WorldSnapshot) ValidChunk() bool {
 	return s.ChunkCount > 0 && s.ChunkIndex < s.ChunkCount && len(s.Entities) <= MaxSnapshotEntitiesPerChunk
 }
@@ -229,10 +224,7 @@ type WorldDynamicState struct {
 
 func (WorldDynamicState) Type() MessageType { return MessageWorldDynamicState }
 
-// EntityVitalsState 是單一 combatant 完整、可重送的 Reliable vitals snapshot。
-// HP/MP 均是 Server truth；Client 不得由 CombatEvent damage 或 local skill cost 自行推導。
-// ReviveProtectionUntilTick=0 表示目前沒有 Server-authoritative revive protection；非 0 時
-// Client 只能以 Server tick 顯示剩餘保護時間，不得自行延長、取消或決定 gameplay protection。
+// EntityVitalsState is complete resendable combatant vitals truth.
 type EntityVitalsState struct {
 	EntityID                  world.EntityID
 	HP                        uint32
@@ -253,9 +245,9 @@ const (
 	CombatEventResurrect CombatEventResult = "resurrect"
 )
 
-// CombatEvent 描述 Server 已 resolve 的 action outcome。EntityVitalsState 仍是 HP/MP truth；
-// event 供 animation/VFX/audio 等 presentation 對齊 stable ActionInstanceID。
-// CooldownReadyTick=0 表示沒有 additive cooldown metadata；非 0 時是 Server 會執行的 ready tick。
+// CombatEvent is the Server-resolved presentation outcome. EntityVitalsState remains HP/MP truth.
+// Damage is the final mitigated damage for this instance. Blocked is true only when the Server
+// performed one eligible shield block roll and it succeeded. Clients must not reroll or recompute it.
 type CombatEvent struct {
 	ActionInstanceID  uint64
 	ActorEntityID     world.EntityID
@@ -265,6 +257,7 @@ type CombatEvent struct {
 	ImpactX           *float32
 	ImpactZ           *float32
 	Damage            uint32
+	Blocked           bool
 	CooldownReadyTick uint64
 }
 
@@ -287,9 +280,6 @@ const (
 	SiegePhaseCompleted SiegePhase = "completed"
 )
 
-// SiegeMatchState 是每個 Session 可重送的 Server-authoritative Siege view。
-// YourTeam 只描述該 recipient 的 Server-owned team assignment；Client 不可自行推導或改寫 phase/winner/owner truth。
-// Round 是 gameplay round identity；Revision 仍是 Reliable resend stamp，兩者不可互相替代。
 type SiegeMatchState struct {
 	Revision          uint64
 	Round             uint64
