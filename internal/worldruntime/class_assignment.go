@@ -13,17 +13,19 @@ import (
 )
 
 var (
-	ErrInitialClassAssignmentRequiresPersistence    = errors.New("worldruntime: initial class assignment requires durable character persistence")
+	ErrInitialClassAssignmentRequiresPersistence     = errors.New("worldruntime: initial class assignment requires durable character persistence")
 	ErrInitialClassAssignmentRequiresTrustedIdentity = errors.New("worldruntime: initial class assignment requires trusted character identity")
-	ErrInitialClassAssignmentPending                = errors.New("worldruntime: initial class assignment already pending")
-	ErrInitialClassAssignmentEquipmentIllegal       = errors.New("worldruntime: equipped item is illegal for target class")
-	ErrInitialClassAssignmentCompletionInvalid      = errors.New("worldruntime: invalid durable initial class assignment completion")
+	ErrInitialClassAssignmentPending                 = errors.New("worldruntime: initial class assignment already pending")
+	ErrInitialClassAssignmentEquipmentIllegal        = errors.New("worldruntime: equipped item is illegal for target class")
+	ErrInitialClassAssignmentCompletionInvalid       = errors.New("worldruntime: invalid durable initial class assignment completion")
 )
 
 type initialClassAssignmentCommand struct {
-	sessionID session.ID
-	ownership SessionOwnershipFence
-	target    classid.ID
+	sessionID       session.ID
+	ownership       SessionOwnershipFence
+	sequence        uint32
+	target          classid.ID
+	protocolRequest bool
 }
 
 func (initialClassAssignmentCommand) name() string { return "initial_class_assignment" }
@@ -50,71 +52,137 @@ func (r *Runtime) applyInitialClassAssignment(name string, command initialClassA
 	fail := func(err error) {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 	}
-	if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
-		fail(err)
+	if command.ownership.Valid() {
+		if err := r.characterIdentities.validateOwnership(command.sessionID, command.ownership); err != nil {
+			fail(err)
+			return
+		}
+	} else if !command.protocolRequest {
+		fail(ErrCharacterOwnershipFenceInvalid)
 		return
 	}
+
 	s, ok := r.sessions.Get(command.sessionID)
 	if !ok {
 		fail(session.ErrSessionNotFound)
 		return
 	}
+
+	if command.protocolRequest {
+		if command.sequence == 0 {
+			fail(session.ErrStaleAction)
+			return
+		}
+		if err := s.ValidateActionSequence(command.sequence); err != nil {
+			fail(err)
+			return
+		}
+		if !r.guardInitialClassSelectionFeedbackCapacity(name, s, report) {
+			return
+		}
+		// From here this valid sequence is consumed even if authoritative gameplay validation
+		// rejects the requested profession, matching other Reliable client action semantics.
+		s.MarkProcessedAction(command.sequence)
+	}
+
+	reject := func(err error) {
+		if command.protocolRequest {
+			r.rejectInitialClassSelection(name, s, command.sequence, err, report)
+			return
+		}
+		fail(err)
+	}
+
 	if !s.CharacterIdentity.Valid() || s.CharacterIdentity.Assurance != characteridentity.AssuranceTrusted {
-		fail(ErrInitialClassAssignmentRequiresTrustedIdentity)
+		reject(ErrInitialClassAssignmentRequiresTrustedIdentity)
 		return
 	}
-	if s.CharacterIdentity.ID != command.ownership.CharacterID || s.EntityID != command.ownership.EntityID {
-		fail(ErrCharacterOwnershipFenceStale)
+
+	sourceOwnership := command.ownership
+	if command.protocolRequest && !sourceOwnership.Valid() {
+		current, err := r.characterIdentities.currentOwnership(s.CharacterIdentity)
+		if err != nil {
+			reject(err)
+			return
+		}
+		if current.SessionID != s.ID || current.EntityID != s.EntityID || current.CharacterID != s.CharacterIdentity.ID {
+			reject(ErrCharacterOwnershipFenceStale)
+			return
+		}
+		sourceOwnership = current
+	}
+	if sourceOwnership.Valid() && (s.CharacterIdentity.ID != sourceOwnership.CharacterID || s.EntityID != sourceOwnership.EntityID) {
+		reject(ErrCharacterOwnershipFenceStale)
 		return
 	}
 	if command.target == "" || !classid.IsCanonical(command.target) {
-		fail(character.ErrInvalidClassAssignment)
+		reject(character.ErrInvalidClassAssignment)
 		return
 	}
 	state, ok := r.characters.State(s.EntityID)
 	if !ok {
-		fail(character.ErrCharacterNotFound)
+		reject(character.ErrCharacterNotFound)
 		return
 	}
 	if state.ClassID != "" {
-		fail(character.ErrClassAlreadyAssigned)
+		reject(character.ErrClassAlreadyAssigned)
 		return
 	}
 	if r.characterStateOutbox == nil {
-		fail(ErrInitialClassAssignmentRequiresPersistence)
+		reject(ErrInitialClassAssignmentRequiresPersistence)
 		return
 	}
 	if _, pending := r.characterStateOutbox.CompletionForCharacter(s.CharacterIdentity.ID); pending {
-		fail(ErrInitialClassAssignmentPending)
+		reject(ErrInitialClassAssignmentPending)
 		return
 	}
 	inv := r.inventories[s.CharacterIdentity.ID]
 	if !initialClassAssignmentEquipmentAllowed(inv, command.target) {
-		fail(ErrInitialClassAssignmentEquipmentIllegal)
+		reject(ErrInitialClassAssignmentEquipmentIllegal)
 		return
 	}
 
 	binding, snapshot, ok := r.captureCharacterStateSnapshot(command.sessionID, s.EntityID, report)
 	if !ok {
+		if command.protocolRequest {
+			r.sendClassMessage(s, protocolInitialClassServerRejected(command.sequence, r.authoritativeClassID(s)), report)
+		}
 		return
 	}
 	if snapshot.ClassID != "" {
-		fail(ErrInitialClassAssignmentPending)
+		reject(ErrInitialClassAssignmentPending)
 		return
 	}
 	snapshot.ClassID = command.target
-	if _, err := r.characterStateOutbox.EnqueueWithCompletion(binding, snapshot); err != nil {
+	intent, err := r.characterStateOutbox.EnqueueWithCompletion(binding, snapshot)
+	if err != nil {
 		if errors.Is(err, characterstate.ErrSaveCompletionPending) {
 			err = ErrInitialClassAssignmentPending
 		}
-		fail(err)
+		reject(err)
 		if report != nil {
 			report.Metrics.CharacterStateSaveIntentFailures++
 		}
 		return
 	}
+	if command.protocolRequest {
+		r.initialClassSelectionFeedback[intent.IntentID] = initialClassSelectionFeedback{
+			ownership:            sourceOwnership,
+			clientActionSequence: command.sequence,
+			target:               command.target,
+		}
+	}
 	if report != nil {
 		report.Metrics.CharacterStateSaveIntentsEnqueued++
+	}
+}
+
+func protocolInitialClassServerRejected(sequence uint32, classID string) protocol.InitialClassSelectionResult {
+	return protocol.InitialClassSelectionResult{
+		ClientActionSequence: sequence,
+		ClassID:              classID,
+		Outcome:              protocol.InitialClassSelectionRejected,
+		Reason:               protocol.InitialClassSelectionServerRejected,
 	}
 }
 
@@ -148,10 +216,15 @@ func (r *Runtime) applyCharacterStateSaveCompletions(report *StepReport) {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "complete_initial_class_assignment", Err: err})
 			return
 		}
+		// Release the durability reservation only after the live world state is valid. Client
+		// success is published after this succeeds, so a completion bookkeeping failure cannot
+		// produce a false committed result.
 		if err := r.characterStateOutbox.ConfirmCompletion(intent.IntentID); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "complete_initial_class_assignment", Err: err})
 			return
 		}
+		r.publishDurableInitialClassSelection(intent.IntentID, intent.Identity, intent.Snapshot.ClassID, report)
+		delete(r.initialClassSelectionFeedback, intent.IntentID)
 	}
 }
 
