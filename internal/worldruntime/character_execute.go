@@ -120,6 +120,8 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if policy, ok := classaction.ForAction(prepared.Definition.ID); ok && policy.HitResource != "" && policy.HitGain > 0 {
 			if _, err := r.characters.GainClassResource(actor.ID, policy.HitResource, policy.HitGain); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actor.ID {
+				r.sendCurrentClassResourceState(sourceSession, report)
 			}
 		}
 		report.Metrics.EntityActionsApplied++
