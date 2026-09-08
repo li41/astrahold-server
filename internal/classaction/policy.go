@@ -8,7 +8,10 @@ import (
 	"github.com/li41/astrahold-server/internal/classresource"
 )
 
-const OathguardSwordStrike = "oathguard-sword-strike"
+const (
+	OathguardSwordStrike = "oathguard-sword-strike"
+	BreakerHeavySlash    = "breaker-heavy-slash"
+)
 
 var ErrWrongClass = errors.New("classaction: action unavailable for class")
 
@@ -22,6 +25,8 @@ func ForAction(actionID string) (Policy, bool) {
 	switch actionID {
 	case OathguardSwordStrike:
 		return Policy{RequiredClass: classid.Oathguard, HitResource: classresource.Resolve, HitGain: 8}, true
+	case BreakerHeavySlash:
+		return Policy{RequiredClass: classid.Breaker, HitResource: classresource.Momentum, HitGain: 10}, true
 	default:
 		return Policy{}, false
 	}
