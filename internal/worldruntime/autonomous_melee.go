@@ -9,6 +9,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
+	threatpkg "github.com/li41/astrahold-server/internal/threat"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -40,6 +41,7 @@ type autonomousMeleeAgent struct {
 	targetID      world.EntityID
 	returningHome bool
 	patrolIndex   int
+	threat        *threatpkg.Table
 }
 
 func WithAutonomousMeleeAgent(config AutonomousMeleeAgentConfig) Option {
@@ -53,7 +55,7 @@ func WithAutonomousMeleeAgent(config AutonomousMeleeAgentConfig) Option {
 				panic(ErrInvalidAutonomousMeleeAgent)
 			}
 		}
-		r.autonomousMeleeAgents = append(r.autonomousMeleeAgents, autonomousMeleeAgent{config: config})
+		r.autonomousMeleeAgents = append(r.autonomousMeleeAgents, autonomousMeleeAgent{config: config, threat: threatpkg.New()})
 		sort.Slice(r.autonomousMeleeAgents, func(i, j int) bool {
 			return r.autonomousMeleeAgents[i].config.EntityID < r.autonomousMeleeAgents[j].config.EntityID
 		})
@@ -138,13 +140,23 @@ func (r *Runtime) stepAutonomousMeleeAgent(agent *autonomousMeleeAgent, tick uin
 	var target world.EntityState
 	var valid bool
 	if agent.targetID != 0 {
-		target, valid = r.autonomousMeleeTarget(actor, agent.config, agent.targetID, tick)
+		// Once actual-damage threat exists it owns encounter target priority. If the top entry becomes
+		// invalid, HighestValid prunes it and can fall back to the next threatened player before evade.
+		target, valid = r.highestAutonomousMeleeThreatTarget(agent, actor, tick)
+		if !valid {
+			target, valid = r.autonomousMeleeTarget(actor, agent.config, agent.targetID, tick)
+		}
 		if !valid {
 			r.beginAutonomousMeleeReturnHome(agent, actor, report)
 			return
 		}
+		agent.targetID = target.ID
 	} else {
-		target, valid = r.acquireAutonomousMeleeTarget(actor, agent.config, tick)
+		// Damage can establish threat before proximity acquisition (for example a ranged opener).
+		target, valid = r.highestAutonomousMeleeThreatTarget(agent, actor, tick)
+		if !valid {
+			target, valid = r.acquireAutonomousMeleeTarget(actor, agent.config, tick)
+		}
 		if valid {
 			agent.targetID = target.ID
 		} else {
@@ -223,8 +235,11 @@ func (r *Runtime) beginAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, ac
 	agent.targetID = 0
 	agent.returningHome = true
 	agent.patrolIndex = 0
-	// Evade begins a fresh encounter. Damage from the failed pull must not improve loot odds after
-	// the monster resets and is engaged again.
+	if agent.threat != nil {
+		agent.threat.Clear()
+	}
+	// Evade begins a fresh encounter. Damage from the failed pull must not survive into the next
+	// attempt for either loot probability or target selection.
 	r.resetMonsterLootContributions(actor.ID)
 	r.stepAutonomousMeleeReturnHome(agent, actor, report)
 }
@@ -250,6 +265,9 @@ func resetAutonomousMeleeAgentState(agent *autonomousMeleeAgent) {
 	agent.targetID = 0
 	agent.returningHome = false
 	agent.patrolIndex = 0
+	if agent.threat != nil {
+		agent.threat.Clear()
+	}
 }
 
 func (r *Runtime) restoreAutonomousMeleeVitalsAtHome(entityID world.EntityID, report *StepReport) {
@@ -265,7 +283,7 @@ func (r *Runtime) restoreAutonomousMeleeVitalsAtHome(entityID world.EntityID, re
 }
 
 func (r *Runtime) autonomousMeleeTarget(actor world.EntityState, config AutonomousMeleeAgentConfig, targetID world.EntityID, tick uint64) (world.EntityState, bool) {
-	if targetID == 0 {
+	if targetID == 0 || !r.activePlayerSession(targetID) {
 		return world.EntityState{}, false
 	}
 	target, ok := r.world.Entity(targetID)
