@@ -34,34 +34,24 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 		}
 		r.emitActionStarted(actor.ID, prepared, tick, report)
 		r.combat.Commit(prepared, tick, delta)
-		if prepared.Definition.Effect == combat.EffectDamage {
-			r.cancelReviveProtectionByDamageAction(actor.ID, report)
-		}
+		if prepared.Definition.Effect == combat.EffectDamage { r.cancelReviveProtectionByDamageAction(actor.ID, report) }
 		r.siege.ObserveGateState(gateState)
 		r.bumpDynamicRevision()
 	case combat.TargetEntity:
-		if r.applyEntityAction(name, sourceSessionID, clientActionSequence, actor, prepared, prepared, tick, cooldownReadyTick, report) {
+		if r.applyEntityAction(name, sourceSessionID, clientActionSequence, actor, prepared, prepared, tick, delta, cooldownReadyTick, report) {
 			r.faceAcceptedClientEntityAction(actor, prepared, sourceSessionID, report)
 			r.combat.Commit(prepared, tick, delta)
-			if prepared.Definition.Effect == combat.EffectDamage {
-				r.cancelReviveProtectionByDamageAction(actor.ID, report)
-			}
+			if prepared.Definition.Effect == combat.EffectDamage { r.cancelReviveProtectionByDamageAction(actor.ID, report) }
 		}
 	case combat.TargetPoint:
 		if r.applyPointAction(name, sourceSessionID, clientActionSequence, actor, prepared, tick, cooldownReadyTick, report) {
 			r.combat.Commit(prepared, tick, delta)
-			if prepared.Definition.Effect == combat.EffectDamage {
-				r.cancelReviveProtectionByDamageAction(actor.ID, report)
-			}
+			if prepared.Definition.Effect == combat.EffectDamage { r.cancelReviveProtectionByDamageAction(actor.ID, report) }
 		}
 	default:
 		r.rejectClientAction(name, sourceSessionID, clientActionSequence, actor.ID, prepared.Definition.ID, protocol.ActionTargetKind(prepared.Target.Kind), combat.ErrTargetNotAllowed, tick, report)
 	}
 }
 
-func isExpectedCombatRejection(err error) bool {
-	return errors.Is(err, combat.ErrUnknownAction) || errors.Is(err, combat.ErrTargetNotAllowed) || errors.Is(err, combat.ErrActionCooldown)
-}
-func isExpectedGateRejection(err error) bool {
-	return errors.Is(err, siege.ErrUnknownGate) || errors.Is(err, siege.ErrGateDestroyed) || errors.Is(err, siege.ErrGateWrongLayer) || errors.Is(err, siege.ErrGateOutOfRange) || errors.Is(err, siege.ErrGateNoLineOfSight)
-}
+func isExpectedCombatRejection(err error) bool { return errors.Is(err, combat.ErrUnknownAction) || errors.Is(err, combat.ErrTargetNotAllowed) || errors.Is(err, combat.ErrActionCooldown) }
+func isExpectedGateRejection(err error) bool { return errors.Is(err, siege.ErrUnknownGate) || errors.Is(err, siege.ErrGateDestroyed) || errors.Is(err, siege.ErrGateWrongLayer) || errors.Is(err, siege.ErrGateOutOfRange) || errors.Is(err, siege.ErrGateNoLineOfSight) }
