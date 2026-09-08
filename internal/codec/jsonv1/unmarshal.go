@@ -59,6 +59,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in characterClassState
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
 		return protocol.CharacterClassState{ClassID: in.ClassID}, nil
+	case protocol.MessageCharacterClassResourceState:
+		var in characterClassResourceState
+		if err := decodeStrict(data, &in); err != nil { return nil, err }
+		return protocol.CharacterClassResourceState{EntityID: world.EntityID(in.EntityID), ResourceID: in.ResourceID, Current: in.Current, Max: in.Max}, nil
 	case protocol.MessageInitialClassSelectionResult:
 		var in initialClassSelectionResult
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
