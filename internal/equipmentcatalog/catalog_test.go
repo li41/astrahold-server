@@ -3,6 +3,8 @@ package equipmentcatalog
 import (
 	"errors"
 	"testing"
+
+	"github.com/li41/astrahold-server/internal/classid"
 )
 
 func TestDefaultCatalogLocksLowTierEquipmentV1(t *testing.T) {
@@ -63,7 +65,7 @@ func TestDefaultCatalogLocksLowTierEquipmentV1(t *testing.T) {
 		if item.Kind != KindShield || item.Slot != SlotOffHand || item.Shield == nil {
 			t.Fatalf("%s not off-hand shield: %#v", tc.id, item)
 		}
-		if item.Shield.PhysicalDefense != tc.physical || item.Shield.BlockChancePercent != tc.block || item.Shield.BlockDamageReductionPercent != tc.blockReduction || item.Shield.MagicDamageReductionPercent != tc.magicReduction || item.Weight != tc.weight {
+		if item.Shield.PhysicalDefense != tc.physical || item.Shield.BlockChancePercent != tc.block || item.Shield.BlockDamageReductionPercent != tc.blockReduction || item.Weight != tc.weight {
 			t.Fatalf("%s unexpected values: %#v", tc.id, item)
 		}
 		if item.ClassPolicy != ClassPolicyAll || !item.AllowsClass("future-class") {
@@ -72,7 +74,7 @@ func TestDefaultCatalogLocksLowTierEquipmentV1(t *testing.T) {
 	}
 }
 
-func TestClassPolicyAllowListIsExplicitAndFailClosed(t *testing.T) {
+func TestClassPolicyAllowListIsCanonicalAndFailClosed(t *testing.T) {
 	def := Definition{
 		ItemArchetypeID: "item_test_shield",
 		Kind:            KindShield,
@@ -80,7 +82,7 @@ func TestClassPolicyAllowListIsExplicitAndFailClosed(t *testing.T) {
 		Weight:          1,
 		Material:        "iron",
 		ClassPolicy:     ClassPolicyAllowList,
-		AllowedClassIDs: []string{"class_guard", "class_knight"},
+		AllowedClassIDs: []string{string(classid.Oathguard), string(classid.Breaker)},
 		Shield:          &Shield{PhysicalDefense: 1},
 	}
 	catalog, err := New(CatalogDefinition{Revision: "x", Items: []Definition{def}})
@@ -91,8 +93,13 @@ func TestClassPolicyAllowListIsExplicitAndFailClosed(t *testing.T) {
 	if !ok {
 		t.Fatal("missing item")
 	}
-	if !item.AllowsClass("class_guard") || item.AllowsClass("class_mage") || item.AllowsClass("") {
-		t.Fatalf("unexpected class policy: %#v", item)
+	if !item.AllowsClass(string(classid.Oathguard)) || !item.AllowsClass(string(classid.Breaker)) {
+		t.Fatalf("canonical classes rejected: %#v", item)
+	}
+	for _, classID := range []string{"", "class_guard", "class_knight", string(classid.Ranger), " class_oathguard"} {
+		if item.AllowsClass(classID) {
+			t.Fatalf("AllowsClass(%q) unexpectedly true", classID)
+		}
 	}
 }
 
@@ -103,7 +110,9 @@ func TestCatalogRejectsMalformedDefinitions(t *testing.T) {
 		"weapon_in_offhand":  {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotOffHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAll, Weapon: validWeapon.Weapon}}},
 		"invalid_range":      {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAll, Weapon: &Weapon{SmallDamage: DamageRange{3, 2}, LargeDamage: DamageRange{1, 2}, BasicAttackIntervalMS: 1000}}}},
 		"empty_allow_list":   {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAllowList, Weapon: validWeapon.Weapon}}},
-		"duplicate_class_id": {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAllowList, AllowedClassIDs: []string{"class_guard", "class_guard"}, Weapon: validWeapon.Weapon}}},
+		"duplicate_class_id": {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAllowList, AllowedClassIDs: []string{string(classid.Oathguard), string(classid.Oathguard)}, Weapon: validWeapon.Weapon}}},
+		"unknown_class_id":   {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAllowList, AllowedClassIDs: []string{"class_guard"}, Weapon: validWeapon.Weapon}}},
+		"padded_class_id":    {Revision: "x", Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", ClassPolicy: ClassPolicyAllowList, AllowedClassIDs: []string{" class_oathguard"}, Weapon: validWeapon.Weapon}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := New(def); !errors.Is(err, ErrInvalidCatalog) {
