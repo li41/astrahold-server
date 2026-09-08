@@ -6,6 +6,7 @@ import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
+	"github.com/li41/astrahold-server/internal/playerarchetype"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -33,6 +34,9 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 
 	factory := newWorldPlayerFactory(spawn, loadedWorld.Definition.Agent)
 	spec := factory(1, 1)
+	if spec.Entity.ArchetypeID != playerarchetype.DefaultID {
+		t.Fatalf("player archetype=%q; want %q", spec.Entity.ArchetypeID, playerarchetype.DefaultID)
+	}
 	if spec.Speed != defaultPlayerGroundSpeedMetersPerSecond {
 		t.Fatalf("player speed=%g; want authoritative normal ground speed=%g", spec.Speed, defaultPlayerGroundSpeedMetersPerSecond)
 	}
