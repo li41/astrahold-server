@@ -58,7 +58,7 @@ func TestShadowbladeDualBladeBuildsFlawFromSideAndRespectsBuildICD(t *testing.T)
 }
 
 func TestShadowbladeDualBladeFrontHitDamagesWithoutFlaw(t *testing.T) {
-	rt, s, conn, targetID := newShadowbladeDualBladeRuntime(t, world.Position{Z: 3, Layer: 0}, 0)
+	rt, s, conn, targetID := newShadowbladeDualBladeRuntime(t, world.Position{Z: -3, Layer: 0}, 0)
 	if _, err := rt.characters.AssignInitialClass(s.EntityID, classid.Shadowblade); err != nil { t.Fatal(err) }
 	drainReliable(conn)
 	if err := rt.EnqueueUseAction(s.ID, 1, protocol.ClientUseAction{ActionID: classaction.ShadowbladeDualBladeStrike, TargetKind: protocol.ActionTargetEntity, TargetID: "9603"}); err != nil { t.Fatal(err) }
