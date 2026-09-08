@@ -34,7 +34,7 @@ func TestWeaponBasicAttackHitRollBoundary(t *testing.T) {
 	if weaponBasicAttackHits(modifier, 88) {
 		t.Fatal("roll 88 should miss at 88%")
 	}
-	if !weaponBasicAttackHits(modifier, 100) {
-		t.Fatal("roll uses bounded modulo domain; 100 should map to 0 and hit")
+	if weaponBasicAttackHits(modifier, 99) {
+		t.Fatal("roll 99 should miss at 88%")
 	}
 }
