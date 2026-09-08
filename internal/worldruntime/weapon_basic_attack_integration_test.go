@@ -18,6 +18,10 @@ import (
 )
 
 func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testing.T) {
+	oldAccuracyRoll := weaponAccuracyRoll
+	weaponAccuracyRoll = func() uint32 { return 0 }
+	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
+
 	definition := gameplayworld.Definition{
 		SchemaVersion: gameplayworld.SchemaVersion,
 		WorldID:       "low-tier-weapon-test",
@@ -88,8 +92,8 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 		t.Fatal(err)
 	}
 	if err := rt.EnqueueEquipmentCommand(s.ID, 1, protocol.ClientEquipmentCommand{
-		Operation: protocol.EquipmentOperationEquip,
-		Slot: protocol.EquipmentSlotMainHand,
+		Operation:       protocol.EquipmentOperationEquip,
+		Slot:            protocol.EquipmentSlotMainHand,
 		ItemArchetypeID: "item_militia_battle_axe",
 	}); err != nil {
 		t.Fatal(err)
