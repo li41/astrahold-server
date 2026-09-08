@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/li41/astrahold-server/internal/classid"
 )
 
 //go:embed default.json
@@ -144,16 +146,19 @@ func normalizeClassPolicy(item *Definition) bool {
 			return false
 		}
 		seen := make(map[string]struct{}, len(item.AllowedClassIDs))
-		for i, classID := range item.AllowedClassIDs {
-			classID = strings.TrimSpace(classID)
-			if classID == "" {
+		for _, raw := range item.AllowedClassIDs {
+			if raw != strings.TrimSpace(raw) {
 				return false
 			}
-			if _, exists := seen[classID]; exists {
+			id, ok := classid.Parse(raw)
+			if !ok {
 				return false
 			}
-			seen[classID] = struct{}{}
-			item.AllowedClassIDs[i] = classID
+			canonical := string(id)
+			if _, exists := seen[canonical]; exists {
+				return false
+			}
+			seen[canonical] = struct{}{}
 		}
 		return true
 	default:
@@ -201,17 +206,17 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 	return item, true
 }
 
-func (d Definition) AllowsClass(classID string) bool {
+func (d Definition) AllowsClass(raw string) bool {
 	switch effectiveClassPolicy(d.ClassPolicy) {
 	case ClassPolicyAll:
 		return true
 	case ClassPolicyAllowList:
-		classID = strings.TrimSpace(classID)
-		if classID == "" {
+		id, ok := classid.Parse(raw)
+		if !ok {
 			return false
 		}
 		for _, allowed := range d.AllowedClassIDs {
-			if allowed == classID {
+			if allowed == string(id) {
 				return true
 			}
 		}
