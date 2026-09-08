@@ -70,12 +70,21 @@ func (r *Runtime) applyHitTargetResource(name string, sourceSessionID session.ID
 	if policy.RequireSideOrBack && !isSideOrBackAttackPosition(actor, target) {
 		return
 	}
-	if delta <= 0 || policy.HitTargetICDSeconds <= 0 {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: targetresource.ErrInvalidState})
-		return
+	var (
+		state   targetresource.State
+		changed bool
+		err     error
+	)
+	if policy.HitTargetPreserveReadyTick {
+		state, changed, err = r.characters.GainTargetResourcePreservingReadyTick(actor.ID, target.ID, policy.HitTargetResource, policy.HitTargetGain, policy.HitTargetMax)
+	} else {
+		if delta <= 0 || policy.HitTargetICDSeconds <= 0 {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: targetresource.ErrInvalidState})
+			return
+		}
+		cooldownTicks := uint64(math.Ceil(policy.HitTargetICDSeconds / delta.Seconds()))
+		state, changed, err = r.characters.GainTargetResource(actor.ID, target.ID, policy.HitTargetResource, policy.HitTargetGain, policy.HitTargetMax, tick, tick+cooldownTicks)
 	}
-	cooldownTicks := uint64(math.Ceil(policy.HitTargetICDSeconds / delta.Seconds()))
-	state, changed, err := r.characters.GainTargetResource(actor.ID, target.ID, policy.HitTargetResource, policy.HitTargetGain, policy.HitTargetMax, tick, tick+cooldownTicks)
 	if err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
 		return

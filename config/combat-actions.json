@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-classes-v1-011",
+  "revision": "vertical-slice-classes-v1-012",
   "actions": [
     {
       "id": "basic-attack",
@@ -108,6 +108,16 @@
       "damage_type": "physical",
       "blockable": true,
       "cooldown_seconds": 0.95
+    },
+    {
+      "id": "shadowblade-rift-stab",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 4.5,
+      "base_damage": 135,
+      "damage_type": "physical",
+      "blockable": true,
+      "cooldown_seconds": 7.0
     },
     {
       "id": "shadowblade-flaw-execute",

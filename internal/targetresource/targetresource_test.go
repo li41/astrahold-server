@@ -24,6 +24,43 @@ func TestTryGainIsSourceTargetScopedAndRespectsICD(t *testing.T) {
 	if state.Current != 2 { t.Fatalf("other source mutated original=%+v", state) }
 }
 
+func TestGainPreservingReadyTickAddsDuringAnotherBuildICD(t *testing.T) {
+	s := NewStore()
+	key := Key{SourceEntityID: 10, TargetEntityID: 20, ResourceID: Flaw}
+	state, changed, err := s.TryGain(key, 1, 3, 5, 55)
+	if err != nil || !changed || state.Current != 1 || state.ReadyTick != 55 {
+		t.Fatalf("seed state=%+v changed=%v err=%v", state, changed, err)
+	}
+	state, changed, err = s.GainPreservingReadyTick(key, 1, 3)
+	if err != nil || !changed || state.Current != 2 || state.ReadyTick != 55 {
+		t.Fatalf("direct gain state=%+v changed=%v err=%v", state, changed, err)
+	}
+	state, changed, err = s.TryGain(key, 1, 3, 54, 104)
+	if err != nil || changed || state.Current != 2 || state.ReadyTick != 55 {
+		t.Fatalf("direct gain bypassed prior ICD state=%+v changed=%v err=%v", state, changed, err)
+	}
+	state, changed, err = s.TryGain(key, 1, 3, 55, 105)
+	if err != nil || !changed || state.Current != 3 || state.ReadyTick != 105 {
+		t.Fatalf("ready build state=%+v changed=%v err=%v", state, changed, err)
+	}
+}
+
+func TestGainPreservingReadyTickCreatesAndClampsWithoutSyntheticICD(t *testing.T) {
+	s := NewStore()
+	key := Key{SourceEntityID: 10, TargetEntityID: 20, ResourceID: Flaw}
+	state, changed, err := s.GainPreservingReadyTick(key, 9, 3)
+	if err != nil || !changed || state.Current != 3 || state.Max != 3 || state.ReadyTick != 0 {
+		t.Fatalf("clamped state=%+v changed=%v err=%v", state, changed, err)
+	}
+	state, changed, err = s.GainPreservingReadyTick(key, 1, 3)
+	if err != nil || changed || state.Current != 3 || state.ReadyTick != 0 {
+		t.Fatalf("full state=%+v changed=%v err=%v", state, changed, err)
+	}
+	if _, _, err := s.GainPreservingReadyTick(key, 1, 4); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("max mismatch err=%v", err)
+	}
+}
+
 func TestSpendRetainsReadyTickAtZeroAndRejectsInsufficientResource(t *testing.T) {
 	s := NewStore()
 	key := Key{SourceEntityID: 10, TargetEntityID: 20, ResourceID: Flaw}

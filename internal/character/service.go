@@ -81,7 +81,7 @@ func validateState(state State) error {
 	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 { return ErrInvalidState }
 	if state.ClassResourceProgress > 0 {
 		definition, ok := classresource.PrimaryForClass(state.ClassID)
-		if !ok || definition.ID != state.ClassResourceID || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource { return ErrInvalidState }
+		if !ok || definition.ID != state.ClassResourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource { return ErrInvalidState }
 	}
 	if state.Defeated { if state.HP != 0 { return ErrInvalidState } } else if state.HP == 0 { return ErrInvalidState }
 	return nil
@@ -122,6 +122,10 @@ func (s *Service) GainClassResourceProgress(id world.EntityID, resourceID classr
 func (s *Service) GainTargetResource(sourceID, targetID world.EntityID, resourceID targetresource.ID, amount, max uint32, tick, nextReadyTick uint64) (targetresource.State, bool, error) {
 	source, ok := s.states[sourceID]; if !ok { return targetresource.State{}, false, ErrCharacterNotFound }; if source.Defeated { return targetresource.State{}, false, ErrCharacterDefeated }
 	return s.targetResources.TryGain(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}, amount, max, tick, nextReadyTick)
+}
+func (s *Service) GainTargetResourcePreservingReadyTick(sourceID, targetID world.EntityID, resourceID targetresource.ID, amount, max uint32) (targetresource.State, bool, error) {
+	source, ok := s.states[sourceID]; if !ok { return targetresource.State{}, false, ErrCharacterNotFound }; if source.Defeated { return targetresource.State{}, false, ErrCharacterDefeated }
+	return s.targetResources.GainPreservingReadyTick(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}, amount, max)
 }
 func (s *Service) SpendTargetResource(sourceID, targetID world.EntityID, resourceID targetresource.ID, amount uint32) (targetresource.State, error) {
 	source, ok := s.states[sourceID]; if !ok { return targetresource.State{}, ErrCharacterNotFound }; if source.Defeated { return targetresource.State{}, ErrCharacterDefeated }
