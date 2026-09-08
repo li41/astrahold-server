@@ -18,7 +18,9 @@ var (
 
 func mustDefaultEquipmentCatalog() *equipmentcatalog.Catalog {
 	catalog, err := equipmentcatalog.Default()
-	if err != nil { panic(err) }
+	if err != nil {
+		panic(err)
+	}
 	return catalog
 }
 
@@ -30,30 +32,53 @@ func validateEquipmentIntent(command protocol.ClientEquipmentCommand) error {
 	}
 	switch command.Operation {
 	case protocol.EquipmentOperationEquip:
-		if strings.TrimSpace(command.ItemArchetypeID) == "" { return errors.New("worldruntime: invalid equipment item") }
+		if strings.TrimSpace(command.ItemArchetypeID) == "" {
+			return errors.New("worldruntime: invalid equipment item")
+		}
 	case protocol.EquipmentOperationUnequip:
-		if command.ItemArchetypeID != "" { return errors.New("worldruntime: unequip must not specify an item") }
+		if command.ItemArchetypeID != "" {
+			return errors.New("worldruntime: unequip must not specify an item")
+		}
 	default:
 		return errors.New("worldruntime: invalid equipment operation")
 	}
 	return nil
 }
 
+func equipmentDefinitionAllowed(definition equipmentcatalog.Definition, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot, classID string) bool {
+	return definition.Kind == kind && definition.Slot == slot && definition.AllowsClass(classID)
+}
+
 func mainHandItemAllowed(itemArchetypeID string) bool {
 	itemArchetypeID = strings.TrimSpace(itemArchetypeID)
-	if itemArchetypeID == trainingBladeArchetypeID { return true }
+	if itemArchetypeID == trainingBladeArchetypeID {
+		return true
+	}
 	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID)
-	return ok && definition.Kind == equipmentcatalog.KindWeapon && definition.Slot == equipmentcatalog.SlotMainHand
+	if !ok {
+		return false
+	}
+	// Astrahold does not yet author a durable ClassID on character state. Current low-tier items
+	// explicitly use ClassPolicyAll. Future allow-list equipment therefore fails closed until the
+	// authoritative character ClassID is wired into this owner path.
+	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand, "")
 }
 
 func offHandItemAllowed(itemArchetypeID string) bool {
 	definition, ok := defaultEquipmentCatalog.Resolve(strings.TrimSpace(itemArchetypeID))
-	return ok && definition.Kind == equipmentcatalog.KindShield && definition.Slot == equipmentcatalog.SlotOffHand
+	if !ok {
+		return false
+	}
+	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand, "")
 }
 
 func (r *Runtime) EnqueueEquipmentCommand(id session.ID, sequence uint32, equipment protocol.ClientEquipmentCommand) error {
-	if id == 0 || sequence == 0 { return errors.New("worldruntime: invalid equipment intent") }
-	if err := validateEquipmentIntent(equipment); err != nil { return err }
+	if id == 0 || sequence == 0 {
+		return errors.New("worldruntime: invalid equipment intent")
+	}
+	if err := validateEquipmentIntent(equipment); err != nil {
+		return err
+	}
 	payload := equipment
 	return r.queue.tryPush(equipmentCommand{sessionID: id, sequence: sequence, equipment: &payload})
 }
@@ -91,14 +116,22 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 	case protocol.EquipmentSlotMainHand:
 		switch request.Operation {
 		case protocol.EquipmentOperationEquip:
-			if !mainHandItemAllowed(request.ItemArchetypeID) { err = ErrEquipmentItemNotAllowed } else { err = inv.EquipMainHand(request.ItemArchetypeID) }
+			if !mainHandItemAllowed(request.ItemArchetypeID) {
+				err = ErrEquipmentItemNotAllowed
+			} else {
+				err = inv.EquipMainHand(request.ItemArchetypeID)
+			}
 		case protocol.EquipmentOperationUnequip:
 			_, err = inv.UnequipMainHand()
 		}
 	case protocol.EquipmentSlotOffHand:
 		switch request.Operation {
 		case protocol.EquipmentOperationEquip:
-			if !offHandItemAllowed(request.ItemArchetypeID) { err = ErrEquipmentItemNotAllowed } else { err = inv.EquipOffHand(request.ItemArchetypeID) }
+			if !offHandItemAllowed(request.ItemArchetypeID) {
+				err = ErrEquipmentItemNotAllowed
+			} else {
+				err = inv.EquipOffHand(request.ItemArchetypeID)
+			}
 		case protocol.EquipmentOperationUnequip:
 			_, err = inv.UnequipOffHand()
 		}
