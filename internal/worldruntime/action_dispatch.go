@@ -44,7 +44,7 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 			if prepared.Definition.Effect == combat.EffectDamage { r.cancelReviveProtectionByDamageAction(actor.ID, report) }
 		}
 	case combat.TargetPoint:
-		if r.applyPointAction(name, sourceSessionID, clientActionSequence, actor, prepared, tick, cooldownReadyTick, report) {
+		if r.applyPointAction(name, sourceSessionID, clientActionSequence, actor, prepared, tick, delta, cooldownReadyTick, report) {
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage { r.cancelReviveProtectionByDamageAction(actor.ID, report) }
 		}
