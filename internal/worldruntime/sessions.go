@@ -93,7 +93,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 
-	entity := request.Entity
+	entity := canonicalizeJoinEntity(request.Entity)
 	var restoredState *character.State
 	var defeatedRestore *preparedDefeatedRestore
 	var restoredInventory *inventory.Inventory
