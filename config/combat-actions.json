@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-classes-v1-009",
+  "revision": "vertical-slice-classes-v1-010",
   "actions": [
     {
       "id": "basic-attack",
@@ -21,6 +21,15 @@
       "damage_type": "physical",
       "blockable": true,
       "cooldown_seconds": 1.1
+    },
+    {
+      "id": "oathguard-fortify",
+      "effect": "self_mitigation",
+      "targets": ["entity"],
+      "range": 0.1,
+      "self_damage_reduction_percent": 45,
+      "duration_seconds": 3.0,
+      "cooldown_seconds": 20.0
     },
     {
       "id": "breaker-heavy-slash",
