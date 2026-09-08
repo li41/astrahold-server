@@ -16,6 +16,10 @@ import (
 // startPrepared preserves the accepted target spec used for ActionStarted. Point actions may resolve
 // to an entity for HP mutation while their presentation target must remain the original point.
 func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, startPrepared combat.PreparedAction, tick uint64, delta time.Duration, cooldownReadyTick uint64, report *StepReport) bool {
+	if prepared.Definition.Effect == combat.EffectSelfMitigation {
+		return r.applySelfMitigationAction(name, sessionID, clientActionSequence, actor, prepared, startPrepared, tick, report)
+	}
+
 	targetID, err := r.validateEntityTarget(actor, prepared)
 	if err != nil {
 		if errors.Is(err, ErrDynamicWorldUnavailable) {
@@ -89,7 +93,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			DamageType:                   prepared.Damage.Type,
 			Blockable:                    prepared.Damage.Blockable,
 			PhysicalDefenseIgnorePercent: prepared.Damage.PhysicalDefenseIgnorePercent,
-		})
+		}, tick)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
@@ -116,6 +120,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if state.Defeated {
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}) }
 			if target.Kind == world.EntityPlayer { r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report) }
+			if r.combat != nil { r.combat.ClearSelfMitigation(targetID) }
 			r.clearTargetResourcesForEntity(targetID, report)
 		}
 		r.markEntityVitalsDirty(targetID)
