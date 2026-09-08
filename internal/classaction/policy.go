@@ -10,15 +10,40 @@ import (
 )
 
 const (
-	OathguardSwordStrike      = "oathguard-sword-strike"
-	BreakerHeavySlash         = "breaker-heavy-slash"
-	RangerHuntingShot         = "ranger-hunting-shot"
-	StarfireFireBolt          = "starfire-fire-bolt"
-	OathhealerOathlightStrike = "oathhealer-oathlight-strike"
+	OathguardSwordStrike       = "oathguard-sword-strike"
+	BreakerHeavySlash          = "breaker-heavy-slash"
+	RangerHuntingShot          = "ranger-hunting-shot"
+	StarfireFireBolt           = "starfire-fire-bolt"
+	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
 	ShadowbladeDualBladeStrike = "shadowblade-dual-blade-strike"
+	ShadowbladeFlawExecute     = "shadowblade-flaw-execute"
 )
 
 var ErrWrongClass = errors.New("classaction: action unavailable for class")
+
+type TargetResourceSpendTier struct {
+	Amount uint32
+	Damage uint32
+}
+
+type TargetResourceSpendPolicy struct {
+	ResourceID targetresource.ID
+	Tiers      []TargetResourceSpendTier
+}
+
+func (p TargetResourceSpendPolicy) Resolve(current uint32) (amount, damage uint32, ok bool) {
+	if p.ResourceID == "" || current == 0 {
+		return 0, 0, false
+	}
+	for _, tier := range p.Tiers {
+		if tier.Amount == 0 || tier.Damage == 0 || tier.Amount > current || tier.Amount <= amount {
+			continue
+		}
+		amount = tier.Amount
+		damage = tier.Damage
+	}
+	return amount, damage, amount > 0
+}
 
 type Policy struct {
 	RequiredClass       classid.ID
@@ -33,6 +58,7 @@ type Policy struct {
 	HitTargetMax        uint32
 	HitTargetICDSeconds float64
 	RequireSideOrBack   bool
+	TargetSpend         TargetResourceSpendPolicy
 }
 
 func ForAction(actionID string) (Policy, bool) {
@@ -49,6 +75,18 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Oathhealer, HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
 	case ShadowbladeDualBladeStrike:
 		return Policy{RequiredClass: classid.Shadowblade, HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetICDSeconds: 2.5, RequireSideOrBack: true}, true
+	case ShadowbladeFlawExecute:
+		return Policy{
+			RequiredClass: classid.Shadowblade,
+			TargetSpend: TargetResourceSpendPolicy{
+				ResourceID: targetresource.Flaw,
+				Tiers: []TargetResourceSpendTier{
+					{Amount: 1, Damage: 140},
+					{Amount: 2, Damage: 220},
+					{Amount: 3, Damage: 300},
+				},
+			},
+		}, true
 	default:
 		return Policy{}, false
 	}

@@ -12,7 +12,10 @@ type ID string
 
 const Flaw ID = "flaw"
 
-var ErrInvalidState = errors.New("targetresource: invalid state")
+var (
+	ErrInvalidState         = errors.New("targetresource: invalid state")
+	ErrInsufficientResource = errors.New("targetresource: insufficient resource")
+)
 
 type Key struct {
 	SourceEntityID world.EntityID
@@ -62,6 +65,21 @@ func (s *Store) TryGain(key Key, amount, max uint32, tick, nextReadyTick uint64)
 	state.ReadyTick = nextReadyTick
 	s.states[key] = state
 	return state, true, nil
+}
+
+// Spend consumes an exact amount without resetting the Server-owned build-ready tick. A zero-current
+// state intentionally remains in the store so spending cannot bypass an already-running build ICD.
+func (s *Store) Spend(key Key, amount uint32) (State, error) {
+	if s == nil || key.SourceEntityID == 0 || key.TargetEntityID == 0 || key.SourceEntityID == key.TargetEntityID || key.ResourceID == "" || amount == 0 {
+		return State{}, ErrInvalidState
+	}
+	state, exists := s.states[key]
+	if !exists || state.Current < amount {
+		return state, ErrInsufficientResource
+	}
+	state.Current -= amount
+	s.states[key] = state
+	return state, nil
 }
 
 // ClearEntity removes every resource where entity is either source or target and returns the removed
