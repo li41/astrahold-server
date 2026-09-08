@@ -103,7 +103,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			return
 		}
 		if request.Restore.Inventory.Initialized {
-			restoredInventory, err = restoreCharacterInventory(r.config.InventoryMaxStacks, request.Restore.Inventory)
+			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.ClassID)
 			if err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 				return
@@ -112,6 +112,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		entity.Transform = request.Restore.Transform
 		state := character.State{
 			EntityID: request.Entity.ID,
+			ClassID:  request.Restore.ClassID,
 			HP:       request.Restore.HP,
 			MaxHP:    request.Restore.MaxHP,
 			MP:       request.Restore.MP,
@@ -246,8 +247,6 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 func (r *Runtime) applyTeleport(name string, c teleportCommand, report *StepReport) {
 	if err := r.world.Teleport(c.entityID, c.position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
 }
-func (r *Runtime) applyTeleportBatch(name string, c teleportBatchCommand, report *StepReport) {
-	for _, request := range c.requests {
-		if err := r.world.Teleport(request.EntityID, request.Position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
-	}
+func (r *Runtime) applyTeleportBatch(name string, c teleportCommand, report *StepReport) {
+	if err := r.world.Teleport(c.entityID, c.position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
 }
