@@ -10,9 +10,10 @@ import (
 type ID string
 
 const (
-	Empty    ID = ""
-	Resolve  ID = "resolve"
-	Momentum ID = "momentum"
+	Empty        ID = ""
+	Resolve      ID = "resolve"
+	Momentum     ID = "momentum"
+	HuntMomentum ID = "hunt_momentum"
 )
 
 var ErrResourceMismatch = errors.New("classresource: resource mismatch")
@@ -30,6 +31,8 @@ func PrimaryForClass(id classid.ID) (Definition, bool) {
 		return Definition{ID: Resolve, Max: 100}, true
 	case classid.Breaker:
 		return Definition{ID: Momentum, Max: 100}, true
+	case classid.Ranger:
+		return Definition{ID: HuntMomentum, Max: 100}, true
 	default:
 		return Definition{}, false
 	}

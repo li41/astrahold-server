@@ -45,20 +45,23 @@ func TestInitialClassSelectionCompletionBackpressureRetriesWithoutReapplyingPers
 		t.Fatalf("durable intent remained pending after completion=%#v", got)
 	}
 	queued := rt.pendingClassMessages[fence.SessionID]
-	if len(queued) != 2 {
-		t.Fatalf("pending class feedback=%#v want state+result", queued)
+	if len(queued) != 3 {
+		t.Fatalf("pending class feedback=%#v want state+resource+result", queued)
 	}
 	if _, ok := queued[0].(protocol.CharacterClassState); !ok {
 		t.Fatalf("first pending feedback=%T want CharacterClassState", queued[0])
 	}
-	if result, ok := queued[1].(protocol.InitialClassSelectionResult); !ok || result.Outcome != protocol.InitialClassSelectionCommitted || result.ClientActionSequence != 21 {
-		t.Fatalf("second pending feedback=%#v", queued[1])
+	if resource, ok := queued[1].(protocol.CharacterClassResourceState); !ok || resource.ResourceID != "hunt_momentum" || resource.Current != 0 || resource.Max != 100 {
+		t.Fatalf("second pending feedback=%#v want hunt_momentum 0/100", queued[1])
+	}
+	if result, ok := queued[2].(protocol.InitialClassSelectionResult); !ok || result.Outcome != protocol.InitialClassSelectionCommitted || result.ClientActionSequence != 21 {
+		t.Fatalf("third pending feedback=%#v", queued[2])
 	}
 
 	// Drain only the synthetic filler. No class feedback was allowed into the full transport queue.
 	for _, envelope := range drainReliable(conn) {
 		switch envelope.Message.(type) {
-		case protocol.CharacterClassState, protocol.InitialClassSelectionResult:
+		case protocol.CharacterClassState, protocol.CharacterClassResourceState, protocol.InitialClassSelectionResult:
 			t.Fatalf("backpressured class feedback unexpectedly entered reliable queue: %#v", envelope)
 		}
 	}
@@ -74,24 +77,38 @@ func TestInitialClassSelectionCompletionBackpressureRetriesWithoutReapplyingPers
 	if got := outbox.Pending(0); len(got) != 0 {
 		t.Fatalf("retry re-enqueued persistence=%#v", got)
 	}
-	messages := classProtocolMessages(drainReliable(conn))
-	if len(messages) != 2 {
+	messages := classCompletionMessages(drainReliable(conn))
+	if len(messages) != 3 {
 		t.Fatalf("retried class messages=%#v", messages)
 	}
 	if stateMessage, ok := messages[0].(protocol.CharacterClassState); !ok || stateMessage.ClassID != string(classid.Ranger) {
 		t.Fatalf("retried state=%#v", messages[0])
 	}
-	if result, ok := messages[1].(protocol.InitialClassSelectionResult); !ok || result.ClassID != string(classid.Ranger) || result.Outcome != protocol.InitialClassSelectionCommitted || result.ClientActionSequence != 21 {
-		t.Fatalf("retried result=%#v", messages[1])
+	if resource, ok := messages[1].(protocol.CharacterClassResourceState); !ok || resource.ResourceID != "hunt_momentum" || resource.Current != 0 || resource.Max != 100 {
+		t.Fatalf("retried resource=%#v", messages[1])
+	}
+	if result, ok := messages[2].(protocol.InitialClassSelectionResult); !ok || result.ClassID != string(classid.Ranger) || result.Outcome != protocol.InitialClassSelectionCommitted || result.ClientActionSequence != 21 {
+		t.Fatalf("retried result=%#v", messages[2])
 	}
 	if _, exists := rt.pendingClassMessages[fence.SessionID]; exists {
 		t.Fatalf("delivered class feedback remained pending=%#v", rt.pendingClassMessages[fence.SessionID])
 	}
 
 	rt.Step(5, 50*time.Millisecond)
-	for _, message := range classProtocolMessages(drainReliable(conn)) {
+	for _, message := range classCompletionMessages(drainReliable(conn)) {
 		t.Fatalf("class completion feedback duplicated on later tick: %#v", message)
 	}
+}
+
+func classCompletionMessages(envelopes []protocol.Envelope) []protocol.Message {
+	out := make([]protocol.Message, 0)
+	for _, envelope := range envelopes {
+		switch envelope.Message.(type) {
+		case protocol.CharacterClassState, protocol.CharacterClassResourceState, protocol.InitialClassSelectionResult:
+			out = append(out, envelope.Message)
+		}
+	}
+	return out
 }
 
 func mustSessionForFence(t *testing.T, rt *Runtime, fence SessionOwnershipFence) *session.Session {
