@@ -95,6 +95,28 @@ func durableSessionRecoveryOutbox(provider *staticSessionRecoveryProvider) *sess
 	return outbox
 }
 
+// sessionRecoveryChallengeAuthorizing returns the durable delivery record's current
+// authorization fence. The outbox record is authoritative once durable delivery is
+// enabled: pending/delivered active records may authorize, while failed, inactive or
+// missing records must fail closed even if provider-side deactivation has not run yet.
+func (o *sessionRecoveryDurableOutbox) sessionRecoveryChallengeAuthorizing(requestID string) bool {
+	if o == nil || requestID == "" {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	record, exists := o.records[requestID]
+	if !exists || !record.Active {
+		return false
+	}
+	switch record.DeliveryState {
+	case sessionRecoveryOutboxStatePending, sessionRecoveryOutboxStateDelivered:
+		return true
+	default:
+		return false
+	}
+}
+
 func publishSessionRecoveryDurableChallenge(provider *staticSessionRecoveryProvider, requestID string) {
 	outbox := durableSessionRecoveryOutbox(provider)
 	if outbox == nil {
@@ -119,6 +141,13 @@ func persistSessionRecoveryDurableChallenge(provider *staticSessionRecoveryProvi
 			provider.deactivateSessionRecoveryChallenge(requestID)
 		}
 		return err
+	}
+	// PersistChallenge serializes through the outbox mutex. Re-check the durable
+	// authorization state after provider Verify so a terminal delivery commit that
+	// raced with verification wins before any grant is returned to the caller.
+	if !outbox.sessionRecoveryChallengeAuthorizing(requestID) {
+		provider.deactivateSessionRecoveryChallenge(requestID)
+		return accountrecovery.ErrRejected
 	}
 	return nil
 }
