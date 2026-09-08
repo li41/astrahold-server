@@ -27,6 +27,24 @@ func TestRegisterStateInitializesOathguardResolve(t *testing.T) {
 	}
 }
 
+func TestRegisterStateInitializesBreakerMomentum(t *testing.T) {
+	service, err := NewService(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const entityID world.EntityID = 45
+	if err := service.RegisterState(State{EntityID: entityID, ClassID: classid.Breaker, HP: 1000, MaxHP: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	state, ok := service.State(entityID)
+	if !ok {
+		t.Fatal("state missing")
+	}
+	if state.ClassResourceID != classresource.Momentum || state.ClassResource != 0 || state.MaxClassResource != 100 {
+		t.Fatalf("resource = %q %d/%d, want momentum 0/100", state.ClassResourceID, state.ClassResource, state.MaxClassResource)
+	}
+}
+
 func TestAssignInitialClassInitializesResolveAndGainClamps(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil {
@@ -78,7 +96,7 @@ func TestClassResourceRejectsMismatchWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestNonOathguardHasNoRuntimeClassResourceYet(t *testing.T) {
+func TestClassWithoutRuntimeResourceHasNone(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil {
 		t.Fatal(err)

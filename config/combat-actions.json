@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-oathguard-v1-001",
+  "revision": "vertical-slice-classes-v1-002",
   "actions": [
     {
       "id": "basic-attack",
@@ -21,6 +21,16 @@
       "damage_type": "physical",
       "blockable": true,
       "cooldown_seconds": 1.1
+    },
+    {
+      "id": "breaker-heavy-slash",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 4.5,
+      "base_damage": 135,
+      "damage_type": "physical",
+      "blockable": true,
+      "cooldown_seconds": 1.35
     },
     {
       "id": "shatter-strike",
