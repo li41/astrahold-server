@@ -6,14 +6,16 @@ import (
 
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/classresource"
+	"github.com/li41/astrahold-server/internal/targetresource"
 )
 
 const (
-	OathguardSwordStrike       = "oathguard-sword-strike"
-	BreakerHeavySlash          = "breaker-heavy-slash"
-	RangerHuntingShot          = "ranger-hunting-shot"
-	StarfireFireBolt           = "starfire-fire-bolt"
-	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
+	OathguardSwordStrike      = "oathguard-sword-strike"
+	BreakerHeavySlash         = "breaker-heavy-slash"
+	RangerHuntingShot         = "ranger-hunting-shot"
+	StarfireFireBolt          = "starfire-fire-bolt"
+	OathhealerOathlightStrike = "oathhealer-oathlight-strike"
+	ShadowbladeDualBladeStrike = "shadowblade-dual-blade-strike"
 )
 
 var ErrWrongClass = errors.New("classaction: action unavailable for class")
@@ -26,6 +28,11 @@ type Policy struct {
 	HitGain             uint32
 	HitProgressResource classresource.ID
 	HitProgressGain     uint32
+	HitTargetResource   targetresource.ID
+	HitTargetGain       uint32
+	HitTargetMax        uint32
+	HitTargetICDSeconds float64
+	RequireSideOrBack   bool
 }
 
 func ForAction(actionID string) (Policy, bool) {
@@ -40,6 +47,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.StarfireMage, AcceptedResource: classresource.StarHeat, AcceptedGain: 8}, true
 	case OathhealerOathlightStrike:
 		return Policy{RequiredClass: classid.Oathhealer, HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
+	case ShadowbladeDualBladeStrike:
+		return Policy{RequiredClass: classid.Shadowblade, HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetICDSeconds: 2.5, RequireSideOrBack: true}, true
 	default:
 		return Policy{}, false
 	}
