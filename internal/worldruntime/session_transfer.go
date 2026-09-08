@@ -174,12 +174,16 @@ func (r *Runtime) applyOwnershipTransfer(request OwnershipTransferRequest) error
 	r.replication.Remove(expected.SessionID)
 	r.removeSessionVitals(expected.SessionID)
 	delete(r.sessionDynamicRevision, expected.SessionID)
+	delete(r.pendingClassMessages, expected.SessionID)
 	r.replication.Register(replacement.ID)
 
 	// Activate the new epoch before removing the old by-session entry. The generation-fenced
 	// removal cannot clear the newly installed by-character ownership.
 	r.characterIdentities.activateOwnership(newOwnership)
 	r.characterIdentities.removeOwnershipBySession(expected.SessionID)
+	// The replacement learns only current authoritative profession truth. Any correlated
+	// selection result remains fenced to the source ownership epoch and is never transferred.
+	r.queueCurrentClassState(replacement)
 	if request.Result != nil {
 		*request.Result = newOwnership
 	}

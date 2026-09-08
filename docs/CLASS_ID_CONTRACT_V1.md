@@ -2,9 +2,9 @@
 
 ## 狀態
 
-本文件鎖定 Astrahold 第一版六個核心職業的 stable Server `ClassID` vocabulary。
+本文件鎖定 Astrahold 第一版六個核心職業的 stable Server `ClassID` vocabulary 與其 authoritative identity boundary。
 
-這是 gameplay identity contract，不是 Client asset mapping，也不是轉職／選職流程規格。
+這是 gameplay identity contract，不是 Client asset mapping。初始選職的 wire / durability contract 另見 `docs/INITIAL_CLASS_SELECTION_PROTOCOL_V25.md`。
 
 ## Canonical ClassIDs
 
@@ -43,7 +43,9 @@
 - 前後空白或大小寫自動正規化；
 - Client asset path、model name 或 UI label 當作 ClassID。
 
-Runtime 尚未有 authoritative character ClassID 時，既有 equipment path 對 allow-list 維持 fail closed；目前 low-tier equipment 都是 `ClassPolicyAll`，所以本 slice 不改變現有可玩裝備行為。
+初始 assignment 前，Server 會以目標 ClassID 重新驗證目前已裝備物品。若現有裝備對目標職業非法，assignment fail closed；不由 Client 決定、不自動脫裝。
+
+目前 low-tier equipment 都是 `ClassPolicyAll`，所以這個 ClassID foundation 不自行改寫既有低階裝備 acquisition 或 combat semantics。
 
 ## ArchetypeID 與 ClassID 永久分離
 
@@ -56,30 +58,50 @@ ClassID     = character gameplay / profession identity
 
 職業 identity 也不得由 Client mesh、animation、UI selection 或本地 asset mapping 推導。
 
-## 本 slice 明確不做
+## Authoritative initial assignment
 
-- 轉職／轉換職業；
-- class selection UI；
-- character creation 職業選擇；
-- 預設職業；
-- 技能樹／專精；
-- 六職業技能 runtime；
-- ClassID Protocol replication；
-- Client-side class legality；
-- 第二套 class persistence 或第二個 gameplay authority。
+正式 Server 支援一次性的：
 
-## 後續 authoritative assignment 原則
+```text
+empty / unassigned ClassID
+    -> one canonical ClassID
+```
 
-當正式 character creation / class assignment 開始施工時，ClassID 必須：
+初始 assignment 必須：
 
 1. 由 Server 驗證只能是本文件六個 canonical IDs；
-2. 與 character durable state 在同一 authoritative persistence owner path 保存；
-3. restore 時先驗證 ClassID，再驗證 class-scoped equipment；
-4. 不允許 network、DB、admin 或 Client 直接修改 mutable gameplay world truth；
-5. 若未來真的設計轉職，另開正式設計與 mutation contract，不在本 V1 foundation 預埋任意 class swap。
+2. 使用 trusted CharacterIdentity / SessionOwnershipFence；
+3. 與 character durable state 在同一 authoritative persistence owner path 保存；
+4. restore 時先驗證 ClassID，再驗證 class-scoped equipment；
+5. world tick 不做 blocking persistence I/O；
+6. durable checkpoint 完成後，才由 world owner 把 ClassID commit 到 live character state；
+7. network、DB、admin 或 Client 不得直接修改 mutable gameplay world truth；
+8. 任何第二次 assignment / 任意 class swap 都 fail closed。
 
-## Protocol
+若角色在 durability completion 前離線，durable Store 仍是下一次 restore 的 truth；不需要為此建立第二個 live mutation path。
 
-本 foundation **不升 Protocol**；現有 Protocol v24 wire semantics 不變。
+## Protocol v25
 
-ClassID 尚未在此 slice 複製給 Client，因此 Client 不得自行宣告或推導 gameplay profession truth。
+Protocol v25 提供正式 Client-facing 初始選職 handshake：
+
+- Client `9` `ClientInitialClassSelection`
+- Server `115` `CharacterClassState`
+- Server `116` `InitialClassSelectionResult`
+
+三者皆使用 `ReliableOrdered`。
+
+Client 只送選職 intent。`committed` result 只能在 durable checkpoint 與 world-owner live ClassID commit 都成功後發出。
+
+Trusted durable character 在 join / reconnect / authorized takeover 後取得 authoritative `CharacterClassState`。Ephemeral development identity 不具 durable profession identity，其 selection intent 會 fail closed。
+
+完整 wire、rejection、backpressure、takeover semantics 見 `docs/INITIAL_CLASS_SELECTION_PROTOCOL_V25.md`。
+
+## 本版本仍明確不做
+
+- 轉職／轉換職業；
+- respec / reset ClassID；
+- 預設職業；
+- 技能樹／專精；
+- 六職業完整技能 runtime；
+- Client-side class legality authority；
+- 第二套 class persistence 或第二個 gameplay authority。

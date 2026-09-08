@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/inventory"
@@ -22,21 +23,15 @@ func mustDefaultInventoryUnitWeights() map[string]uint32 {
 		"item_gray_wolf_pelt":       2,
 	}
 	for itemArchetypeID, weight := range defaultEquipmentCatalog.UnitWeights() {
-		if itemArchetypeID == "" || weight == 0 {
-			panic("worldruntime: invalid equipment catalog weight")
-		}
-		if _, exists := weights[itemArchetypeID]; exists {
-			panic("worldruntime: equipment catalog collides with base inventory weight")
-		}
+		if itemArchetypeID == "" || weight == 0 { panic("worldruntime: invalid equipment catalog weight") }
+		if _, exists := weights[itemArchetypeID]; exists { panic("worldruntime: equipment catalog collides with base inventory weight") }
 		weights[itemArchetypeID] = weight
 	}
 	return weights
 }
 
 func newCharacterInventory(maxStacks int) *inventory.Inventory {
-	return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{
-		MaxWeight: defaultInventoryCarryCapacity, DefaultUnitWeight: 1, UnitWeights: defaultInventoryUnitWeights,
-	})
+	return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{MaxWeight: defaultInventoryCarryCapacity, DefaultUnitWeight: 1, UnitWeights: defaultInventoryUnitWeights})
 }
 
 func validateStarterInventory(maxStacks int, stacks []inventory.Stack) error {
@@ -85,12 +80,21 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
 		r.inventories[identity] = inv
 	}
+	// ClassID is durable character identity. Only trusted/durable characters receive a join or
+	// reconnect class bootstrap. Ephemeral development identities cannot persist a profession and
+	// therefore do not receive a misleading durable CharacterClassState.
+	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
+		r.queueCurrentClassState(s)
+	}
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
 
 func (r *Runtime) removeSessionInventoryDelivery(id session.ID) { delete(r.sessionInventoryPending, id) }
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
+	// Class state/result uses its own bounded FIFO so transient Reliable backpressure never
+	// re-runs class persistence or gameplay mutation.
+	r.retryPendingClassMessages(tick, report)
 	r.pruneItemUseCooldowns(tick)
 	r.retryPendingItemUseResults(tick, report)
 	if len(r.sessionInventoryPending) == 0 { return }
