@@ -6,6 +6,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
 )
 
 func TestInitialClassSelectionCompletionBackpressureRetriesWithoutReapplyingPersistence(t *testing.T) {
