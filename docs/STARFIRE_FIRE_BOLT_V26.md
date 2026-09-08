@@ -114,12 +114,13 @@ Reliable backpressure may delay these messages, but retrying presentation must n
 ```text
 ClientUseAction intent
 -> world-owner ClassID / target / range / cooldown validation
--> Server accepts Fire Bolt execution
--> authoritative Star Heat +8
--> Server hit / damage resolution and HP mutation
+-> Server accepts and resolves Fire Bolt
+-> authoritative damage / HP outcome and Star Heat +8
 -> CharacterClassResourceState(updated full state)
 -> authoritative action / combat events
 ```
+
+The slice does not define a new externally observable ordering guarantee between the resource update and combat-event presentation beyond the existing reliable/message-channel semantics. Clients must consume each authoritative message as state or presentation feedback, not reconstruct gameplay outcome from local timing.
 
 ClassID, range legality, action acceptance, damage, cooldown and Star Heat are Server decisions.
 
