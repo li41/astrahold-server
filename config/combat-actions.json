@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-pve-shield-v1-002",
+  "revision": "vertical-slice-oathguard-v1-001",
   "actions": [
     {
       "id": "basic-attack",
@@ -11,6 +11,16 @@
       "damage_type": "physical",
       "blockable": true,
       "cooldown_seconds": 0.5
+    },
+    {
+      "id": "oathguard-sword-strike",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 4.5,
+      "base_damage": 100,
+      "damage_type": "physical",
+      "blockable": true,
+      "cooldown_seconds": 1.1
     },
     {
       "id": "shatter-strike",
