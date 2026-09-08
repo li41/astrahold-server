@@ -30,12 +30,17 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 
 	switch prepared.Definition.Effect {
 	case combat.EffectResurrect:
-		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
+			return false
+		}
 		r.emitActionStarted(actor.ID, startPrepared, tick, report)
 		if _, err := r.characters.RevivePercent(targetID, prepared.Definition.ReviveHPPercent); err != nil {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}); return false
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			return false
 		}
-		if r.respawnPolicy != nil { r.respawnPolicy.Cancel(targetID) }
+		if r.respawnPolicy != nil {
+			r.respawnPolicy.Cancel(targetID)
+		}
 		delete(r.respawnVitalsPhases, targetID)
 		r.grantReviveProtection(targetID, tick, report)
 		r.markEntityVitalsDirty(targetID)
@@ -49,28 +54,62 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			report.Metrics.ReviveProtectionDamageBlocks++
 			return false
 		}
-		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
+			return false
+		}
 		beforeState, ok := r.combatantState(targetID)
 		if !ok {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: ErrSessionEntityNotFound}); return false
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: ErrSessionEntityNotFound})
+			return false
 		}
+
 		// Weapon RNG is reached only after authoritative target/range/LOS/protection/resource legality.
-		damageAmount := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
-		r.emitActionStarted(actor.ID, startPrepared, tick, report)
-		state, err := r.reduceCombatantHP(targetID, damageAmount)
+		rawDamage := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
+		damageResult, err := r.resolveIncomingDamage(DamageRequest{
+			SourceEntityID: actor.ID,
+			TargetEntityID: targetID,
+			RawDamage:      rawDamage,
+			DamageType:     prepared.Damage.Type,
+			Blockable:      prepared.Damage.Blockable,
+		})
 		if err != nil {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}); return false
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			return false
 		}
-		actualDamage := damageAmount
-		if actualDamage > beforeState.HP { actualDamage = beforeState.HP }
-		if target.Kind == world.EntityMonster && actualDamage > 0 { r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage) }
+
+		r.emitActionStarted(actor.ID, startPrepared, tick, report)
+		state, err := r.reduceCombatantHP(targetID, damageResult.FinalDamage)
+		if err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			return false
+		}
+		actualDamage := damageResult.FinalDamage
+		if actualDamage > beforeState.HP {
+			actualDamage = beforeState.HP
+		}
+		if target.Kind == world.EntityMonster && actualDamage > 0 {
+			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
+		}
 		if state.Defeated {
-			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}) }
-			if target.Kind == world.EntityPlayer { r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report) }
+			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			}
+			if target.Kind == world.EntityPlayer {
+				r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report)
+			}
 		}
 		r.markEntityVitalsDirty(targetID)
 		report.Metrics.EntityActionsApplied++
-		r.emitCombatEvent(protocol.CombatEvent{ActionInstanceID: prepared.ActionInstanceID, ActorEntityID: actor.ID, ActionID: prepared.Definition.ID, Result: protocol.CombatEventHit, TargetEntityID: targetID, Damage: damageAmount, CooldownReadyTick: cooldownReadyTick}, tick, report)
+		r.emitCombatEvent(protocol.CombatEvent{
+			ActionInstanceID:  prepared.ActionInstanceID,
+			ActorEntityID:     actor.ID,
+			ActionID:          prepared.Definition.ID,
+			Result:            protocol.CombatEventHit,
+			TargetEntityID:    targetID,
+			Damage:            damageResult.FinalDamage,
+			Blocked:           damageResult.Blocked,
+			CooldownReadyTick: cooldownReadyTick,
+		}, tick, report)
 		return true
 
 	default:
