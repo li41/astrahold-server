@@ -61,7 +61,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		// Accuracy is an accepted-action outcome, not an action rejection. A miss therefore still
 		// emits ActionStarted and consumes the normal cooldown, but never enters damage/mitigation,
 		// HP mutation, threat, loot contribution, death, or shield block resolution.
-		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared, nil) {
+		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
 			r.emitActionStarted(actor.ID, startPrepared, tick, report)
 			r.emitCombatEvent(protocol.CombatEvent{
 				ActionInstanceID:  prepared.ActionInstanceID,
