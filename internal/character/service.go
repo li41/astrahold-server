@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/classid"
+	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -23,13 +24,16 @@ var (
 )
 
 type State struct {
-	EntityID world.EntityID
-	ClassID  classid.ID
-	HP       uint32
-	MaxHP    uint32
-	MP       uint32
-	MaxMP    uint32
-	Defeated bool
+	EntityID             world.EntityID
+	ClassID              classid.ID
+	HP                   uint32
+	MaxHP                uint32
+	MP                   uint32
+	MaxMP                uint32
+	ClassResourceID      classresource.ID
+	ClassResource        uint32
+	MaxClassResource     uint32
+	Defeated             bool
 }
 
 type Service struct {
@@ -59,9 +63,8 @@ func (s *Service) Register(id world.EntityID) error {
 }
 
 // RegisterState installs an already-authoritative character state for a newly spawned world
-// incarnation. Empty ClassID is the canonical unassigned state; non-empty ClassID must come from
-// the locked Server vocabulary. A legacy caller that supplies neither MP nor MaxMP is migrated
-// to the service default at this boundary; partially specified MP state is rejected.
+// incarnation. Class combat resources are runtime state: persisted restores deliberately reinitialize
+// them from the canonical ClassID instead of reading them from durable character snapshots.
 func (s *Service) RegisterState(state State) error {
 	if state.EntityID == 0 {
 		return ErrCharacterNotFound
@@ -73,6 +76,7 @@ func (s *Service) RegisterState(state State) error {
 		state.MP = s.defaultMaxMP
 		state.MaxMP = s.defaultMaxMP
 	}
+	initializeClassResource(&state)
 	if err := validateState(state); err != nil {
 		return err
 	}
@@ -80,11 +84,36 @@ func (s *Service) RegisterState(state State) error {
 	return nil
 }
 
+func initializeClassResource(state *State) {
+	if state == nil {
+		return
+	}
+	definition, ok := classresource.PrimaryForClass(state.ClassID)
+	if !ok {
+		state.ClassResourceID = classresource.Empty
+		state.ClassResource = 0
+		state.MaxClassResource = 0
+		return
+	}
+	state.ClassResourceID = definition.ID
+	state.ClassResource = 0
+	state.MaxClassResource = definition.Max
+}
+
 func validateState(state State) error {
 	if state.ClassID != "" && !classid.IsCanonical(state.ClassID) {
 		return ErrInvalidState
 	}
 	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP {
+		return ErrInvalidState
+	}
+	if state.ClassResource > state.MaxClassResource {
+		return ErrInvalidState
+	}
+	if state.ClassResourceID == classresource.Empty && (state.ClassResource != 0 || state.MaxClassResource != 0) {
+		return ErrInvalidState
+	}
+	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 {
 		return ErrInvalidState
 	}
 	if state.Defeated {
@@ -111,6 +140,30 @@ func (s *Service) States() []State {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EntityID < out[j].EntityID })
 	return out
+}
+
+// GainClassResource performs one world-owner-authoritative class-resource transition and clamps at Max.
+func (s *Service) GainClassResource(id world.EntityID, resourceID classresource.ID, amount uint32) (State, error) {
+	state, ok := s.states[id]
+	if !ok {
+		return State{}, ErrCharacterNotFound
+	}
+	if state.Defeated {
+		return state, ErrCharacterDefeated
+	}
+	if resourceID == classresource.Empty || state.ClassResourceID != resourceID || state.MaxClassResource == 0 {
+		return state, classresource.ErrResourceMismatch
+	}
+	if amount == 0 || state.ClassResource >= state.MaxClassResource {
+		return state, nil
+	}
+	missing := state.MaxClassResource - state.ClassResource
+	if amount > missing {
+		amount = missing
+	}
+	state.ClassResource += amount
+	s.states[id] = state
+	return state, nil
 }
 
 // SpendMP performs one world-owner-authoritative resource transition. A rejected spend does
