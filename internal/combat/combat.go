@@ -54,18 +54,19 @@ var (
 )
 
 type ActionDefinition struct {
-	ID              string          `json:"id"`
-	Effect          ActionEffect    `json:"effect,omitempty"`
-	Targets         []TargetKind    `json:"targets"`
-	Range           float32         `json:"range"`
-	HitRadius       float32         `json:"hit_radius,omitempty"`
-	PointResolution PointResolution `json:"point_resolution,omitempty"`
-	BaseDamage      uint32          `json:"base_damage,omitempty"`
-	DamageType      DamageType      `json:"damage_type,omitempty"`
-	Blockable       bool            `json:"blockable,omitempty"`
-	ReviveHPPercent uint8           `json:"revive_hp_percent,omitempty"`
-	MPCost          uint32          `json:"mp_cost,omitempty"`
-	CooldownSeconds float32         `json:"cooldown_seconds"`
+	ID                           string          `json:"id"`
+	Effect                       ActionEffect    `json:"effect,omitempty"`
+	Targets                      []TargetKind    `json:"targets"`
+	Range                        float32         `json:"range"`
+	HitRadius                    float32         `json:"hit_radius,omitempty"`
+	PointResolution              PointResolution `json:"point_resolution,omitempty"`
+	BaseDamage                   uint32          `json:"base_damage,omitempty"`
+	DamageType                   DamageType      `json:"damage_type,omitempty"`
+	Blockable                    bool            `json:"blockable,omitempty"`
+	PhysicalDefenseIgnorePercent uint8           `json:"physical_defense_ignore_percent,omitempty"`
+	ReviveHPPercent              uint8           `json:"revive_hp_percent,omitempty"`
+	MPCost                       uint32          `json:"mp_cost,omitempty"`
+	CooldownSeconds              float32         `json:"cooldown_seconds"`
 }
 
 type Definition struct {
@@ -84,10 +85,11 @@ type DamageSource struct {
 }
 
 type Damage struct {
-	Source    DamageSource
-	Type      DamageType
-	Amount    uint32
-	Blockable bool
+	Source                       DamageSource
+	Type                         DamageType
+	Amount                       uint32
+	Blockable                    bool
+	PhysicalDefenseIgnorePercent uint8
 }
 
 type Target struct {
@@ -222,8 +224,14 @@ func Validate(definition Definition) error {
 			if action.Blockable && (action.DamageType != DamagePhysical || !hasEntityTarget || hasPointTarget) {
 				return fmt.Errorf("%w: blockable action %q", ErrInvalidDefinition, action.ID)
 			}
+			// Physical-defense ignore is an attack-local mitigation input, not a target debuff. The
+			// current implementation intentionally scopes it to physical entity-only actions so gate
+			// and point paths cannot silently claim an armor-ignore behavior they do not consume.
+			if action.PhysicalDefenseIgnorePercent > 0 && (action.PhysicalDefenseIgnorePercent > 100 || action.DamageType != DamagePhysical || !hasEntityTarget || hasGateTarget || hasPointTarget) {
+				return fmt.Errorf("%w: physical-defense-ignore action %q", ErrInvalidDefinition, action.ID)
+			}
 		case EffectResurrect:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
+			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
 				return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID)
 			}
 			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
@@ -292,10 +300,11 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 	}
 	if action.Effect == EffectDamage {
 		prepared.Damage = Damage{
-			Source:    DamageSource{ActorEntityID: actorEntityID, ActionID: actionID},
-			Type:      action.DamageType,
-			Amount:    action.BaseDamage,
-			Blockable: action.Blockable,
+			Source:                       DamageSource{ActorEntityID: actorEntityID, ActionID: actionID},
+			Type:                         action.DamageType,
+			Amount:                       action.BaseDamage,
+			Blockable:                    action.Blockable,
+			PhysicalDefenseIgnorePercent: action.PhysicalDefenseIgnorePercent,
 		}
 	}
 	return prepared, nil

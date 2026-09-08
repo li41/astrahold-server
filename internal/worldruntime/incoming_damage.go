@@ -12,16 +12,20 @@ import (
 
 const physicalDefenseScale = 20.0
 
-var ErrUnsupportedIncomingDamageType = errors.New("worldruntime: unsupported incoming damage type")
+var (
+	ErrUnsupportedIncomingDamageType = errors.New("worldruntime: unsupported incoming damage type")
+	ErrInvalidPhysicalDefenseIgnore  = errors.New("worldruntime: invalid physical defense ignore")
+)
 
 // DamageRequest is the already-legal Server-owned damage instance entering mitigation.
 // DamageType and Blockable are independent: physical damage is not implicitly blockable.
 type DamageRequest struct {
-	SourceEntityID world.EntityID
-	TargetEntityID world.EntityID
-	RawDamage      uint32
-	DamageType     combat.DamageType
-	Blockable      bool
+	SourceEntityID               world.EntityID
+	TargetEntityID               world.EntityID
+	RawDamage                    uint32
+	DamageType                   combat.DamageType
+	Blockable                    bool
+	PhysicalDefenseIgnorePercent uint8
 }
 
 // DamageResult is the single authoritative outcome used by HP mutation, combat events and
@@ -32,11 +36,15 @@ type DamageResult struct {
 }
 
 func physicalMitigationRate(physicalDefense uint32) float64 {
-	if physicalDefense == 0 {
+	return physicalMitigationRateWithIgnore(physicalDefense, 0)
+}
+
+func physicalMitigationRateWithIgnore(physicalDefense uint32, ignorePercent uint8) float64 {
+	if physicalDefense == 0 || ignorePercent >= 100 {
 		return 0
 	}
-	defense := float64(physicalDefense)
-	return defense / (defense + physicalDefenseScale)
+	effectiveDefense := float64(physicalDefense) * (1 - float64(ignorePercent)/100)
+	return effectiveDefense / (effectiveDefense + physicalDefenseScale)
 }
 
 func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatalog.Definition, bool) {
@@ -74,9 +82,14 @@ func (r *Runtime) resolveIncomingDamage(request DamageRequest) (DamageResult, er
 
 // resolveDamageMitigation is pure so formula and probability boundaries are deterministic in tests.
 // Intermediate math stays float64; positive damage is rounded once at the end and has a minimum of 1.
+// Physical-defense ignore changes only the defense term for this damage instance; it never changes
+// block chance, block reduction, equipment state or any later attack.
 func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shield, blockRoll uint32) (DamageResult, error) {
 	if request.RawDamage == 0 {
 		return DamageResult{}, nil
+	}
+	if request.PhysicalDefenseIgnorePercent > 100 {
+		return DamageResult{}, ErrInvalidPhysicalDefenseIgnore
 	}
 
 	damage := float64(request.RawDamage)
@@ -85,13 +98,16 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 	switch request.DamageType {
 	case combat.DamagePhysical:
 		if shield != nil && shield.PhysicalDefense > 0 {
-			damage *= 1 - physicalMitigationRate(shield.PhysicalDefense)
+			damage *= 1 - physicalMitigationRateWithIgnore(shield.PhysicalDefense, request.PhysicalDefenseIgnorePercent)
 		}
 		if shield != nil && request.Blockable && shield.BlockChancePercent > 0 && blockRoll%100 < uint32(shield.BlockChancePercent) {
 			blocked = true
 			damage *= 1 - float64(shield.BlockDamageReductionPercent)/100
 		}
 	case combat.DamageMagic:
+		if request.PhysicalDefenseIgnorePercent != 0 {
+			return DamageResult{}, ErrInvalidPhysicalDefenseIgnore
+		}
 		if shield != nil && shield.MagicDamageReductionPercent > 0 {
 			damage *= 1 - float64(shield.MagicDamageReductionPercent)/100
 		}

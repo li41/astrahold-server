@@ -82,7 +82,14 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if hasTargetSpend {
 			rawDamage = spendPlan.Damage
 		}
-		damageResult, err := r.resolveIncomingDamage(DamageRequest{SourceEntityID: actor.ID, TargetEntityID: targetID, RawDamage: rawDamage, DamageType: prepared.Damage.Type, Blockable: prepared.Damage.Blockable})
+		damageResult, err := r.resolveIncomingDamage(DamageRequest{
+			SourceEntityID:               actor.ID,
+			TargetEntityID:               targetID,
+			RawDamage:                    rawDamage,
+			DamageType:                   prepared.Damage.Type,
+			Blockable:                    prepared.Damage.Blockable,
+			PhysicalDefenseIgnorePercent: prepared.Damage.PhysicalDefenseIgnorePercent,
+		})
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
