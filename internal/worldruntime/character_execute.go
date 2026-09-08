@@ -88,6 +88,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			actualDamage = beforeState.HP
 		}
 		if target.Kind == world.EntityMonster && actualDamage > 0 {
+			// Threat and loot both consume the same authoritative actual-damage fact, but remain
+			// independent gameplay tables with independent lifetime and selection semantics.
+			r.recordMonsterThreatDamage(targetID, actor.ID, sessionID, actualDamage)
 			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
 		}
 		if state.Defeated {
