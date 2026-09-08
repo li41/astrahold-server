@@ -9,6 +9,7 @@ import (
 
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
+// v25: Reliable initial class selection intent/result plus authoritative CharacterClassState.
 // v24: CombatEvent adds Server-authoritative shield block outcome; damage now reflects final mitigated damage.
 // v23: Equipment semantics add authoritative off_hand so shields are distinct from MainHand weapons.
 // v22: Reliable ItemUseResult returns authoritative consumable outcome/cooldown feedback.
@@ -23,7 +24,7 @@ import (
 // v13: EntityVitalsState adds authoritative MP/MaxMP and insufficient_resource rejection.
 // v12: valid point-target ClientUseAction ingress semantics are compatibility-fenced.
 // v11: Reliable ActionRejected returns authoritative action rejection reason.
-const Version uint16 = 24
+const Version uint16 = 25
 
 const MaxSnapshotEntitiesPerChunk = 43
 
