@@ -63,6 +63,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(characterClassState{ClassID: m.ClassID})
 	case protocol.CharacterClassResourceState:
 		return json.Marshal(characterClassResourceState{EntityID: uint64(m.EntityID), ResourceID: m.ResourceID, Current: m.Current, Max: m.Max})
+	case protocol.CharacterTargetResourceState:
+		return json.Marshal(characterTargetResourceState{SourceEntityID: uint64(m.SourceEntityID), TargetEntityID: uint64(m.TargetEntityID), ResourceID: m.ResourceID, Current: m.Current, Max: m.Max})
 	case protocol.InitialClassSelectionResult:
 		return json.Marshal(initialClassSelectionResult{ClientActionSequence: m.ClientActionSequence, ClassID: m.ClassID, Outcome: string(m.Outcome), Reason: string(m.Reason)})
 	case protocol.SessionWelcome:
