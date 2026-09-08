@@ -2,6 +2,7 @@ package worldruntime
 
 import (
 	"errors"
+	"time"
 
 	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
@@ -13,7 +14,7 @@ import (
 
 // startPrepared preserves the accepted target spec used for ActionStarted. Point actions may resolve
 // to an entity for HP mutation while their presentation target must remain the original point.
-func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, startPrepared combat.PreparedAction, tick uint64, cooldownReadyTick uint64, report *StepReport) bool {
+func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientActionSequence uint32, actor world.EntityState, prepared combat.PreparedAction, startPrepared combat.PreparedAction, tick uint64, delta time.Duration, cooldownReadyTick uint64, report *StepReport) bool {
 	targetID, err := r.validateEntityTarget(actor, prepared)
 	if err != nil {
 		if errors.Is(err, ErrDynamicWorldUnavailable) {
@@ -31,17 +32,13 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 
 	switch prepared.Definition.Effect {
 	case combat.EffectResurrect:
-		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
-			return false
-		}
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 		r.emitActionStarted(actor.ID, startPrepared, tick, report)
 		if _, err := r.characters.RevivePercent(targetID, prepared.Definition.ReviveHPPercent); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
 		}
-		if r.respawnPolicy != nil {
-			r.respawnPolicy.Cancel(targetID)
-		}
+		if r.respawnPolicy != nil { r.respawnPolicy.Cancel(targetID) }
 		delete(r.respawnVitalsPhases, targetID)
 		r.grantReviveProtection(targetID, tick, report)
 		r.markEntityVitalsDirty(targetID)
@@ -55,25 +52,12 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			report.Metrics.ReviveProtectionDamageBlocks++
 			return false
 		}
-		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
-			return false
-		}
+		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 
-		// Accuracy is an accepted-action outcome, not an action rejection. A miss therefore still
-		// emits ActionStarted and consumes the normal cooldown, but never enters damage/mitigation,
-		// HP mutation, threat, loot contribution, death, shield block resolution, or hit-conditioned
-		// class-resource gain. Accepted-action resources such as Starfire heat still apply on a miss.
 		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
 			r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 			r.emitActionStarted(actor.ID, startPrepared, tick, report)
-			r.emitCombatEvent(protocol.CombatEvent{
-				ActionInstanceID:  prepared.ActionInstanceID,
-				ActorEntityID:     actor.ID,
-				ActionID:          prepared.Definition.ID,
-				Result:            protocol.CombatEventMiss,
-				TargetEntityID:    targetID,
-				CooldownReadyTick: cooldownReadyTick,
-			}, tick, report)
+			r.emitCombatEvent(protocol.CombatEvent{ActionInstanceID: prepared.ActionInstanceID, ActorEntityID: actor.ID, ActionID: prepared.Definition.ID, Result: protocol.CombatEventMiss, TargetEntityID: targetID, CooldownReadyTick: cooldownReadyTick}, tick, report)
 			return true
 		}
 
@@ -82,15 +66,8 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: ErrSessionEntityNotFound})
 			return false
 		}
-
 		rawDamage := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
-		damageResult, err := r.resolveIncomingDamage(DamageRequest{
-			SourceEntityID: actor.ID,
-			TargetEntityID: targetID,
-			RawDamage:      rawDamage,
-			DamageType:     prepared.Damage.Type,
-			Blockable:      prepared.Damage.Blockable,
-		})
+		damageResult, err := r.resolveIncomingDamage(DamageRequest{SourceEntityID: actor.ID, TargetEntityID: targetID, RawDamage: rawDamage, DamageType: prepared.Damage.Type, Blockable: prepared.Damage.Blockable})
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
@@ -103,37 +80,25 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			return false
 		}
 		actualDamage := damageResult.FinalDamage
-		if actualDamage > beforeState.HP {
-			actualDamage = beforeState.HP
-		}
+		if actualDamage > beforeState.HP { actualDamage = beforeState.HP }
 		if target.Kind == world.EntityMonster && actualDamage > 0 {
 			r.recordMonsterThreatDamage(targetID, actor.ID, sessionID, actualDamage)
 			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
 		}
 		if state.Defeated {
-			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil {
-				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
-			}
-			if target.Kind == world.EntityPlayer {
-				r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report)
-			}
+			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}) }
+			if target.Kind == world.EntityPlayer { r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report) }
+			r.clearTargetResourcesForEntity(targetID, report)
 		}
 		r.markEntityVitalsDirty(targetID)
 		r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 		r.applyHitClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
+		if !state.Defeated {
+			r.applyHitTargetResource(name, sessionID, actor, target, prepared.Definition.ID, tick, delta, report)
+		}
 		report.Metrics.EntityActionsApplied++
-		r.emitCombatEvent(protocol.CombatEvent{
-			ActionInstanceID:  prepared.ActionInstanceID,
-			ActorEntityID:     actor.ID,
-			ActionID:          prepared.Definition.ID,
-			Result:            protocol.CombatEventHit,
-			TargetEntityID:    targetID,
-			Damage:            damageResult.FinalDamage,
-			Blocked:           damageResult.Blocked,
-			CooldownReadyTick: cooldownReadyTick,
-		}, tick, report)
+		r.emitCombatEvent(protocol.CombatEvent{ActionInstanceID: prepared.ActionInstanceID, ActorEntityID: actor.ID, ActionID: prepared.Definition.ID, Result: protocol.CombatEventHit, TargetEntityID: targetID, Damage: damageResult.FinalDamage, Blocked: damageResult.Blocked, CooldownReadyTick: cooldownReadyTick}, tick, report)
 		return true
-
 	default:
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: combat.ErrInvalidDefinition})
 		return false
@@ -142,38 +107,28 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 
 func (r *Runtime) applyAcceptedActionClassResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
 	policy, ok := classaction.ForAction(actionID)
-	if !ok || policy.AcceptedResource == "" || policy.AcceptedGain == 0 {
-		return
-	}
+	if !ok || policy.AcceptedResource == "" || policy.AcceptedGain == 0 { return }
 	if _, err := r.characters.GainClassResource(actorID, policy.AcceptedResource, policy.AcceptedGain); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		return
 	}
-	if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
-		r.sendCurrentClassResourceState(sourceSession, report)
-	}
+	if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentClassResourceState(sourceSession, report) }
 }
 
 func (r *Runtime) applyHitClassResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
 	policy, ok := classaction.ForAction(actionID)
-	if !ok {
-		return
-	}
+	if !ok { return }
 	if policy.HitResource != "" && policy.HitGain > 0 {
 		if _, err := r.characters.GainClassResource(actorID, policy.HitResource, policy.HitGain); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
-		} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
-			r.sendCurrentClassResourceState(sourceSession, report)
-		}
+		} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentClassResourceState(sourceSession, report) }
 	}
 	if policy.HitProgressResource != "" && policy.HitProgressGain > 0 {
 		_, visibleChanged, err := r.characters.GainClassResourceProgress(actorID, policy.HitProgressResource, policy.HitProgressGain)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else if visibleChanged {
-			if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
-				r.sendCurrentClassResourceState(sourceSession, report)
-			}
+			if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentClassResourceState(sourceSession, report) }
 		}
 	}
 }
