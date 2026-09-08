@@ -142,7 +142,7 @@ func TestRangerHuntingShotRejectsWrongClassBeforeDamage(t *testing.T) {
 	}
 }
 
-func newRangerHuntingShotRuntime(t *testing.T, monsterX float64) (*Runtime, *session.Session, *session.QueueConnection, world.EntityID) {
+func newRangerHuntingShotRuntime(t *testing.T, monsterX float32) (*Runtime, *session.Session, *session.QueueConnection, world.EntityID) {
 	t.Helper()
 	definition := gameplayworld.Definition{
 		SchemaVersion: gameplayworld.SchemaVersion,
