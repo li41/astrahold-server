@@ -474,6 +474,13 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		operation := "join_world"
 		if takeoverExpected.Valid() {
 			operation = "ownership_transfer"
+			// A failed transfer did not advance authoritative ownership. Release the candidate
+			// before publishing the failure through closePeer so an observer that sees the
+			// failure can immediately retry without racing this handler's deferred cleanup.
+			if takeoverCandidateLease != nil {
+				s.takeoverCandidates.release(*takeoverCandidateLease)
+				takeoverCandidateLease = nil
+			}
 		}
 		s.closePeer(p, operation, err)
 		return
