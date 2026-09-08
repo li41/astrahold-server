@@ -39,6 +39,9 @@ func (r *Runtime) applySelfMitigationAction(
 	if !r.consumeActionClassResource(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 		return false
 	}
+	if !r.applyAcceptedActionClassResourceReduction(name, sessionID, actor.ID, prepared.Definition.ID, report) {
+		return false
+	}
 
 	// combat.Service.Commit runs only after this handler returns true. That commit starts both the
 	// cooldown and the Server-owned mitigation window, so rejected intents never create either.

@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-classes-v1-010",
+  "revision": "vertical-slice-classes-v1-011",
   "actions": [
     {
       "id": "basic-attack",
@@ -80,6 +80,15 @@
       "base_damage": 90,
       "damage_type": "magic",
       "cooldown_seconds": 1.25
+    },
+    {
+      "id": "starfire-cold-star-channel",
+      "effect": "self_mitigation",
+      "targets": ["entity"],
+      "range": 0.1,
+      "self_damage_reduction_percent": 10,
+      "duration_seconds": 2.0,
+      "cooldown_seconds": 20.0
     },
     {
       "id": "oathhealer-oathlight-strike",
