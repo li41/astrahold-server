@@ -11,65 +11,47 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case protocol.ClientMoveInput:
 		return json.Marshal(clientMoveInput{DX: m.DirectionX, DZ: m.DirectionZ})
 	case *protocol.ClientMoveInput:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientMoveInput{DX: m.DirectionX, DZ: m.DirectionZ})
 	case protocol.ClientUseAction:
 		return json.Marshal(clientUseAction{ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID, TargetX: m.TargetX, TargetZ: m.TargetZ})
 	case *protocol.ClientUseAction:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientUseAction{ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID, TargetX: m.TargetX, TargetZ: m.TargetZ})
 	case protocol.ClientEquipmentCommand:
 		return json.Marshal(clientEquipmentCommand{Operation: string(m.Operation), Slot: string(m.Slot), ItemArchetypeID: m.ItemArchetypeID})
 	case *protocol.ClientEquipmentCommand:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientEquipmentCommand{Operation: string(m.Operation), Slot: string(m.Slot), ItemArchetypeID: m.ItemArchetypeID})
 	case protocol.ClientPickupItem:
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
 	case *protocol.ClientPickupItem:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
 	case protocol.ClientUseItem:
 		return json.Marshal(clientUseItem{ItemArchetypeID: m.ItemArchetypeID})
 	case *protocol.ClientUseItem:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientUseItem{ItemArchetypeID: m.ItemArchetypeID})
 	case protocol.ClientInitialClassSelection:
 		return json.Marshal(clientInitialClassSelection{ClassID: m.ClassID})
 	case *protocol.ClientInitialClassSelection:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientInitialClassSelection{ClassID: m.ClassID})
 	case protocol.ClientInteractNPC:
 		return json.Marshal(clientInteractNPC{NPCEntityID: uint64(m.NPCEntityID)})
 	case *protocol.ClientInteractNPC:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientInteractNPC{NPCEntityID: uint64(m.NPCEntityID)})
 	case protocol.ClientShopCommand:
 		return json.Marshal(clientShopCommand{Operation: string(m.Operation), NPCEntityID: uint64(m.NPCEntityID), OfferID: m.OfferID})
 	case *protocol.ClientShopCommand:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientShopCommand{Operation: string(m.Operation), NPCEntityID: uint64(m.NPCEntityID), OfferID: m.OfferID})
 	case protocol.ClientRespawnRequest:
 		return json.Marshal(clientRespawnRequest{})
 	case *protocol.ClientRespawnRequest:
-		if m == nil {
-			return nil, ErrUnsupportedMessage
-		}
+		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientRespawnRequest{})
 	case protocol.ActionStarted:
 		return json.Marshal(actionStarted{ActionInstanceID: m.ActionInstanceID, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, TargetKind: string(m.TargetKind), TargetID: m.TargetID, TargetX: m.TargetX, TargetZ: m.TargetZ})
@@ -79,6 +61,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(itemUseResult{ClientActionSequence: m.ClientActionSequence, ItemArchetypeID: m.ItemArchetypeID, Outcome: string(m.Outcome), Reason: string(m.Reason), AppliedAmount: m.AppliedAmount, CooldownReadyTick: m.CooldownReadyTick})
 	case protocol.CharacterClassState:
 		return json.Marshal(characterClassState{ClassID: m.ClassID})
+	case protocol.CharacterClassResourceState:
+		return json.Marshal(characterClassResourceState{EntityID: uint64(m.EntityID), ResourceID: m.ResourceID, Current: m.Current, Max: m.Max})
 	case protocol.InitialClassSelectionResult:
 		return json.Marshal(initialClassSelectionResult{ClientActionSequence: m.ClientActionSequence, ClassID: m.ClassID, Outcome: string(m.Outcome), Reason: string(m.Reason)})
 	case protocol.SessionWelcome:
@@ -89,42 +73,30 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(entityDespawn{EntityID: uint64(m.EntityID)})
 	case protocol.WorldSnapshot:
 		out := worldSnapshot{Tick: m.Tick, Entities: make([]entityTransform, len(m.Entities))}
-		for i := range m.Entities {
-			out.Entities[i] = toEntityTransform(m.Entities[i])
-		}
+		for i := range m.Entities { out.Entities[i] = toEntityTransform(m.Entities[i]) }
 		return json.Marshal(out)
 	case protocol.PositionCorrection:
 		return json.Marshal(positionCorrection{Tick: m.Tick, EntityID: uint64(m.EntityID), Position: toPosition(m.Position), Yaw: m.Yaw, LastProcessedInputSequence: m.LastProcessedInputSequence})
 	case protocol.WorldDynamicState:
 		out := worldDynamicState{Revision: m.Revision, Blockers: make([]worldBlockerState, len(m.Blockers)), Gates: make([]worldGateState, len(m.Gates))}
-		for i, b := range m.Blockers {
-			out.Blockers[i] = worldBlockerState{ID: b.ID, Enabled: b.Enabled}
-		}
-		for i, g := range m.Gates {
-			out.Gates[i] = worldGateState{ID: g.ID, HP: g.HP, MaxHP: g.MaxHP, Destroyed: g.Destroyed}
-		}
+		for i, b := range m.Blockers { out.Blockers[i] = worldBlockerState{ID: b.ID, Enabled: b.Enabled} }
+		for i, g := range m.Gates { out.Gates[i] = worldGateState{ID: g.ID, HP: g.HP, MaxHP: g.MaxHP, Destroyed: g.Destroyed} }
 		return json.Marshal(out)
 	case protocol.EntityVitalsState:
 		return json.Marshal(entityVitalsState{EntityID: uint64(m.EntityID), HP: m.HP, MaxHP: m.MaxHP, MP: m.MP, MaxMP: m.MaxMP, Defeated: m.Defeated, ReviveProtectionUntilTick: m.ReviveProtectionUntilTick})
 	case protocol.InventorySnapshot:
 		out := inventorySnapshot{Revision: m.Revision, CurrentCarryWeight: m.CurrentCarryWeight, MaxCarryWeight: m.MaxCarryWeight, Items: make([]inventoryItemStack, len(m.Items))}
-		for i, item := range m.Items {
-			out.Items[i] = inventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity}
-		}
+		for i, item := range m.Items { out.Items[i] = inventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity} }
 		return json.Marshal(out)
 	case protocol.EquipmentSnapshot:
 		out := equipmentSnapshot{Revision: m.Revision, Slots: make([]equipmentSlotState, len(m.Slots))}
-		for i, slot := range m.Slots {
-			out.Slots[i] = equipmentSlotState{Slot: string(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID}
-		}
+		for i, slot := range m.Slots { out.Slots[i] = equipmentSlotState{Slot: string(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID} }
 		return json.Marshal(out)
 	case protocol.NPCInteraction:
 		return json.Marshal(npcInteraction{NPCEntityID: uint64(m.NPCEntityID), NPCArchetypeID: m.NPCArchetypeID, DisplayName: m.DisplayName, Text: m.Text})
 	case protocol.ShopSnapshot:
 		out := shopSnapshot{Revision: m.Revision, NPCEntityID: uint64(m.NPCEntityID), ShopID: m.ShopID, Offers: make([]shopOffer, len(m.Offers))}
-		for i, offer := range m.Offers {
-			out.Offers[i] = shopOffer{OfferID: offer.OfferID, ItemArchetypeID: offer.ItemArchetypeID, Quantity: offer.Quantity, CostArchetypeID: offer.CostArchetypeID, CostQuantity: offer.CostQuantity}
-		}
+		for i, offer := range m.Offers { out.Offers[i] = shopOffer{OfferID: offer.OfferID, ItemArchetypeID: offer.ItemArchetypeID, Quantity: offer.Quantity, CostArchetypeID: offer.CostArchetypeID, CostQuantity: offer.CostQuantity} }
 		return json.Marshal(out)
 	case protocol.SiegeMatchState:
 		return json.Marshal(siegeMatchState{Revision: m.Revision, Round: m.Round, MatchID: m.MatchID, AttackerID: m.AttackerID, DefenderID: m.DefenderID, YourTeam: string(m.YourTeam), Phase: string(m.Phase), BreachGateID: m.BreachGateID, ThroneObjectiveID: m.ThroneObjectiveID, GateBreached: m.GateBreached, WinnerTeam: string(m.WinnerTeam), WinnerID: m.WinnerID, CastleOwnerID: m.CastleOwnerID})
