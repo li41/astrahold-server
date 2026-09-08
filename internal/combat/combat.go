@@ -34,8 +34,9 @@ const (
 type ActionEffect string
 
 const (
-	EffectDamage    ActionEffect = "damage"
-	EffectResurrect ActionEffect = "resurrect"
+	EffectDamage         ActionEffect = "damage"
+	EffectResurrect      ActionEffect = "resurrect"
+	EffectSelfMitigation ActionEffect = "self_mitigation"
 )
 
 type DamageType string
@@ -64,6 +65,8 @@ type ActionDefinition struct {
 	DamageType                   DamageType      `json:"damage_type,omitempty"`
 	Blockable                    bool            `json:"blockable,omitempty"`
 	PhysicalDefenseIgnorePercent uint8           `json:"physical_defense_ignore_percent,omitempty"`
+	SelfDamageReductionPercent   uint8           `json:"self_damage_reduction_percent,omitempty"`
+	DurationSeconds              float32         `json:"duration_seconds,omitempty"`
 	ReviveHPPercent              uint8           `json:"revive_hp_percent,omitempty"`
 	MPCost                       uint32          `json:"mp_cost,omitempty"`
 	CooldownSeconds              float32         `json:"cooldown_seconds"`
@@ -121,10 +124,16 @@ type cooldownKey struct {
 	actionID string
 }
 
+type selfMitigationState struct {
+	DamageReductionPercent uint8
+	UntilTick              uint64
+}
+
 type Service struct {
-	actions        map[string]ActionDefinition
-	nextUseTick    map[cooldownKey]uint64
-	nextInstanceID uint64
+	actions              map[string]ActionDefinition
+	nextUseTick          map[cooldownKey]uint64
+	activeSelfMitigation map[world.EntityID]selfMitigationState
+	nextInstanceID       uint64
 }
 
 func LoadFile(path string) (Loaded, error) {
@@ -212,7 +221,7 @@ func Validate(definition Definition) error {
 
 		switch effectiveEffect(action.Effect) {
 		case EffectDamage:
-			if action.BaseDamage == 0 || !validDamageType(action.DamageType) || action.ReviveHPPercent != 0 {
+			if action.BaseDamage == 0 || !validDamageType(action.DamageType) || action.ReviveHPPercent != 0 || action.SelfDamageReductionPercent != 0 || action.DurationSeconds != 0 {
 				return fmt.Errorf("%w: damage action %q", ErrInvalidDefinition, action.ID)
 			}
 			if hasPointTarget && !positiveFinite(action.HitRadius) {
@@ -231,11 +240,18 @@ func Validate(definition Definition) error {
 				return fmt.Errorf("%w: physical-defense-ignore action %q", ErrInvalidDefinition, action.ID)
 			}
 		case EffectResurrect:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
+			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.SelfDamageReductionPercent != 0 || action.DurationSeconds != 0 || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
 				return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID)
 			}
 			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
 				return fmt.Errorf("%w: resurrect action %q must target entity only", ErrInvalidDefinition, action.ID)
+			}
+		case EffectSelfMitigation:
+			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.ReviveHPPercent != 0 || action.HitRadius != 0 || action.PointResolution != "" || action.SelfDamageReductionPercent == 0 || action.SelfDamageReductionPercent >= 100 || !positiveFinite(action.DurationSeconds) {
+				return fmt.Errorf("%w: self-mitigation action %q", ErrInvalidDefinition, action.ID)
+			}
+			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
+				return fmt.Errorf("%w: self-mitigation action %q must target entity only", ErrInvalidDefinition, action.ID)
 			}
 		default:
 			return fmt.Errorf("%w: action %q effect %q", ErrInvalidDefinition, action.ID, action.Effect)
@@ -259,7 +275,11 @@ func NewService(definitions []ActionDefinition) (*Service, error) {
 		copy.Targets = append([]TargetKind(nil), action.Targets...)
 		actions[action.ID] = copy
 	}
-	return &Service{actions: actions, nextUseTick: make(map[cooldownKey]uint64)}, nil
+	return &Service{
+		actions:              actions,
+		nextUseTick:          make(map[cooldownKey]uint64),
+		activeSelfMitigation: make(map[world.EntityID]selfMitigationState),
+	}, nil
 }
 
 func (s *Service) PrepareIntent(intent Intent, tick uint64) (PreparedAction, error) {
@@ -313,6 +333,41 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 func (s *Service) Commit(action PreparedAction, tick uint64, delta time.Duration) {
 	key := cooldownKey{entityID: action.ActorEntityID, actionID: action.Definition.ID}
 	s.nextUseTick[key] = tick + cooldownTicks(action.Definition.CooldownSeconds, delta)
+	if action.Definition.Effect != EffectSelfMitigation {
+		return
+	}
+	until := tick + cooldownTicks(action.Definition.DurationSeconds, delta)
+	if until < tick {
+		until = ^uint64(0)
+	}
+	s.activeSelfMitigation[action.ActorEntityID] = selfMitigationState{
+		DamageReductionPercent: action.Definition.SelfDamageReductionPercent,
+		UntilTick:              until,
+	}
+}
+
+// SelfDamageReductionPercent returns the current Server-owned transient mitigation for one entity.
+// Expiry is half-open [commit tick, until tick) and lazily cleared on first read at/after UntilTick.
+func (s *Service) SelfDamageReductionPercent(entityID world.EntityID, tick uint64) uint8 {
+	if s == nil || entityID == 0 {
+		return 0
+	}
+	state, ok := s.activeSelfMitigation[entityID]
+	if !ok {
+		return 0
+	}
+	if tick >= state.UntilTick {
+		delete(s.activeSelfMitigation, entityID)
+		return 0
+	}
+	return state.DamageReductionPercent
+}
+
+func (s *Service) ClearSelfMitigation(entityID world.EntityID) {
+	if s == nil || entityID == 0 {
+		return
+	}
+	delete(s.activeSelfMitigation, entityID)
 }
 
 func normalizeAction(action ActionDefinition) ActionDefinition {

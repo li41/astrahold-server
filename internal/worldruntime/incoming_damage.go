@@ -15,6 +15,7 @@ const physicalDefenseScale = 20.0
 var (
 	ErrUnsupportedIncomingDamageType = errors.New("worldruntime: unsupported incoming damage type")
 	ErrInvalidPhysicalDefenseIgnore  = errors.New("worldruntime: invalid physical defense ignore")
+	ErrInvalidSelfDamageReduction    = errors.New("worldruntime: invalid self damage reduction")
 )
 
 // DamageRequest is the already-legal Server-owned damage instance entering mitigation.
@@ -26,6 +27,7 @@ type DamageRequest struct {
 	DamageType                   combat.DamageType
 	Blockable                    bool
 	PhysicalDefenseIgnorePercent uint8
+	SelfDamageReductionPercent   uint8
 }
 
 // DamageResult is the single authoritative outcome used by HP mutation, combat events and
@@ -68,10 +70,13 @@ func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatal
 	return equipmentcatalog.Definition{}, false
 }
 
-func (r *Runtime) resolveIncomingDamage(request DamageRequest) (DamageResult, error) {
+func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (DamageResult, error) {
 	var shield *equipmentcatalog.Shield
 	if definition, ok := r.equippedLowTierShield(request.TargetEntityID); ok {
 		shield = definition.Shield
+	}
+	if request.SelfDamageReductionPercent == 0 && r.combat != nil {
+		request.SelfDamageReductionPercent = r.combat.SelfDamageReductionPercent(request.TargetEntityID, tick)
 	}
 	roll := uint32(0)
 	if request.DamageType == combat.DamagePhysical && request.Blockable && shield != nil && shield.BlockChancePercent > 0 {
@@ -82,14 +87,17 @@ func (r *Runtime) resolveIncomingDamage(request DamageRequest) (DamageResult, er
 
 // resolveDamageMitigation is pure so formula and probability boundaries are deterministic in tests.
 // Intermediate math stays float64; positive damage is rounded once at the end and has a minimum of 1.
-// Physical-defense ignore changes only the defense term for this damage instance; it never changes
-// block chance, block reduction, equipment state or any later attack.
+// Physical-defense ignore changes only the defense term for this damage instance. Self mitigation is
+// a separate Server-owned multiplier and never mutates block, defense, equipment or later damage.
 func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shield, blockRoll uint32) (DamageResult, error) {
 	if request.RawDamage == 0 {
 		return DamageResult{}, nil
 	}
 	if request.PhysicalDefenseIgnorePercent > 100 {
 		return DamageResult{}, ErrInvalidPhysicalDefenseIgnore
+	}
+	if request.SelfDamageReductionPercent >= 100 {
+		return DamageResult{}, ErrInvalidSelfDamageReduction
 	}
 
 	damage := float64(request.RawDamage)
@@ -113,6 +121,10 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 		}
 	default:
 		return DamageResult{}, ErrUnsupportedIncomingDamageType
+	}
+
+	if request.SelfDamageReductionPercent > 0 {
+		damage *= 1 - float64(request.SelfDamageReductionPercent)/100
 	}
 
 	rounded := math.Round(damage)

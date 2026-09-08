@@ -202,6 +202,7 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
 	if r.respawnPolicy != nil { r.respawnPolicy.Remove(s.EntityID) }
+	if r.combat != nil { r.combat.ClearSelfMitigation(s.EntityID) }
 	r.clearTargetResourcesForEntity(s.EntityID, report)
 	r.characters.Remove(s.EntityID)
 	r.characterIdentities.removeEntity(s.EntityID)
