@@ -50,6 +50,7 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 	}
 	snapshot := characterstate.Snapshot{
 		World:     r.characterStateWorld,
+		ClassID:   state.ClassID,
 		HP:        state.HP,
 		MaxHP:     state.MaxHP,
 		MP:        state.MP,
