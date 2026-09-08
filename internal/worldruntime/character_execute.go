@@ -57,13 +57,31 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 			return false
 		}
+
+		// Accuracy is an accepted-action outcome, not an action rejection. A miss therefore still
+		// emits ActionStarted and consumes the normal cooldown, but never enters damage/mitigation,
+		// HP mutation, threat, loot contribution, death, or shield block resolution.
+		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
+			r.emitActionStarted(actor.ID, startPrepared, tick, report)
+			r.emitCombatEvent(protocol.CombatEvent{
+				ActionInstanceID:  prepared.ActionInstanceID,
+				ActorEntityID:     actor.ID,
+				ActionID:          prepared.Definition.ID,
+				Result:            protocol.CombatEventMiss,
+				TargetEntityID:    targetID,
+				CooldownReadyTick: cooldownReadyTick,
+			}, tick, report)
+			return true
+		}
+
 		beforeState, ok := r.combatantState(targetID)
 		if !ok {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: ErrSessionEntityNotFound})
 			return false
 		}
 
-		// Weapon RNG is reached only after authoritative target/range/LOS/protection/resource legality.
+		// Weapon RNG is reached only after authoritative target/range/LOS/protection/resource legality
+		// and the Server-owned accuracy roll.
 		rawDamage := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
 		damageResult, err := r.resolveIncomingDamage(DamageRequest{
 			SourceEntityID: actor.ID,
