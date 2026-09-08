@@ -96,12 +96,7 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case protocol.EntityVitalsState:
 		return json.Marshal(entityVitalsState{EntityID: uint64(m.EntityID), HP: m.HP, MaxHP: m.MaxHP, MP: m.MP, MaxMP: m.MaxMP, Defeated: m.Defeated, ReviveProtectionUntilTick: m.ReviveProtectionUntilTick})
 	case protocol.InventorySnapshot:
-		out := inventorySnapshot{
-			Revision:           m.Revision,
-			CurrentCarryWeight: m.CurrentCarryWeight,
-			MaxCarryWeight:     m.MaxCarryWeight,
-			Items:              make([]inventoryItemStack, len(m.Items)),
-		}
+		out := inventorySnapshot{Revision: m.Revision, CurrentCarryWeight: m.CurrentCarryWeight, MaxCarryWeight: m.MaxCarryWeight, Items: make([]inventoryItemStack, len(m.Items))}
 		for i, item := range m.Items {
 			out.Items[i] = inventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity}
 		}
@@ -123,7 +118,7 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case protocol.SiegeMatchState:
 		return json.Marshal(siegeMatchState{Revision: m.Revision, Round: m.Round, MatchID: m.MatchID, AttackerID: m.AttackerID, DefenderID: m.DefenderID, YourTeam: string(m.YourTeam), Phase: string(m.Phase), BreachGateID: m.BreachGateID, ThroneObjectiveID: m.ThroneObjectiveID, GateBreached: m.GateBreached, WinnerTeam: string(m.WinnerTeam), WinnerID: m.WinnerID, CastleOwnerID: m.CastleOwnerID})
 	case protocol.CombatEvent:
-		return json.Marshal(combatEvent{ActionInstanceID: m.ActionInstanceID, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, Result: string(m.Result), TargetEntityID: uint64(m.TargetEntityID), ImpactX: m.ImpactX, ImpactZ: m.ImpactZ, Damage: m.Damage, CooldownReadyTick: m.CooldownReadyTick})
+		return json.Marshal(combatEvent{ActionInstanceID: m.ActionInstanceID, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, Result: string(m.Result), TargetEntityID: uint64(m.TargetEntityID), ImpactX: m.ImpactX, ImpactZ: m.ImpactZ, Damage: m.Damage, Blocked: m.Blocked, CooldownReadyTick: m.CooldownReadyTick})
 	default:
 		return nil, ErrUnsupportedMessage
 	}

@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-pve-wolf-001",
+  "revision": "vertical-slice-pve-shield-v1-002",
   "actions": [
     {
       "id": "basic-attack",
@@ -9,6 +9,7 @@
       "range": 4.5,
       "base_damage": 100,
       "damage_type": "physical",
+      "blockable": true,
       "cooldown_seconds": 0.5
     },
     {
@@ -29,7 +30,7 @@
       "hit_radius": 0.9,
       "point_resolution": "line_first",
       "base_damage": 150,
-      "damage_type": "physical",
+      "damage_type": "magic",
       "mp_cost": 60,
       "cooldown_seconds": 2.0
     },
@@ -41,7 +42,7 @@
       "hit_radius": 1.75,
       "point_resolution": "endpoint_nearest",
       "base_damage": 220,
-      "damage_type": "physical",
+      "damage_type": "magic",
       "cooldown_seconds": 4.5
     },
     {
@@ -59,6 +60,7 @@
       "range": 2.0,
       "base_damage": 90,
       "damage_type": "physical",
+      "blockable": true,
       "cooldown_seconds": 1.35
     }
   ]

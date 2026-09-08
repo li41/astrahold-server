@@ -1,4 +1,4 @@
-// Package combat 定義 Astrahold 可重用的權威 Action / Damage source。
+// Package combat defines Astrahold reusable authoritative Action / Damage sources.
 package combat
 
 import (
@@ -42,14 +42,15 @@ type DamageType string
 
 const (
 	DamagePhysical DamageType = "physical"
+	DamageMagic    DamageType = "magic"
 )
 
 var (
 	ErrUnsupportedSchema = errors.New("combat: unsupported schema version")
 	ErrInvalidDefinition = errors.New("combat: invalid definition")
-	ErrUnknownAction      = errors.New("combat: unknown action")
-	ErrTargetNotAllowed   = errors.New("combat: target not allowed")
-	ErrActionCooldown     = errors.New("combat: action cooldown")
+	ErrUnknownAction     = errors.New("combat: unknown action")
+	ErrTargetNotAllowed  = errors.New("combat: target not allowed")
+	ErrActionCooldown    = errors.New("combat: action cooldown")
 )
 
 type ActionDefinition struct {
@@ -61,6 +62,7 @@ type ActionDefinition struct {
 	PointResolution PointResolution `json:"point_resolution,omitempty"`
 	BaseDamage      uint32          `json:"base_damage,omitempty"`
 	DamageType      DamageType      `json:"damage_type,omitempty"`
+	Blockable       bool            `json:"blockable,omitempty"`
 	ReviveHPPercent uint8           `json:"revive_hp_percent,omitempty"`
 	MPCost          uint32          `json:"mp_cost,omitempty"`
 	CooldownSeconds float32         `json:"cooldown_seconds"`
@@ -82,9 +84,10 @@ type DamageSource struct {
 }
 
 type Damage struct {
-	Source DamageSource
-	Type   DamageType
-	Amount uint32
+	Source    DamageSource
+	Type      DamageType
+	Amount    uint32
+	Blockable bool
 }
 
 type Target struct {
@@ -173,6 +176,7 @@ func Validate(definition Definition) error {
 		targets := make(map[TargetKind]struct{}, len(action.Targets))
 		hasPointTarget := false
 		hasGateTarget := false
+		hasEntityTarget := false
 		for _, target := range action.Targets {
 			if !validTargetKind(target) {
 				return fmt.Errorf("%w: action %q target %q", ErrInvalidDefinition, action.ID, target)
@@ -181,11 +185,13 @@ func Validate(definition Definition) error {
 				return fmt.Errorf("%w: action %q duplicate target %q", ErrInvalidDefinition, action.ID, target)
 			}
 			targets[target] = struct{}{}
-			if target == TargetPoint {
+			switch target {
+			case TargetPoint:
 				hasPointTarget = true
-			}
-			if target == TargetGate {
+			case TargetGate:
 				hasGateTarget = true
+			case TargetEntity:
+				hasEntityTarget = true
 			}
 		}
 		// The current siege gate path validates and mutates in one operation. Until that path has a
@@ -210,8 +216,14 @@ func Validate(definition Definition) error {
 			if hasPointTarget && !positiveFinite(action.HitRadius) {
 				return fmt.Errorf("%w: point damage action %q requires hit_radius", ErrInvalidDefinition, action.ID)
 			}
+			// Blockability is authored independently from damage type. v1 shields only block
+			// explicitly blockable physical entity-target actions; magic/point/AoE damage never
+			// becomes blockable merely because it resolves to an entity later.
+			if action.Blockable && (action.DamageType != DamagePhysical || !hasEntityTarget || hasPointTarget) {
+				return fmt.Errorf("%w: blockable action %q", ErrInvalidDefinition, action.ID)
+			}
 		case EffectResurrect:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
+			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
 				return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID)
 			}
 			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
@@ -280,9 +292,10 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 	}
 	if action.Effect == EffectDamage {
 		prepared.Damage = Damage{
-			Source: DamageSource{ActorEntityID: actorEntityID, ActionID: actionID},
-			Type:   action.DamageType,
-			Amount: action.BaseDamage,
+			Source:    DamageSource{ActorEntityID: actorEntityID, ActionID: actionID},
+			Type:      action.DamageType,
+			Amount:    action.BaseDamage,
+			Blockable: action.Blockable,
 		}
 	}
 	return prepared, nil
@@ -337,7 +350,7 @@ func validPointResolution(resolution PointResolution) bool {
 
 func validDamageType(kind DamageType) bool {
 	switch kind {
-	case DamagePhysical:
+	case DamagePhysical, DamageMagic:
 		return true
 	default:
 		return false
