@@ -61,8 +61,10 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 
 		// Accuracy is an accepted-action outcome, not an action rejection. A miss therefore still
 		// emits ActionStarted and consumes the normal cooldown, but never enters damage/mitigation,
-		// HP mutation, threat, loot contribution, death, shield block resolution, or class-resource gain.
+		// HP mutation, threat, loot contribution, death, shield block resolution, or hit-conditioned
+		// class-resource gain. Accepted-action resources such as Starfire heat still apply on a miss.
 		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
+			r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 			r.emitActionStarted(actor.ID, startPrepared, tick, report)
 			r.emitCombatEvent(protocol.CombatEvent{
 				ActionInstanceID:  prepared.ActionInstanceID,
@@ -117,6 +119,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			}
 		}
 		r.markEntityVitalsDirty(targetID)
+		r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 		if policy, ok := classaction.ForAction(prepared.Definition.ID); ok && policy.HitResource != "" && policy.HitGain > 0 {
 			if _, err := r.characters.GainClassResource(actor.ID, policy.HitResource, policy.HitGain); err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
@@ -140,5 +143,19 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 	default:
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: combat.ErrInvalidDefinition})
 		return false
+	}
+}
+
+func (r *Runtime) applyAcceptedActionClassResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
+	policy, ok := classaction.ForAction(actionID)
+	if !ok || policy.AcceptedResource == "" || policy.AcceptedGain == 0 {
+		return
+	}
+	if _, err := r.characters.GainClassResource(actorID, policy.AcceptedResource, policy.AcceptedGain); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+		return
+	}
+	if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID {
+		r.sendCurrentClassResourceState(sourceSession, report)
 	}
 }
