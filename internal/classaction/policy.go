@@ -17,6 +17,7 @@ const (
 	RangerHuntingShot          = "ranger-hunting-shot"
 	RangerArmorPiercingArrow   = "ranger-armor-piercing-arrow"
 	StarfireFireBolt           = "starfire-fire-bolt"
+	StarfireColdStarChannel    = "starfire-cold-star-channel"
 	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
 	ShadowbladeDualBladeStrike = "shadowblade-dual-blade-strike"
 	ShadowbladeFlawExecute     = "shadowblade-flaw-execute"
@@ -49,21 +50,23 @@ func (p TargetResourceSpendPolicy) Resolve(current uint32) (amount, damage uint3
 }
 
 type Policy struct {
-	RequiredClass       classid.ID
-	CostResource        classresource.ID
-	CostAmount          uint32
-	AcceptedResource    classresource.ID
-	AcceptedGain        uint32
-	HitResource         classresource.ID
-	HitGain             uint32
-	HitProgressResource classresource.ID
-	HitProgressGain     uint32
-	HitTargetResource   targetresource.ID
-	HitTargetGain       uint32
-	HitTargetMax        uint32
-	HitTargetICDSeconds float64
-	RequireSideOrBack   bool
-	TargetSpend         TargetResourceSpendPolicy
+	RequiredClass             classid.ID
+	CostResource              classresource.ID
+	CostAmount                uint32
+	AcceptedResource          classresource.ID
+	AcceptedGain              uint32
+	AcceptedReductionResource classresource.ID
+	AcceptedReductionAmount   uint32
+	HitResource               classresource.ID
+	HitGain                   uint32
+	HitProgressResource       classresource.ID
+	HitProgressGain           uint32
+	HitTargetResource         targetresource.ID
+	HitTargetGain             uint32
+	HitTargetMax              uint32
+	HitTargetICDSeconds       float64
+	RequireSideOrBack         bool
+	TargetSpend               TargetResourceSpendPolicy
 }
 
 func ForAction(actionID string) (Policy, bool) {
@@ -82,6 +85,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Ranger, CostResource: classresource.HuntMomentum, CostAmount: 30}, true
 	case StarfireFireBolt:
 		return Policy{RequiredClass: classid.StarfireMage, AcceptedResource: classresource.StarHeat, AcceptedGain: 8}, true
+	case StarfireColdStarChannel:
+		return Policy{RequiredClass: classid.StarfireMage, AcceptedReductionResource: classresource.StarHeat, AcceptedReductionAmount: 45}, true
 	case OathhealerOathlightStrike:
 		return Policy{RequiredClass: classid.Oathhealer, HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
 	case ShadowbladeDualBladeStrike:
