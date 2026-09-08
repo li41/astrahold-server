@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-classes-v1-005",
+  "revision": "vertical-slice-classes-v1-006",
   "actions": [
     {
       "id": "basic-attack",
@@ -59,6 +59,16 @@
       "base_damage": 85,
       "damage_type": "magic",
       "cooldown_seconds": 1.2
+    },
+    {
+      "id": "shadowblade-dual-blade-strike",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 4.5,
+      "base_damage": 90,
+      "damage_type": "physical",
+      "blockable": true,
+      "cooldown_seconds": 0.95
     },
     {
       "id": "shatter-strike",
