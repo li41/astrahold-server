@@ -102,11 +102,11 @@ func TestClassWithoutRuntimeResourceHasNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	const entityID world.EntityID = 44
-	if err := service.RegisterState(State{EntityID: entityID, ClassID: classid.Oathhealer, HP: 1000, MaxHP: 1000}); err != nil {
+	if err := service.RegisterState(State{EntityID: entityID, ClassID: classid.Shadowblade, HP: 1000, MaxHP: 1000}); err != nil {
 		t.Fatal(err)
 	}
 	state, _ := service.State(entityID)
-	if state.ClassResourceID != classresource.Empty || state.ClassResource != 0 || state.MaxClassResource != 0 {
-		t.Fatalf("unexpected oathhealer resource = %q %d/%d", state.ClassResourceID, state.ClassResource, state.MaxClassResource)
+	if state.ClassResourceID != classresource.Empty || state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0 {
+		t.Fatalf("unexpected shadowblade resource = %q %d/%d progress=%d", state.ClassResourceID, state.ClassResource, state.MaxClassResource, state.ClassResourceProgress)
 	}
 }

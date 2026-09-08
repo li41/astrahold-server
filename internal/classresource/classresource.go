@@ -15,13 +15,15 @@ const (
 	Momentum     ID = "momentum"
 	HuntMomentum ID = "hunt_momentum"
 	StarHeat     ID = "star_heat"
+	OathSeal     ID = "oath_seal"
 )
 
 var ErrResourceMismatch = errors.New("classresource: resource mismatch")
 
 type Definition struct {
-	ID  ID
-	Max uint32
+	ID                ID
+	Max               uint32
+	ProgressThreshold uint32
 }
 
 // PrimaryForClass returns the authored primary combat resource for a class. A missing definition
@@ -36,6 +38,8 @@ func PrimaryForClass(id classid.ID) (Definition, bool) {
 		return Definition{ID: HuntMomentum, Max: 100}, true
 	case classid.StarfireMage:
 		return Definition{ID: StarHeat, Max: 100}, true
+	case classid.Oathhealer:
+		return Definition{ID: OathSeal, Max: 3, ProgressThreshold: 100}, true
 	default:
 		return Definition{}, false
 	}
