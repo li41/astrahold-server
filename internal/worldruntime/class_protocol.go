@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -88,37 +89,27 @@ func (r *Runtime) authoritativeClassID(s *session.Session) string {
 	return string(state.ClassID)
 }
 
-func (r *Runtime) sendCurrentClassState(s *session.Session, report *StepReport) {
-	if s == nil || report == nil {
+func (r *Runtime) queueCurrentClassState(s *session.Session) {
+	if s == nil {
 		return
 	}
-	r.sendClassMessage(s, protocol.CharacterClassState{ClassID: r.authoritativeClassID(s)}, report)
+	pending := r.pendingClassMessages[s.ID]
+	if len(pending) >= maxPendingClassMessagesPerSession {
+		_ = s.Connection().Close()
+		return
+	}
+	r.pendingClassMessages[s.ID] = append(pending, protocol.CharacterClassState{ClassID: r.authoritativeClassID(s)})
 }
 
 // publishDurableInitialClassSelection emits authoritative class state to the current owner after
 // world-owner commit. The correlated result is emitted only if the original ownership fence is
 // still current, so takeover never receives another connection's result.
-func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, target classid.ID, report *StepReport) {
-	feedback, hasFeedback := r.initialClassSelectionFeedback[intentID]
-	if report == nil {
+func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, identity characteridentity.Binding, target classid.ID, report *StepReport) {
+	if report == nil || !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted {
 		return
 	}
-
-	var current SessionOwnershipFence
-	if hasFeedback {
-		current = feedback.ownership
-	}
-	if hasFeedback {
-		if ownership, err := r.characterIdentities.currentOwnershipByCharacterID(feedback.ownership.CharacterID); err == nil {
-			current = ownership
-		} else {
-			current = SessionOwnershipFence{}
-		}
-	}
-	if !hasFeedback {
-		return
-	}
-	if !current.Valid() {
+	current, err := r.characterIdentities.currentOwnership(identity)
+	if err != nil {
 		return
 	}
 	s, ok := r.sessions.Get(current.SessionID)
@@ -130,9 +121,10 @@ func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, target cl
 		return
 	}
 
-	// State is truth and is deliberately ordered before the request-correlation result.
+	// State is truth and is deliberately ordered before any request-correlation result.
 	r.sendClassMessage(s, protocol.CharacterClassState{ClassID: string(target)}, report)
-	if current == feedback.ownership {
+	feedback, hasFeedback := r.initialClassSelectionFeedback[intentID]
+	if hasFeedback && current == feedback.ownership {
 		r.sendClassMessage(s, protocol.InitialClassSelectionResult{
 			ClientActionSequence: feedback.clientActionSequence,
 			ClassID:              string(target),
