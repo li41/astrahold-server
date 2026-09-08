@@ -204,18 +204,6 @@ func reliableConnectionForFence(t *testing.T, rt *Runtime, fence SessionOwnershi
 	return conn
 }
 
-func drainReliable(conn *session.QueueConnection) []protocol.Envelope {
-	out := make([]protocol.Envelope, 0)
-	for {
-		select {
-		case envelope := <-conn.Reliable():
-			out = append(out, envelope)
-		default:
-			return out
-		}
-	}
-}
-
 func classProtocolMessages(envelopes []protocol.Envelope) []protocol.Message {
 	out := make([]protocol.Message, 0)
 	for _, envelope := range envelopes {
