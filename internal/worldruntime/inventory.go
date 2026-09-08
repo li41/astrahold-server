@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/inventory"
@@ -79,9 +80,12 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
 		r.inventories[identity] = inv
 	}
-	// Class state is a separate authoritative protocol message, but it shares the same join
-	// bootstrap seam so a reconnect always learns durable profession identity.
-	r.queueCurrentClassState(s)
+	// ClassID is durable character identity. Only trusted/durable characters receive a join or
+	// reconnect class bootstrap. Ephemeral development identities cannot persist a profession and
+	// therefore do not receive a misleading durable CharacterClassState.
+	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
+		r.queueCurrentClassState(s)
+	}
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
 
