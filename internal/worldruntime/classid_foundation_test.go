@@ -112,7 +112,7 @@ func TestEquipmentAllowListUsesCanonicalClassID(t *testing.T) {
 		Kind: equipmentcatalog.KindWeapon,
 		Slot: equipmentcatalog.SlotMainHand,
 		ClassPolicy: equipmentcatalog.ClassPolicyAllowList,
-		ClassAllowList: []string{string(classid.Oathguard)},
+		AllowedClassIDs: []string{string(classid.Oathguard)},
 	}
 	if !equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand, classid.Oathguard) {
 		t.Fatal("allow-listed ClassID should be legal")
