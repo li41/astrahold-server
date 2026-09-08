@@ -76,6 +76,46 @@ func (r *Runtime) consumeActionClassResource(
 	return true
 }
 
+// applyAcceptedActionClassResourceReduction commits a Server-authored reduction that is not a
+// legality cost. The amount clamps at zero, so a cooling/relief action remains usable when the
+// current burden is below the authored reduction amount. This is deliberately distinct from
+// CostResource, whose insufficiency rejects the action.
+func (r *Runtime) applyAcceptedActionClassResourceReduction(
+	name string,
+	sourceSessionID session.ID,
+	actorID world.EntityID,
+	actionID string,
+	report *StepReport,
+) bool {
+	policy, ok := classaction.ForAction(actionID)
+	if !ok || policy.AcceptedReductionResource == classresource.Empty || policy.AcceptedReductionAmount == 0 {
+		return true
+	}
+	state, ok := r.characters.State(actorID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: character.ErrCharacterNotFound})
+		return false
+	}
+	if state.ClassResourceID != policy.AcceptedReductionResource || state.MaxClassResource == 0 {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: classresource.ErrResourceMismatch})
+		return false
+	}
+	amount := policy.AcceptedReductionAmount
+	if amount > state.ClassResource {
+		amount = state.ClassResource
+	}
+	if amount > 0 {
+		if _, err := r.characters.SpendClassResource(actorID, policy.AcceptedReductionResource, amount); err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
+			return false
+		}
+	}
+	if sourceSession, ok := r.sessions.Get(sourceSessionID); ok && sourceSession.EntityID == actorID {
+		r.sendCurrentClassResourceState(sourceSession, report)
+	}
+	return true
+}
+
 // consumeActionMP is called only after target/range/LOS legality has passed and immediately
 // before an action becomes accepted. A rejection is source-session-only feedback and does not
 // mutate MP, cooldown, target HP, or presentation state.
