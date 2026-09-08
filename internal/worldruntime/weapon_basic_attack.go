@@ -19,9 +19,9 @@ const (
 	maxWeaponHitChancePercent   int64 = 98
 )
 
-// weaponAccuracyRoll remains package-private so production always owns the roll. Tests in this
-// package may replace it temporarily to make authoritative hit/miss integration coverage exact.
-var weaponAccuracyRoll = rand.Uint32
+// weaponAccuracyRoll remains package-private so production always owns the 0..99 roll. Tests in
+// this package may replace it temporarily to make authoritative hit/miss integration coverage exact.
+var weaponAccuracyRoll = func() uint32 { return rand.Uint32N(100) }
 
 func (r *Runtime) equippedLowTierWeapon(actorID world.EntityID, sourceSessionID session.ID) (equipmentcatalog.Definition, bool) {
 	if r == nil || sourceSessionID == 0 {
@@ -79,8 +79,8 @@ func weaponBasicAttackHitChancePercent(accuracyModifier int32) uint32 {
 	return uint32(chance)
 }
 
-func weaponBasicAttackHits(accuracyModifier int32, roll uint32) bool {
-	return roll%100 < weaponBasicAttackHitChancePercent(accuracyModifier)
+func weaponBasicAttackHits(accuracyModifier int32, rollPercent uint32) bool {
+	return rollPercent < weaponBasicAttackHitChancePercent(accuracyModifier)
 }
 
 // resolveEquippedBasicAttackHit applies the v1 accuracy formula only to an entity-target
