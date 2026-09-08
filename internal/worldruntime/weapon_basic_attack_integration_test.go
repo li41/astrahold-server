@@ -36,7 +36,7 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, .1))
 	monsterID := world.EntityID(9001)
 	monsterEntity := world.EntityState{
-		ID: monsterID, Kind: world.EntityMonster, ArchetypeID: "test-large-monster",
+		ID: monsterID, Kind: world.EntityMonster, ArchetypeID: "test-large-monster", BodySize: world.EntityBodySizeLarge,
 		Transform: world.Transform{Position: world.Position{X: 2, Z: 0, Layer: 0}},
 	}
 	if err := sim.Spawn(monsterEntity, 4, .35, .5); err != nil {
