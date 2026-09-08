@@ -41,6 +41,7 @@ func (r *Runtime) dispatchPreparedAction(name string, sourceSessionID session.ID
 		r.bumpDynamicRevision()
 	case combat.TargetEntity:
 		if r.applyEntityAction(name, sourceSessionID, clientActionSequence, actor, prepared, prepared, tick, cooldownReadyTick, report) {
+			r.faceAcceptedClientEntityAction(actor, prepared, sourceSessionID, report)
 			r.combat.Commit(prepared, tick, delta)
 			if prepared.Definition.Effect == combat.EffectDamage {
 				r.cancelReviveProtectionByDamageAction(actor.ID, report)
