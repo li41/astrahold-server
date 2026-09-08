@@ -101,6 +101,14 @@ func (s *Service) GainClassResource(id world.EntityID, resourceID classresource.
 	missing := state.MaxClassResource - state.ClassResource; if amount > missing { amount = missing }; state.ClassResource += amount; s.states[id] = state; return state, nil
 }
 
+func (s *Service) SpendClassResource(id world.EntityID, resourceID classresource.ID, amount uint32) (State, error) {
+	state, ok := s.states[id]; if !ok { return State{}, ErrCharacterNotFound }; if state.Defeated { return state, ErrCharacterDefeated }
+	if resourceID == classresource.Empty || state.ClassResourceID != resourceID || state.MaxClassResource == 0 { return state, classresource.ErrResourceMismatch }
+	if amount == 0 { return state, nil }
+	if state.ClassResource < amount { return state, ErrInsufficientResource }
+	state.ClassResource -= amount; s.states[id] = state; return state, nil
+}
+
 func (s *Service) GainClassResourceProgress(id world.EntityID, resourceID classresource.ID, amount uint32) (State, bool, error) {
 	state, ok := s.states[id]; if !ok { return State{}, false, ErrCharacterNotFound }; if state.Defeated { return state, false, ErrCharacterDefeated }
 	definition, defined := classresource.PrimaryForClass(state.ClassID)

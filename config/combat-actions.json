@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "revision": "vertical-slice-classes-v1-007",
+  "revision": "vertical-slice-classes-v1-008",
   "actions": [
     {
       "id": "basic-attack",
@@ -31,6 +31,16 @@
       "damage_type": "physical",
       "blockable": true,
       "cooldown_seconds": 1.35
+    },
+    {
+      "id": "breaker-stagger-strike",
+      "effect": "damage",
+      "targets": ["entity"],
+      "range": 4.5,
+      "base_damage": 190,
+      "damage_type": "physical",
+      "blockable": true,
+      "cooldown_seconds": 10.0
     },
     {
       "id": "ranger-hunting-shot",

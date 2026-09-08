@@ -62,7 +62,9 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			}
 			return false
 		}
+		if !r.validateActionClassResourceCost(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
+		if !r.consumeActionClassResource(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 
 		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
 			r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)

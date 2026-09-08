@@ -32,6 +32,25 @@ func TestBreakerHeavySlashPolicy(t *testing.T) {
 	if policy.HitResource != classresource.Momentum || policy.HitGain != 10 {
 		t.Fatalf("hit resource = %q +%d, want momentum +10", policy.HitResource, policy.HitGain)
 	}
+	if policy.CostResource != classresource.Empty || policy.CostAmount != 0 {
+		t.Fatalf("unexpected heavy slash cost = %q %d", policy.CostResource, policy.CostAmount)
+	}
+}
+
+func TestBreakerStaggerStrikePolicy(t *testing.T) {
+	policy, ok := ForAction(BreakerStaggerStrike)
+	if !ok {
+		t.Fatal("expected stagger strike policy")
+	}
+	if policy.RequiredClass != classid.Breaker {
+		t.Fatalf("RequiredClass = %q, want %q", policy.RequiredClass, classid.Breaker)
+	}
+	if policy.CostResource != classresource.Momentum || policy.CostAmount != 20 {
+		t.Fatalf("cost = %q %d, want momentum 20", policy.CostResource, policy.CostAmount)
+	}
+	if policy.AcceptedResource != classresource.Empty || policy.HitResource != classresource.Empty || policy.HitProgressResource != classresource.Empty {
+		t.Fatalf("unexpected stagger strike resource gain policy = %+v", policy)
+	}
 }
 
 func TestValidateClass(t *testing.T) {
@@ -46,6 +65,12 @@ func TestValidateClass(t *testing.T) {
 	}
 	if err := ValidateClass(BreakerHeavySlash, classid.Oathguard); !errors.Is(err, ErrWrongClass) {
 		t.Fatalf("oathguard heavy-slash error = %v, want ErrWrongClass", err)
+	}
+	if err := ValidateClass(BreakerStaggerStrike, classid.Breaker); err != nil {
+		t.Fatalf("breaker stagger strike rejected: %v", err)
+	}
+	if err := ValidateClass(BreakerStaggerStrike, classid.Ranger); !errors.Is(err, ErrWrongClass) {
+		t.Fatalf("ranger stagger-strike error = %v, want ErrWrongClass", err)
 	}
 	if err := ValidateClass("basic-attack", ""); err != nil {
 		t.Fatalf("unscoped action rejected: %v", err)
