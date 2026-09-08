@@ -8,7 +8,10 @@ import (
 )
 
 func TestAssignInitialClassAllowsOnlyUnassignedToCanonical(t *testing.T) {
-	service := NewService()
+	service, err := NewService(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Register(1); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +31,10 @@ func TestAssignInitialClassAllowsOnlyUnassignedToCanonical(t *testing.T) {
 }
 
 func TestAssignInitialClassRejectsInvalidAndMissingCharacter(t *testing.T) {
-	service := NewService()
+	service, err := NewService(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Register(1); err != nil {
 		t.Fatal(err)
 	}
