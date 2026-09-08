@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -23,6 +24,7 @@ var (
 
 type State struct {
 	EntityID world.EntityID
+	ClassID  classid.ID
 	HP       uint32
 	MaxHP    uint32
 	MP       uint32
@@ -56,8 +58,9 @@ func (s *Service) Register(id world.EntityID) error {
 	return s.RegisterState(State{EntityID: id, HP: s.defaultMaxHP, MaxHP: s.defaultMaxHP, MP: s.defaultMaxMP, MaxMP: s.defaultMaxMP})
 }
 
-// RegisterState installs an already-authoritative character vitals state for a newly
-// spawned world incarnation. A legacy caller that supplies neither MP nor MaxMP is migrated
+// RegisterState installs an already-authoritative character state for a newly spawned world
+// incarnation. Empty ClassID is the canonical unassigned state; non-empty ClassID must come from
+// the locked Server vocabulary. A legacy caller that supplies neither MP nor MaxMP is migrated
 // to the service default at this boundary; partially specified MP state is rejected.
 func (s *Service) RegisterState(state State) error {
 	if state.EntityID == 0 {
@@ -78,6 +81,9 @@ func (s *Service) RegisterState(state State) error {
 }
 
 func validateState(state State) error {
+	if state.ClassID != "" && !classid.IsCanonical(state.ClassID) {
+		return ErrInvalidState
+	}
 	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP {
 		return ErrInvalidState
 	}
