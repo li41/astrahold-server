@@ -38,7 +38,7 @@ func TestBreakerStaggerStrikeClosesBuildSpendLoopAndCooldownDoesNotDoubleSpend(t
 	if err := rt.EnqueueUseAction(s.ID, 2, heavy); err != nil {
 		t.Fatal(err)
 	}
-	if report := rt.Step(29, 50*time.Millisecond); len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
+	if report := rt.Step(30, 50*time.Millisecond); len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
 		t.Fatalf("second heavy slash report=%#v", report)
 	}
 	actor, ok := rt.characters.State(s.EntityID)
@@ -50,7 +50,7 @@ func TestBreakerStaggerStrikeClosesBuildSpendLoopAndCooldownDoesNotDoubleSpend(t
 	if err := rt.EnqueueUseAction(s.ID, 3, stagger); err != nil {
 		t.Fatal(err)
 	}
-	report := rt.Step(30, 50*time.Millisecond)
+	report := rt.Step(31, 50*time.Millisecond)
 	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
 		t.Fatalf("stagger strike report=%#v", report)
 	}
@@ -81,7 +81,7 @@ func TestBreakerStaggerStrikeClosesBuildSpendLoopAndCooldownDoesNotDoubleSpend(t
 	if err := rt.EnqueueUseAction(s.ID, 4, stagger); err != nil {
 		t.Fatal(err)
 	}
-	report = rt.Step(31, 50*time.Millisecond)
+	report = rt.Step(32, 50*time.Millisecond)
 	if len(report.ActionRejections) != 1 {
 		t.Fatalf("cooldown repeat report=%#v", report)
 	}
