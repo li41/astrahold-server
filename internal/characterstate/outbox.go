@@ -9,19 +9,20 @@ import (
 )
 
 var (
-	ErrInvalidOutboxCapacity = errors.New("characterstate: invalid outbox capacity")
-	ErrSaveOutboxFull        = errors.New("characterstate: save outbox full")
-	ErrSaveCompletionFull    = errors.New("characterstate: save completion lane full")
-	ErrSaveIntentOverflow    = errors.New("characterstate: save intent id overflow")
-	ErrUnknownSaveIntent     = errors.New("characterstate: unknown save intent")
-	ErrSaveConfirmOutOfOrder = errors.New("characterstate: save confirm out of order")
+	ErrInvalidOutboxCapacity  = errors.New("characterstate: invalid outbox capacity")
+	ErrSaveOutboxFull         = errors.New("characterstate: save outbox full")
+	ErrSaveCompletionFull     = errors.New("characterstate: save completion lane full")
+	ErrSaveCompletionPending  = errors.New("characterstate: save completion already pending")
+	ErrSaveIntentOverflow     = errors.New("characterstate: save intent id overflow")
+	ErrUnknownSaveIntent      = errors.New("characterstate: unknown save intent")
+	ErrSaveConfirmOutOfOrder  = errors.New("characterstate: save confirm out of order")
 )
 
 type SaveIntent struct {
-	IntentID             uint64
-	Identity             characteridentity.Binding
-	Snapshot             Snapshot
-	CompletionRequested  bool
+	IntentID            uint64
+	Identity            characteridentity.Binding
+	Snapshot            Snapshot
+	CompletionRequested bool
 }
 
 type Outbox struct {
@@ -31,6 +32,7 @@ type Outbox struct {
 	pending               []SaveIntent
 	completed             []SaveIntent
 	completionOutstanding int
+	completionByCharacter map[characteridentity.ID]SaveIntent
 }
 
 func NewOutbox(capacity int) (*Outbox, error) {
@@ -38,9 +40,10 @@ func NewOutbox(capacity int) (*Outbox, error) {
 		return nil, ErrInvalidOutboxCapacity
 	}
 	return &Outbox{
-		capacity:  capacity,
-		pending:   make([]SaveIntent, 0, capacity),
-		completed: make([]SaveIntent, 0, capacity),
+		capacity:              capacity,
+		pending:               make([]SaveIntent, 0, capacity),
+		completed:             make([]SaveIntent, 0, capacity),
+		completionByCharacter: make(map[characteridentity.ID]SaveIntent),
 	}, nil
 }
 
@@ -62,11 +65,11 @@ func (o *Outbox) Enqueue(identity characteridentity.Binding, snapshot Snapshot) 
 	return o.enqueue(identity, snapshot, false)
 }
 
-// EnqueueWithCompletion reserves a process-local completion slot together with the save
-// intent. The durable worker may publish that completion only after Store application and
-// checkpoint advancement. CompletionRequested is deliberately not part of the durable wire
-// schema: after a process crash there is no live runtime mutation waiting for an acknowledgement;
-// reconnect restores the already-durable Snapshot instead.
+// EnqueueWithCompletion reserves a process-local completion transaction together with the save
+// intent. The reservation remains visible across journal Confirm, Store application and checkpoint
+// advancement so later save projections cannot erase a pending durable mutation.
+// CompletionRequested is deliberately not part of the durable wire schema: after a process crash
+// there is no live runtime mutation waiting for an acknowledgement; reconnect restores Snapshot.
 func (o *Outbox) EnqueueWithCompletion(identity characteridentity.Binding, snapshot Snapshot) (SaveIntent, error) {
 	return o.enqueue(identity, snapshot, true)
 }
@@ -83,8 +86,13 @@ func (o *Outbox) enqueue(identity characteridentity.Binding, snapshot Snapshot, 
 	if len(o.pending) >= o.capacity {
 		return SaveIntent{}, ErrSaveOutboxFull
 	}
-	if completionRequested && o.completionOutstanding >= o.capacity {
-		return SaveIntent{}, ErrSaveCompletionFull
+	if completionRequested {
+		if o.completionOutstanding >= o.capacity {
+			return SaveIntent{}, ErrSaveCompletionFull
+		}
+		if _, exists := o.completionByCharacter[identity.ID]; exists {
+			return SaveIntent{}, ErrSaveCompletionPending
+		}
 	}
 	if o.nextIntentID == ^uint64(0) {
 		return SaveIntent{}, ErrSaveIntentOverflow
@@ -99,6 +107,7 @@ func (o *Outbox) enqueue(identity characteridentity.Binding, snapshot Snapshot, 
 	o.pending = append(o.pending, intent)
 	if completionRequested {
 		o.completionOutstanding++
+		o.completionByCharacter[identity.ID] = intent
 	}
 	return intent, nil
 }
@@ -113,6 +122,16 @@ func (o *Outbox) Pending(limit int) []SaveIntent {
 	out := make([]SaveIntent, count)
 	copy(out, o.pending[:count])
 	return out
+}
+
+// CompletionForCharacter returns the immutable process-local transaction that is still waiting
+// for world-owner completion. It remains available after journal Confirm and after durability
+// completion is published, until TakeCompleted transfers that acknowledgement to the world owner.
+func (o *Outbox) CompletionForCharacter(id characteridentity.ID) (SaveIntent, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	intent, ok := o.completionByCharacter[id]
+	return intent, ok
 }
 
 func (o *Outbox) Confirm(intentID uint64) error {
@@ -147,7 +166,7 @@ func (o *Outbox) Complete(intent SaveIntent) {
 }
 
 // TakeCompleted transfers immutable durability acknowledgements to the world owner. Removing
-// an acknowledgement releases the completion reservation made by EnqueueWithCompletion.
+// an acknowledgement releases both the lane reservation and the per-character transaction.
 func (o *Outbox) TakeCompleted(limit int) []SaveIntent {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -162,6 +181,11 @@ func (o *Outbox) TakeCompleted(limit int) []SaveIntent {
 	copy(out, o.completed[:count])
 	copy(o.completed, o.completed[count:])
 	o.completed = o.completed[:len(o.completed)-count]
+	for _, intent := range out {
+		if current, ok := o.completionByCharacter[intent.Identity.ID]; ok && current.IntentID == intent.IntentID {
+			delete(o.completionByCharacter, intent.Identity.ID)
+		}
+	}
 	o.completionOutstanding -= count
 	return out
 }
