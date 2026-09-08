@@ -50,6 +50,13 @@ type characterClassState struct {
 	ClassID string `json:"class_id"`
 }
 
+type characterClassResourceState struct {
+	EntityID   uint64 `json:"entity_id"`
+	ResourceID string `json:"resource_id"`
+	Current    uint32 `json:"current"`
+	Max        uint32 `json:"max"`
+}
+
 type initialClassSelectionResult struct {
 	ClientActionSequence uint32 `json:"client_action_sequence"`
 	ClassID              string `json:"class_id"`

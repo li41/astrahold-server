@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -68,6 +69,8 @@ func actionRejectionReason(err error) protocol.ActionRejectionReason {
 		return protocol.ActionRejectionCooldown
 	case errors.Is(err, character.ErrInsufficientResource):
 		return protocol.ActionRejectionInsufficientResource
+	case errors.Is(err, classaction.ErrWrongClass):
+		return protocol.ActionRejectionWrongClass
 	case errors.Is(err, ErrEntityOutOfRange), errors.Is(err, ErrPointOutOfRange), errors.Is(err, siege.ErrGateOutOfRange):
 		return protocol.ActionRejectionOutOfRange
 	case errors.Is(err, ErrEntityWrongLayer), errors.Is(err, siege.ErrGateWrongLayer):

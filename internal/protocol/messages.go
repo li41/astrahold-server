@@ -9,6 +9,7 @@ import (
 
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
+// v26: Oathguard class action legality adds wrong_class rejection plus authoritative class-resource state.
 // v25: Reliable initial class selection intent/result plus authoritative CharacterClassState.
 // v24: CombatEvent adds Server-authoritative shield block outcome; damage now reflects final mitigated damage.
 // v23: Equipment semantics add authoritative off_hand so shields are distinct from MainHand weapons.
@@ -24,7 +25,7 @@ import (
 // v13: EntityVitalsState adds authoritative MP/MaxMP and insufficient_resource rejection.
 // v12: valid point-target ClientUseAction ingress semantics are compatibility-fenced.
 // v11: Reliable ActionRejected returns authoritative action rejection reason.
-const Version uint16 = 25
+const Version uint16 = 26
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -129,6 +130,7 @@ type ActionRejectionReason string
 const (
 	ActionRejectionCooldown             ActionRejectionReason = "cooldown"
 	ActionRejectionInsufficientResource ActionRejectionReason = "insufficient_resource"
+	ActionRejectionWrongClass           ActionRejectionReason = "wrong_class"
 	ActionRejectionInvalidTarget        ActionRejectionReason = "invalid_target"
 	ActionRejectionOutOfRange           ActionRejectionReason = "out_of_range"
 	ActionRejectionWrongLayer           ActionRejectionReason = "wrong_layer"

@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -60,7 +61,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 
 		// Accuracy is an accepted-action outcome, not an action rejection. A miss therefore still
 		// emits ActionStarted and consumes the normal cooldown, but never enters damage/mitigation,
-		// HP mutation, threat, loot contribution, death, or shield block resolution.
+		// HP mutation, threat, loot contribution, death, shield block resolution, or class-resource gain.
 		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
 			r.emitActionStarted(actor.ID, startPrepared, tick, report)
 			r.emitCombatEvent(protocol.CombatEvent{
@@ -80,8 +81,6 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			return false
 		}
 
-		// Weapon RNG is reached only after authoritative target/range/LOS/protection/resource legality
-		// and the Server-owned accuracy roll.
 		rawDamage := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
 		damageResult, err := r.resolveIncomingDamage(DamageRequest{
 			SourceEntityID: actor.ID,
@@ -106,8 +105,6 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			actualDamage = beforeState.HP
 		}
 		if target.Kind == world.EntityMonster && actualDamage > 0 {
-			// Threat and loot both consume the same authoritative actual-damage fact, but remain
-			// independent gameplay tables with independent lifetime and selection semantics.
 			r.recordMonsterThreatDamage(targetID, actor.ID, sessionID, actualDamage)
 			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
 		}
@@ -120,6 +117,13 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			}
 		}
 		r.markEntityVitalsDirty(targetID)
+		if policy, ok := classaction.ForAction(prepared.Definition.ID); ok && policy.HitResource != "" && policy.HitGain > 0 {
+			if _, err := r.characters.GainClassResource(actor.ID, policy.HitResource, policy.HitGain); err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actor.ID {
+				r.sendCurrentClassResourceState(sourceSession, report)
+			}
+		}
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{
 			ActionInstanceID:  prepared.ActionInstanceID,

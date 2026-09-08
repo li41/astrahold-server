@@ -54,10 +54,9 @@ func (r *Runtime) guardInitialClassSelectionFeedbackCapacity(name string, s *ses
 	if s == nil || report == nil {
 		return false
 	}
-	// Preserve two FIFO slots for a durable completion's authoritative state + committed result,
-	// plus one slot for the current request if it is rejected immediately. This prevents later
-	// assignment_pending rejections from consuming the capacity promised to an earlier selection.
-	if len(r.pendingClassMessages[s.ID])+3 <= maxPendingClassMessagesPerSession {
+	// Preserve three FIFO slots for an Oathguard durable completion's class state + resource state
+	// + committed result, plus one slot for the current request if it is rejected immediately.
+	if len(r.pendingClassMessages[s.ID])+4 <= maxPendingClassMessagesPerSession {
 		return true
 	}
 	report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: s.ID, Err: ErrInitialClassSelectionFeedbackBacklog})
@@ -91,21 +90,56 @@ func (r *Runtime) authoritativeClassID(s *session.Session) string {
 	return string(state.ClassID)
 }
 
+func protocolClassResourceState(state character.State) (protocol.CharacterClassResourceState, bool) {
+	if state.EntityID == 0 || state.ClassResourceID == "" || state.MaxClassResource == 0 {
+		return protocol.CharacterClassResourceState{}, false
+	}
+	return protocol.CharacterClassResourceState{
+		EntityID:   state.EntityID,
+		ResourceID: string(state.ClassResourceID),
+		Current:    state.ClassResource,
+		Max:        state.MaxClassResource,
+	}, true
+}
+
 func (r *Runtime) queueCurrentClassState(s *session.Session) {
 	if s == nil {
 		return
 	}
+	state, ok := r.characters.State(s.EntityID)
+	if !ok {
+		return
+	}
+	messages := []protocol.Message{protocol.CharacterClassState{ClassID: string(state.ClassID)}}
+	if resourceState, ok := protocolClassResourceState(state); ok {
+		messages = append(messages, resourceState)
+	}
 	pending := r.pendingClassMessages[s.ID]
-	if len(pending) >= maxPendingClassMessagesPerSession {
+	if len(pending)+len(messages) > maxPendingClassMessagesPerSession {
 		_ = s.Connection().Close()
 		return
 	}
-	r.pendingClassMessages[s.ID] = append(pending, protocol.CharacterClassState{ClassID: r.authoritativeClassID(s)})
+	r.pendingClassMessages[s.ID] = append(pending, messages...)
 }
 
-// publishDurableInitialClassSelection emits authoritative class state to the current owner after
-// world-owner commit. The correlated result is emitted only if the original ownership fence is
-// still current, so takeover never receives another connection's result.
+func (r *Runtime) sendCurrentClassResourceState(s *session.Session, report *StepReport) {
+	if s == nil || report == nil {
+		return
+	}
+	state, ok := r.characters.State(s.EntityID)
+	if !ok {
+		return
+	}
+	message, ok := protocolClassResourceState(state)
+	if !ok {
+		return
+	}
+	r.sendClassMessage(s, message, report)
+}
+
+// publishDurableInitialClassSelection emits authoritative class and runtime resource state to the
+// current owner after world-owner commit. The correlated result is emitted only if the original
+// ownership fence is still current, so takeover never receives another connection's result.
 func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, identity characteridentity.Binding, target classid.ID, report *StepReport) {
 	if report == nil || !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted {
 		return
@@ -123,8 +157,11 @@ func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, identity 
 		return
 	}
 
-	// State is truth and is deliberately ordered before any request-correlation result.
+	// Identity state is ordered before the resource state, and both precede request correlation.
 	r.sendClassMessage(s, protocol.CharacterClassState{ClassID: string(target)}, report)
+	if resourceState, ok := protocolClassResourceState(state); ok {
+		r.sendClassMessage(s, resourceState, report)
+	}
 	feedback, hasFeedback := r.initialClassSelectionFeedback[intentID]
 	if hasFeedback && current == feedback.ownership {
 		r.sendClassMessage(s, protocol.InitialClassSelectionResult{
