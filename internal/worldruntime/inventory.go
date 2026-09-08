@@ -22,21 +22,15 @@ func mustDefaultInventoryUnitWeights() map[string]uint32 {
 		"item_gray_wolf_pelt":       2,
 	}
 	for itemArchetypeID, weight := range defaultEquipmentCatalog.UnitWeights() {
-		if itemArchetypeID == "" || weight == 0 {
-			panic("worldruntime: invalid equipment catalog weight")
-		}
-		if _, exists := weights[itemArchetypeID]; exists {
-			panic("worldruntime: equipment catalog collides with base inventory weight")
-		}
+		if itemArchetypeID == "" || weight == 0 { panic("worldruntime: invalid equipment catalog weight") }
+		if _, exists := weights[itemArchetypeID]; exists { panic("worldruntime: equipment catalog collides with base inventory weight") }
 		weights[itemArchetypeID] = weight
 	}
 	return weights
 }
 
 func newCharacterInventory(maxStacks int) *inventory.Inventory {
-	return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{
-		MaxWeight: defaultInventoryCarryCapacity, DefaultUnitWeight: 1, UnitWeights: defaultInventoryUnitWeights,
-	})
+	return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{MaxWeight: defaultInventoryCarryCapacity, DefaultUnitWeight: 1, UnitWeights: defaultInventoryUnitWeights})
 }
 
 func validateStarterInventory(maxStacks int, stacks []inventory.Stack) error {
@@ -85,12 +79,18 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
 		r.inventories[identity] = inv
 	}
+	// Class state is a separate authoritative protocol message, but it shares the same join
+	// bootstrap seam so a reconnect always learns durable profession identity.
+	r.queueCurrentClassState(s)
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
 
 func (r *Runtime) removeSessionInventoryDelivery(id session.ID) { delete(r.sessionInventoryPending, id) }
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
+	// Class state/result uses its own bounded FIFO so transient Reliable backpressure never
+	// re-runs class persistence or gameplay mutation.
+	r.retryPendingClassMessages(tick, report)
 	r.pruneItemUseCooldowns(tick)
 	r.retryPendingItemUseResults(tick, report)
 	if len(r.sessionInventoryPending) == 0 { return }
