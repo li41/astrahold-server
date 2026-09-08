@@ -12,6 +12,7 @@ import (
 const (
 	OathguardSwordStrike       = "oathguard-sword-strike"
 	BreakerHeavySlash          = "breaker-heavy-slash"
+	BreakerStaggerStrike       = "breaker-stagger-strike"
 	RangerHuntingShot          = "ranger-hunting-shot"
 	StarfireFireBolt           = "starfire-fire-bolt"
 	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
@@ -47,6 +48,8 @@ func (p TargetResourceSpendPolicy) Resolve(current uint32) (amount, damage uint3
 
 type Policy struct {
 	RequiredClass       classid.ID
+	CostResource        classresource.ID
+	CostAmount          uint32
 	AcceptedResource    classresource.ID
 	AcceptedGain        uint32
 	HitResource         classresource.ID
@@ -67,6 +70,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Oathguard, HitResource: classresource.Resolve, HitGain: 8}, true
 	case BreakerHeavySlash:
 		return Policy{RequiredClass: classid.Breaker, HitResource: classresource.Momentum, HitGain: 10}, true
+	case BreakerStaggerStrike:
+		return Policy{RequiredClass: classid.Breaker, CostResource: classresource.Momentum, CostAmount: 20}, true
 	case RangerHuntingShot:
 		return Policy{RequiredClass: classid.Ranger, HitResource: classresource.HuntMomentum, HitGain: 8}, true
 	case StarfireFireBolt:
