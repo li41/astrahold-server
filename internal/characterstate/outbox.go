@@ -9,13 +9,14 @@ import (
 )
 
 var (
-	ErrInvalidOutboxCapacity  = errors.New("characterstate: invalid outbox capacity")
-	ErrSaveOutboxFull         = errors.New("characterstate: save outbox full")
-	ErrSaveCompletionFull     = errors.New("characterstate: save completion lane full")
-	ErrSaveCompletionPending  = errors.New("characterstate: save completion already pending")
-	ErrSaveIntentOverflow     = errors.New("characterstate: save intent id overflow")
-	ErrUnknownSaveIntent      = errors.New("characterstate: unknown save intent")
-	ErrSaveConfirmOutOfOrder  = errors.New("characterstate: save confirm out of order")
+	ErrInvalidOutboxCapacity       = errors.New("characterstate: invalid outbox capacity")
+	ErrSaveOutboxFull              = errors.New("characterstate: save outbox full")
+	ErrSaveCompletionFull          = errors.New("characterstate: save completion lane full")
+	ErrSaveCompletionPending       = errors.New("characterstate: save completion already pending")
+	ErrSaveIntentOverflow          = errors.New("characterstate: save intent id overflow")
+	ErrUnknownSaveIntent           = errors.New("characterstate: unknown save intent")
+	ErrSaveConfirmOutOfOrder       = errors.New("characterstate: save confirm out of order")
+	ErrCompletionConfirmOutOfOrder = errors.New("characterstate: completion confirm out of order")
 )
 
 type SaveIntent struct {
@@ -126,7 +127,7 @@ func (o *Outbox) Pending(limit int) []SaveIntent {
 
 // CompletionForCharacter returns the immutable process-local transaction that is still waiting
 // for world-owner completion. It remains available after journal Confirm and after durability
-// completion is published, until TakeCompleted transfers that acknowledgement to the world owner.
+// completion is published, until ConfirmCompletion releases the transaction.
 func (o *Outbox) CompletionForCharacter(id characteridentity.ID) (SaveIntent, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -154,8 +155,8 @@ func (o *Outbox) Confirm(intentID uint64) error {
 }
 
 // Complete publishes an already-durable intent to the world-owner completion lane. A slot was
-// reserved atomically with EnqueueWithCompletion, so this operation cannot fail for a valid
-// completion-requested intent. Callers must invoke it only after the durable checkpoint advances.
+// reserved atomically with EnqueueWithCompletion. Callers must invoke it only after the durable
+// checkpoint advances.
 func (o *Outbox) Complete(intent SaveIntent) {
 	if !intent.CompletionRequested {
 		return
@@ -165,27 +166,42 @@ func (o *Outbox) Complete(intent SaveIntent) {
 	o.completed = append(o.completed, intent)
 }
 
-// TakeCompleted transfers immutable durability acknowledgements to the world owner. Removing
-// an acknowledgement releases both the lane reservation and the per-character transaction.
-func (o *Outbox) TakeCompleted(limit int) []SaveIntent {
+// Completed returns immutable durable acknowledgements without releasing their reservations.
+// The world owner must apply or idempotently resolve each acknowledgement first, then call
+// ConfirmCompletion. If gameplay application fails, the transaction remains visible and future
+// save projections keep using its durable target rather than reverting the Store.
+func (o *Outbox) Completed(limit int) []SaveIntent {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	count := len(o.completed)
 	if limit > 0 && limit < count {
 		count = limit
 	}
-	if count == 0 {
-		return nil
-	}
 	out := make([]SaveIntent, count)
 	copy(out, o.completed[:count])
-	copy(o.completed, o.completed[count:])
-	o.completed = o.completed[:len(o.completed)-count]
-	for _, intent := range out {
-		if current, ok := o.completionByCharacter[intent.Identity.ID]; ok && current.IntentID == intent.IntentID {
-			delete(o.completionByCharacter, intent.Identity.ID)
-		}
-	}
-	o.completionOutstanding -= count
 	return out
+}
+
+func (o *Outbox) ConfirmCompletion(intentID uint64) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.completed) == 0 {
+		return ErrUnknownSaveIntent
+	}
+	if o.completed[0].IntentID != intentID {
+		for _, intent := range o.completed {
+			if intent.IntentID == intentID {
+				return fmt.Errorf("%w: got=%d want=%d", ErrCompletionConfirmOutOfOrder, intentID, o.completed[0].IntentID)
+			}
+		}
+		return ErrUnknownSaveIntent
+	}
+	intent := o.completed[0]
+	copy(o.completed, o.completed[1:])
+	o.completed = o.completed[:len(o.completed)-1]
+	if current, ok := o.completionByCharacter[intent.Identity.ID]; ok && current.IntentID == intent.IntentID {
+		delete(o.completionByCharacter, intent.Identity.ID)
+	}
+	o.completionOutstanding--
+	return nil
 }
