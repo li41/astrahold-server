@@ -136,12 +136,7 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		for i, item := range in.Items {
 			items[i] = protocol.InventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity}
 		}
-		return protocol.InventorySnapshot{
-			Revision:           in.Revision,
-			CurrentCarryWeight: in.CurrentCarryWeight,
-			MaxCarryWeight:     in.MaxCarryWeight,
-			Items:              items,
-		}, nil
+		return protocol.InventorySnapshot{Revision: in.Revision, CurrentCarryWeight: in.CurrentCarryWeight, MaxCarryWeight: in.MaxCarryWeight, Items: items}, nil
 	case protocol.MessageEquipmentSnapshot:
 		var in equipmentSnapshot
 		if err := decodeStrict(data, &in); err != nil {
@@ -179,7 +174,7 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		if err := decodeStrict(data, &in); err != nil {
 			return nil, err
 		}
-		return protocol.CombatEvent{ActionInstanceID: in.ActionInstanceID, ActorEntityID: world.EntityID(in.ActorEntityID), ActionID: in.ActionID, Result: protocol.CombatEventResult(in.Result), TargetEntityID: world.EntityID(in.TargetEntityID), ImpactX: in.ImpactX, ImpactZ: in.ImpactZ, Damage: in.Damage, CooldownReadyTick: in.CooldownReadyTick}, nil
+		return protocol.CombatEvent{ActionInstanceID: in.ActionInstanceID, ActorEntityID: world.EntityID(in.ActorEntityID), ActionID: in.ActionID, Result: protocol.CombatEventResult(in.Result), TargetEntityID: world.EntityID(in.TargetEntityID), ImpactX: in.ImpactX, ImpactZ: in.ImpactZ, Damage: in.Damage, Blocked: in.Blocked, CooldownReadyTick: in.CooldownReadyTick}, nil
 	default:
 		return nil, ErrUnsupportedMessage
 	}
