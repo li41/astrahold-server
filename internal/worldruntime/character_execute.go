@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
@@ -52,6 +53,15 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			report.Metrics.ReviveProtectionDamageBlocks++
 			return false
 		}
+		spendPlan, hasTargetSpend, err := r.prepareTargetResourceSpend(actor.ID, targetID, prepared.Definition.ID)
+		if err != nil {
+			if errors.Is(err, character.ErrInsufficientResource) {
+				r.rejectClientAction(name, sessionID, clientActionSequence, actor.ID, startPrepared.Definition.ID, protocol.ActionTargetKind(startPrepared.Target.Kind), err, tick, report)
+			} else {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			}
+			return false
+		}
 		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 
 		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
@@ -67,10 +77,19 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			return false
 		}
 		rawDamage := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
+		if hasTargetSpend {
+			rawDamage = spendPlan.Damage
+		}
 		damageResult, err := r.resolveIncomingDamage(DamageRequest{SourceEntityID: actor.ID, TargetEntityID: targetID, RawDamage: rawDamage, DamageType: prepared.Damage.Type, Blockable: prepared.Damage.Blockable})
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 			return false
+		}
+		if hasTargetSpend {
+			if err := r.commitTargetResourceSpend(sessionID, actor.ID, targetID, spendPlan, report); err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+				return false
+			}
 		}
 
 		r.emitActionStarted(actor.ID, startPrepared, tick, report)

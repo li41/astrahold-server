@@ -115,6 +115,12 @@ func (s *Service) GainTargetResource(sourceID, targetID world.EntityID, resource
 	source, ok := s.states[sourceID]; if !ok { return targetresource.State{}, false, ErrCharacterNotFound }; if source.Defeated { return targetresource.State{}, false, ErrCharacterDefeated }
 	return s.targetResources.TryGain(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}, amount, max, tick, nextReadyTick)
 }
+func (s *Service) SpendTargetResource(sourceID, targetID world.EntityID, resourceID targetresource.ID, amount uint32) (targetresource.State, error) {
+	source, ok := s.states[sourceID]; if !ok { return targetresource.State{}, ErrCharacterNotFound }; if source.Defeated { return targetresource.State{}, ErrCharacterDefeated }
+	state, err := s.targetResources.Spend(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}, amount)
+	if errors.Is(err, targetresource.ErrInsufficientResource) { return state, ErrInsufficientResource }
+	return state, err
+}
 func (s *Service) TargetResourceState(sourceID, targetID world.EntityID, resourceID targetresource.ID) (targetresource.State, bool) { return s.targetResources.State(targetresource.Key{SourceEntityID: sourceID, TargetEntityID: targetID, ResourceID: resourceID}) }
 func (s *Service) ClearTargetResourcesForEntity(entityID world.EntityID) []targetresource.State { return s.targetResources.ClearEntity(entityID) }
 

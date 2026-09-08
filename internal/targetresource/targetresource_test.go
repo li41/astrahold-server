@@ -1,6 +1,7 @@
 package targetresource
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/world"
@@ -21,6 +22,27 @@ func TestTryGainIsSourceTargetScopedAndRespectsICD(t *testing.T) {
 	if err != nil || !changed || otherState.Current != 1 { t.Fatalf("other source state=%+v changed=%v err=%v", otherState, changed, err) }
 	state, _ = s.State(key)
 	if state.Current != 2 { t.Fatalf("other source mutated original=%+v", state) }
+}
+
+func TestSpendRetainsReadyTickAtZeroAndRejectsInsufficientResource(t *testing.T) {
+	s := NewStore()
+	key := Key{SourceEntityID: 10, TargetEntityID: 20, ResourceID: Flaw}
+	state, changed, err := s.TryGain(key, 3, 3, 5, 55)
+	if err != nil || !changed || state.Current != 3 || state.ReadyTick != 55 { t.Fatalf("seed state=%+v changed=%v err=%v", state, changed, err) }
+
+	state, err = s.Spend(key, 2)
+	if err != nil || state.Current != 1 || state.ReadyTick != 55 { t.Fatalf("spend two state=%+v err=%v", state, err) }
+	state, err = s.Spend(key, 1)
+	if err != nil || state.Current != 0 || state.ReadyTick != 55 { t.Fatalf("spend to zero state=%+v err=%v", state, err) }
+	stored, ok := s.State(key)
+	if !ok || stored.Current != 0 || stored.ReadyTick != 55 { t.Fatalf("zero state=%+v ok=%v", stored, ok) }
+
+	state, err = s.Spend(key, 1)
+	if !errors.Is(err, ErrInsufficientResource) || state.Current != 0 || state.ReadyTick != 55 { t.Fatalf("insufficient spend state=%+v err=%v", state, err) }
+	state, changed, err = s.TryGain(key, 1, 3, 54, 60)
+	if err != nil || changed || state.Current != 0 || state.ReadyTick != 55 { t.Fatalf("spend bypassed build ICD state=%+v changed=%v err=%v", state, changed, err) }
+	state, changed, err = s.TryGain(key, 1, 3, 55, 60)
+	if err != nil || !changed || state.Current != 1 || state.ReadyTick != 60 { t.Fatalf("ready rebuild state=%+v changed=%v err=%v", state, changed, err) }
 }
 
 func TestTryGainClampsAndClearEntityRemovesBothRoles(t *testing.T) {

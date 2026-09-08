@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -14,6 +15,12 @@ import (
 )
 
 const shadowbladeFrontDotThreshold float64 = 0.5
+
+type targetResourceSpendPlan struct {
+	ResourceID targetresource.ID
+	Amount     uint32
+	Damage     uint32
+}
 
 func isSideOrBackAttackPosition(actor, target world.EntityState) bool {
 	dx := float64(actor.Transform.Position.X - target.Transform.Position.X)
@@ -28,6 +35,31 @@ func isSideOrBackAttackPosition(actor, target world.EntityState) bool {
 	forwardX := math.Sin(yaw)
 	forwardZ := math.Cos(yaw)
 	return forwardX*dx+forwardZ*dz < shadowbladeFrontDotThreshold
+}
+
+func (r *Runtime) prepareTargetResourceSpend(sourceID, targetID world.EntityID, actionID string) (targetResourceSpendPlan, bool, error) {
+	policy, ok := classaction.ForAction(actionID)
+	if !ok || policy.TargetSpend.ResourceID == "" {
+		return targetResourceSpendPlan{}, false, nil
+	}
+	state, exists := r.characters.TargetResourceState(sourceID, targetID, policy.TargetSpend.ResourceID)
+	if !exists || state.Current == 0 {
+		return targetResourceSpendPlan{}, true, character.ErrInsufficientResource
+	}
+	amount, damage, ok := policy.TargetSpend.Resolve(state.Current)
+	if !ok {
+		return targetResourceSpendPlan{}, true, targetresource.ErrInvalidState
+	}
+	return targetResourceSpendPlan{ResourceID: policy.TargetSpend.ResourceID, Amount: amount, Damage: damage}, true, nil
+}
+
+func (r *Runtime) commitTargetResourceSpend(sourceSessionID session.ID, sourceID, targetID world.EntityID, plan targetResourceSpendPlan, report *StepReport) error {
+	state, err := r.characters.SpendTargetResource(sourceID, targetID, plan.ResourceID, plan.Amount)
+	if err != nil {
+		return err
+	}
+	r.sendTargetResourceState(sourceSessionID, protocol.CharacterTargetResourceState{SourceEntityID: state.SourceEntityID, TargetEntityID: state.TargetEntityID, ResourceID: string(state.ResourceID), Current: state.Current, Max: state.Max}, report)
+	return nil
 }
 
 func (r *Runtime) applyHitTargetResource(name string, sourceSessionID session.ID, actor, target world.EntityState, actionID string, tick uint64, delta time.Duration, report *StepReport) {
@@ -95,7 +127,7 @@ func (r *Runtime) clearTargetResourcesForEntity(entityID world.EntityID, report 
 	sessions := r.sessions.List()
 	sort.Slice(removed, func(i, j int) bool { return removed[i].SourceEntityID < removed[j].SourceEntityID })
 	for _, state := range removed {
-		if state.SourceEntityID == entityID {
+		if state.SourceEntityID == entityID || state.Current == 0 {
 			continue
 		}
 		for _, s := range sessions {
