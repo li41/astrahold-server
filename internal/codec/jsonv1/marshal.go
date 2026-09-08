@@ -43,6 +43,13 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 			return nil, ErrUnsupportedMessage
 		}
 		return json.Marshal(clientUseItem{ItemArchetypeID: m.ItemArchetypeID})
+	case protocol.ClientInitialClassSelection:
+		return json.Marshal(clientInitialClassSelection{ClassID: m.ClassID})
+	case *protocol.ClientInitialClassSelection:
+		if m == nil {
+			return nil, ErrUnsupportedMessage
+		}
+		return json.Marshal(clientInitialClassSelection{ClassID: m.ClassID})
 	case protocol.ClientInteractNPC:
 		return json.Marshal(clientInteractNPC{NPCEntityID: uint64(m.NPCEntityID)})
 	case *protocol.ClientInteractNPC:
@@ -70,6 +77,10 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(actionRejected{ClientActionSequence: m.ClientActionSequence, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, TargetKind: string(m.TargetKind), Reason: string(m.Reason), CooldownReadyTick: m.CooldownReadyTick})
 	case protocol.ItemUseResult:
 		return json.Marshal(itemUseResult{ClientActionSequence: m.ClientActionSequence, ItemArchetypeID: m.ItemArchetypeID, Outcome: string(m.Outcome), Reason: string(m.Reason), AppliedAmount: m.AppliedAmount, CooldownReadyTick: m.CooldownReadyTick})
+	case protocol.CharacterClassState:
+		return json.Marshal(characterClassState{ClassID: m.ClassID})
+	case protocol.InitialClassSelectionResult:
+		return json.Marshal(initialClassSelectionResult{ClientActionSequence: m.ClientActionSequence, ClassID: m.ClassID, Outcome: string(m.Outcome), Reason: string(m.Reason)})
 	case protocol.SessionWelcome:
 		return json.Marshal(sessionWelcome{SessionID: m.SessionID, EntityID: uint64(m.EntityID), RealtimePort: m.RealtimePort, RealtimeToken: m.RealtimeToken, TickRateHz: m.TickRateHz, SnapshotRateHz: m.SnapshotRateHz, WorldID: m.World.WorldID, WorldRevision: m.World.Revision, GameplaySHA256: m.World.GameplaySHA256})
 	case protocol.EntitySpawn:
