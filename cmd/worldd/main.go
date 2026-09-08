@@ -190,6 +190,9 @@ func main() {
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
 	runtimeConfig := worldruntime.DefaultConfig()
+	if err := configurePlaytestLowTierEquipment(&runtimeConfig, *networkMode, *playtestLowTierEquipment); err != nil {
+		log.Fatal(err)
+	}
 	runtimeConfig.SnapshotEveryTicks = uint64(*tickRate / *snapshotRate)
 	runtimeConfig.PostReviveProtectionTicks = protectionTicks
 	autosaveTicks, err := configureCharacterStateAutosave(&runtimeConfig, *characterStateAutosaveSeconds, *characterStateAutosavesPerTick, *tickRate)
