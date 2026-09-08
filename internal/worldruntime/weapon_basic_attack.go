@@ -19,6 +19,10 @@ const (
 	maxWeaponHitChancePercent   int64 = 98
 )
 
+// weaponAccuracyRoll remains package-private so production always owns the roll. Tests in this
+// package may replace it temporarily to make authoritative hit/miss integration coverage exact.
+var weaponAccuracyRoll = rand.Uint32
+
 func (r *Runtime) equippedLowTierWeapon(actorID world.EntityID, sourceSessionID session.ID) (equipmentcatalog.Definition, bool) {
 	if r == nil || sourceSessionID == 0 {
 		return equipmentcatalog.Definition{}, false
@@ -82,10 +86,7 @@ func weaponBasicAttackHits(accuracyModifier int32, roll uint32) bool {
 // resolveEquippedBasicAttackHit applies the v1 accuracy formula only to an entity-target
 // basic attack made with an authored low-tier weapon. Legacy/unclassified MainHand content keeps
 // its existing hit behavior until that content receives an explicit accuracy policy.
-//
-// The roll source is injectable only inside worldruntime tests. Production callers pass nil and
-// use Server-private RNG; the Client never supplies a roll or final hit chance.
-func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSessionID session.ID, prepared combat.PreparedAction, rollSource func() uint32) bool {
+func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSessionID session.ID, prepared combat.PreparedAction) bool {
 	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return true
 	}
@@ -93,10 +94,7 @@ func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSe
 	if !ok || definition.Weapon == nil {
 		return true
 	}
-	if rollSource == nil {
-		rollSource = rand.Uint32
-	}
-	return weaponBasicAttackHits(definition.Weapon.AccuracyModifier, rollSource())
+	return weaponBasicAttackHits(definition.Weapon.AccuracyModifier, weaponAccuracyRoll())
 }
 
 func (r *Runtime) entityWeaponBodySize(entityID world.EntityID) equipmentcatalog.BodySize {
