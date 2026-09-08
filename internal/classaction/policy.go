@@ -11,6 +11,7 @@ import (
 
 const (
 	OathguardSwordStrike       = "oathguard-sword-strike"
+	OathguardFortify           = "oathguard-fortify"
 	BreakerHeavySlash          = "breaker-heavy-slash"
 	BreakerStaggerStrike       = "breaker-stagger-strike"
 	RangerHuntingShot          = "ranger-hunting-shot"
@@ -69,6 +70,8 @@ func ForAction(actionID string) (Policy, bool) {
 	switch actionID {
 	case OathguardSwordStrike:
 		return Policy{RequiredClass: classid.Oathguard, HitResource: classresource.Resolve, HitGain: 8}, true
+	case OathguardFortify:
+		return Policy{RequiredClass: classid.Oathguard, CostResource: classresource.Resolve, CostAmount: 30}, true
 	case BreakerHeavySlash:
 		return Policy{RequiredClass: classid.Breaker, HitResource: classresource.Momentum, HitGain: 10}, true
 	case BreakerStaggerStrike:
