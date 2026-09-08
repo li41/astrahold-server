@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -52,17 +53,23 @@ func durableInventoryState(inv *inventory.Inventory) (characterstate.InventorySt
 	return characterstate.NewInventoryStateWithEquipment(durable, inv.MainHand(), inv.OffHand())
 }
 
+// restoreCharacterInventory preserves the unassigned-class compatibility seam for focused tests
+// and legacy internal callers. Production durable restore uses restoreCharacterInventoryForClass.
 func restoreCharacterInventory(maxStacks int, state characterstate.InventoryState) (*inventory.Inventory, error) {
+	return restoreCharacterInventoryForClass(maxStacks, state, "")
+}
+
+func restoreCharacterInventoryForClass(maxStacks int, state characterstate.InventoryState, classID classid.ID) (*inventory.Inventory, error) {
 	if !state.Initialized { return nil, nil }
 	stacks, err := state.Stacks(); if err != nil { return nil, err }
 	inv := newCharacterInventory(maxStacks)
 	if state.MainHand != "" {
-		if !mainHandItemAllowed(state.MainHand) { return nil, ErrEquipmentItemNotAllowed }
+		if !mainHandItemAllowedForClass(state.MainHand, classID) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.MainHand, 1); err != nil { return nil, err }
 		if err := inv.EquipMainHand(state.MainHand); err != nil { return nil, err }
 	}
 	if state.OffHand != "" {
-		if !offHandItemAllowed(state.OffHand) { return nil, ErrEquipmentItemNotAllowed }
+		if !offHandItemAllowedForClass(state.OffHand, classID) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.OffHand, 1); err != nil { return nil, err }
 		if err := inv.EquipOffHand(state.OffHand); err != nil { return nil, err }
 	}

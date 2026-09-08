@@ -7,6 +7,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
@@ -29,6 +30,7 @@ type CharacterRestore struct {
 	CharacterID   characteridentity.ID
 	Revision      uint64
 	World         protocol.WorldIdentity
+	ClassID       classid.ID
 	HP            uint32
 	MaxHP         uint32
 	MP            uint32
@@ -49,6 +51,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 			Revision:       record.Snapshot.World.Revision,
 			GameplaySHA256: record.Snapshot.World.GameplaySHA256,
 		},
+		ClassID:   record.Snapshot.ClassID,
 		HP:        record.Snapshot.HP,
 		MaxHP:     record.Snapshot.MaxHP,
 		MP:        record.Snapshot.MP,
@@ -74,6 +77,13 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		return ErrCharacterRestoreWorldMismatch
 	}
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
+		return ErrCharacterRestoreInvalid
+	}
+	if restore.SchemaVersion < characterstate.ClassSchemaVersion {
+		if restore.ClassID != "" {
+			return ErrCharacterRestoreInvalid
+		}
+	} else if restore.ClassID != "" && !classid.IsCanonical(restore.ClassID) {
 		return ErrCharacterRestoreInvalid
 	}
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {

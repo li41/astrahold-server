@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -45,11 +47,15 @@ func validateEquipmentIntent(command protocol.ClientEquipmentCommand) error {
 	return nil
 }
 
-func equipmentDefinitionAllowed(definition equipmentcatalog.Definition, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot, classID string) bool {
-	return definition.Kind == kind && definition.Slot == slot && definition.AllowsClass(classID)
+func equipmentDefinitionAllowed(definition equipmentcatalog.Definition, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot, classID classid.ID) bool {
+	return definition.Kind == kind && definition.Slot == slot && definition.AllowsClass(string(classID))
 }
 
 func mainHandItemAllowed(itemArchetypeID string) bool {
+	return mainHandItemAllowedForClass(itemArchetypeID, "")
+}
+
+func mainHandItemAllowedForClass(itemArchetypeID string, classID classid.ID) bool {
 	itemArchetypeID = strings.TrimSpace(itemArchetypeID)
 	if itemArchetypeID == trainingBladeArchetypeID {
 		return true
@@ -58,18 +64,19 @@ func mainHandItemAllowed(itemArchetypeID string) bool {
 	if !ok {
 		return false
 	}
-	// Astrahold does not yet author a durable ClassID on character state. Current low-tier items
-	// explicitly use ClassPolicyAll. Future allow-list equipment therefore fails closed until the
-	// authoritative character ClassID is wired into this owner path.
-	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand, "")
+	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand, classID)
 }
 
 func offHandItemAllowed(itemArchetypeID string) bool {
+	return offHandItemAllowedForClass(itemArchetypeID, "")
+}
+
+func offHandItemAllowedForClass(itemArchetypeID string, classID classid.ID) bool {
 	definition, ok := defaultEquipmentCatalog.Resolve(strings.TrimSpace(itemArchetypeID))
 	if !ok {
 		return false
 	}
-	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand, "")
+	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand, classID)
 }
 
 func (r *Runtime) EnqueueEquipmentCommand(id session.ID, sequence uint32, equipment protocol.ClientEquipmentCommand) error {
@@ -104,6 +111,11 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 		return
 	}
 	s.MarkProcessedAction(command.sequence)
+	state, ok := r.characters.State(s.EntityID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterNotFound})
+		return
+	}
 	inv := r.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
@@ -116,7 +128,7 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 	case protocol.EquipmentSlotMainHand:
 		switch request.Operation {
 		case protocol.EquipmentOperationEquip:
-			if !mainHandItemAllowed(request.ItemArchetypeID) {
+			if !mainHandItemAllowedForClass(request.ItemArchetypeID, state.ClassID) {
 				err = ErrEquipmentItemNotAllowed
 			} else {
 				err = inv.EquipMainHand(request.ItemArchetypeID)
@@ -127,7 +139,7 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 	case protocol.EquipmentSlotOffHand:
 		switch request.Operation {
 		case protocol.EquipmentOperationEquip:
-			if !offHandItemAllowed(request.ItemArchetypeID) {
+			if !offHandItemAllowedForClass(request.ItemArchetypeID, state.ClassID) {
 				err = ErrEquipmentItemNotAllowed
 			} else {
 				err = inv.EquipOffHand(request.ItemArchetypeID)
