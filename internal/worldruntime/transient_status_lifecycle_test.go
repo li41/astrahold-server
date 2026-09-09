@@ -10,6 +10,8 @@ import (
 	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/world"
 )
 
 func TestPlayerDefeatClearsAllTransientStatuses(t *testing.T) {
@@ -105,18 +107,18 @@ func TestMonsterDefeatClearsTransientStatusesBeforeRespawn(t *testing.T) {
 	}
 }
 
-func armFortifyForLifecycleTest(t *testing.T, rt *Runtime, sessionID interface{ ~uint64 }, entityID interface{ ~uint64 }) {
+func armFortifyForLifecycleTest(t *testing.T, rt *Runtime, sessionID session.ID, entityID world.EntityID) {
 	t.Helper()
-	if _, err := rt.characters.AssignInitialClass(worldEntityID(entityID), classid.Oathguard); err != nil {
+	if _, err := rt.characters.AssignInitialClass(entityID, classid.Oathguard); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.characters.GainClassResource(worldEntityID(entityID), classresource.Resolve, 30); err != nil {
+	if _, err := rt.characters.GainClassResource(entityID, classresource.Resolve, 30); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.EnqueueUseAction(sessionIDValue(sessionID), 1, protocol.ClientUseAction{
+	if err := rt.EnqueueUseAction(sessionID, 1, protocol.ClientUseAction{
 		ActionID:   classaction.OathguardFortify,
 		TargetKind: protocol.ActionTargetEntity,
-		TargetID:   strconv.FormatUint(uint64(worldEntityID(entityID)), 10),
+		TargetID:   strconv.FormatUint(uint64(entityID), 10),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +126,7 @@ func armFortifyForLifecycleTest(t *testing.T, rt *Runtime, sessionID interface{ 
 	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
 		t.Fatalf("fortify report=%#v", report)
 	}
-	if got := rt.combat.SelfDamageReductionPercent(worldEntityID(entityID), 2); got != 45 {
+	if got := rt.combat.SelfDamageReductionPercent(entityID, 2); got != 45 {
 		t.Fatalf("active reduction=%d want=45", got)
 	}
 }
