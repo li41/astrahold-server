@@ -305,7 +305,7 @@ func (s *CheckpointStore) Load(journal *Journal) (Checkpoint, error) {
 	return checkpoint, nil
 }
 
-// Save persists consumer progress atomically: temp-file fsync, rename, then directory fsync.
+// Save persists consumer progress atomically: temp-file fsync, rename, then directory fsync where supported.
 func (s *CheckpointStore) Save(journal *Journal, record JournalRecord) (Checkpoint, error) {
 	checkpoint, err := journal.checkpointForRecord(record)
 	if err != nil {
@@ -349,17 +349,8 @@ func (s *CheckpointStore) Save(journal *Journal, record JournalRecord) (Checkpoi
 		_ = os.Remove(tmpName)
 		return Checkpoint{}, err
 	}
-	directory, err := os.Open(dir)
-	if err != nil {
+	if err := syncDirectory(dir); err != nil {
 		return Checkpoint{}, err
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return Checkpoint{}, syncErr
-	}
-	if closeErr != nil {
-		return Checkpoint{}, closeErr
 	}
 	return checkpoint, nil
 }

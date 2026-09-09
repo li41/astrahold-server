@@ -54,6 +54,10 @@ func TestDeathPenaltyPvEForfeitsCheckpointAfterCurrentRespawnBindingExactlyOnce(
 		t.Fatal("checkpoint was not forfeited after death binding")
 	}
 
+	// Restart intent 可以提前送達，但仍不得越過 policy due tick。
+	if err := rt.EnqueueRespawnRequest(2, 1, protocol.ClientRespawnRequest{}); err != nil {
+		t.Fatal(err)
+	}
 	if report := rt.Step(4, 50*time.Millisecond); len(report.CommandErrors) != 0 || report.Metrics.RespawnsApplied != 0 {
 		t.Fatalf("before due=%#v", report)
 	}

@@ -3,9 +3,11 @@ package worldruntime
 import (
 	"errors"
 	"math"
+	"strings"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
@@ -28,6 +30,7 @@ type CharacterRestore struct {
 	CharacterID   characteridentity.ID
 	Revision      uint64
 	World         protocol.WorldIdentity
+	ClassID       classid.ID
 	HP            uint32
 	MaxHP         uint32
 	MP            uint32
@@ -35,6 +38,7 @@ type CharacterRestore struct {
 	Defeated      bool
 	Transform     world.Transform
 	Respawn       characterstate.DefeatedRespawn
+	Inventory     characterstate.InventoryState
 }
 
 func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
@@ -47,6 +51,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 			Revision:       record.Snapshot.World.Revision,
 			GameplaySHA256: record.Snapshot.World.GameplaySHA256,
 		},
+		ClassID:   record.Snapshot.ClassID,
 		HP:        record.Snapshot.HP,
 		MaxHP:     record.Snapshot.MaxHP,
 		MP:        record.Snapshot.MP,
@@ -54,6 +59,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		Defeated:  record.Snapshot.Defeated,
 		Transform: world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
 		Respawn:   record.Snapshot.Respawn,
+		Inventory: record.Snapshot.Inventory,
 	}
 }
 
@@ -73,6 +79,34 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
 		return ErrCharacterRestoreInvalid
 	}
+	if restore.SchemaVersion < characterstate.ClassSchemaVersion {
+		if restore.ClassID != "" {
+			return ErrCharacterRestoreInvalid
+		}
+	} else if restore.ClassID != "" && !classid.IsCanonical(restore.ClassID) {
+		return ErrCharacterRestoreInvalid
+	}
+	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
+		return ErrCharacterRestoreInvalid
+	}
+	if restore.Inventory.Initialized {
+		if restore.Inventory.MainHand != strings.TrimSpace(restore.Inventory.MainHand) {
+			return ErrCharacterRestoreInvalid
+		}
+		stacks, err := restore.Inventory.Stacks()
+		if err != nil {
+			return ErrCharacterRestoreInvalid
+		}
+		last := ""
+		for _, stack := range stacks {
+			if stack.ItemArchetypeID == "" || stack.ItemArchetypeID != strings.TrimSpace(stack.ItemArchetypeID) || stack.Quantity == 0 || (last != "" && stack.ItemArchetypeID <= last) {
+				return ErrCharacterRestoreInvalid
+			}
+			last = stack.ItemArchetypeID
+		}
+	} else if restore.Inventory != (characterstate.InventoryState{}) {
+		return ErrCharacterRestoreInvalid
+	}
 	for _, value := range []float32{
 		restore.Transform.Position.X,
 		restore.Transform.Position.Y,
@@ -84,8 +118,8 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		}
 	}
 	if restore.Defeated {
-		// v2 introduced durable defeated-respawn truth; v3 only adds MP and must not invalidate
-		// already-restorable v2 defeated characters.
+		// v2 introduced durable defeated-respawn truth; later schemas must not invalidate
+		// already-restorable defeated characters.
 		if restore.SchemaVersion < characterstate.RespawnSchemaVersion {
 			return ErrCharacterRestoreDefeatedUnsupported
 		}

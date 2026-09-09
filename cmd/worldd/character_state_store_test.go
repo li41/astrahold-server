@@ -257,7 +257,7 @@ func TestLoadRestoreAcceptsCompleteDefeatedV2Record(t *testing.T) {
 	snapshot := worlddCharacterSnapshot(0)
 	snapshot.Defeated = true
 	snapshot.Respawn = characterstate.DefeatedRespawn{
-		Context: respawnpolicy.DeathContextPvP,
+		Context:      respawnpolicy.DeathContextPvP,
 		SpawnPointID: "safe", SpawnClass: respawnpolicy.SpawnClassSafe,
 		Position: world.Position{X: 12, Z: -6, Layer: 1}, RemainingTicks: 23,
 		CheckpointID: "checkpoint",
@@ -351,5 +351,6 @@ func worlddCharacterSnapshot(hp uint32) characterstate.Snapshot {
 		HP: hp, MaxHP: 1000, MP: 100, MaxMP: 100,
 		Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1},
 		Yaw:      0.75,
+		Inventory: characterstate.InventoryState{Initialized: true},
 	}
 }

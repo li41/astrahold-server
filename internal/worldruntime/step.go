@@ -21,6 +21,9 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if measure {
 		stageStart = time.Now()
 	}
+	// Durability acknowledgements are consumed by the same single world owner before normal
+	// queued gameplay intents. This is the live commit point for one-time ClassID assignment.
+	r.applyCharacterStateSaveCompletions(&report)
 	report.Metrics.CommandQueueDepthBefore = r.queue.depth()
 	commands := r.queue.drain(r.config.MaxCommandsPerTick)
 	report.Metrics.CommandsDrained = len(commands)
@@ -59,6 +62,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), SessionID: c.request.Expected.SessionID, Err: err})
 			}
 			completeWorldOwnerCommand(c.completion, err)
+		case initialClassAssignmentCommand:
+			r.applyInitialClassAssignment(cmd.name(), c, &report)
 		case leaveCommand:
 			r.applyLeave(cmd.name(), c, &report)
 		case moveInputCommand:
@@ -75,10 +80,17 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			r.applySetRespawnCheckpoint(cmd.name(), c, &report)
 		case useActionCommand:
 			r.applyUseAction(cmd.name(), c, tick, delta, &report)
+		case npcCommand:
+			r.applyInteractNPC(cmd.name(), c, tick, &report)
+		case shopCommand:
+			r.applyShopCommand(cmd.name(), c, tick, &report)
 		case setBlockerCommand:
 			r.applySetBlocker(cmd.name(), c, &report)
 		}
 	}
+	// Inventory bootstrap is world-owned just like character/vitals state. Delivery uses the
+	// existing bounded Reliable queue; backpressure leaves the session pending for a later tick.
+	r.replicatePendingInventories(tick, &report)
 	// Policy due 在 queued Client intents 之後、simulation 前執行。若同一 tick 有 move，
 	// 它仍先以 Defeated 規則 consume 並清零，respawn 後不會沿用該 input。
 	r.applyDueRespawns(tick, &report)
@@ -98,6 +110,14 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if measure {
 		report.Metrics.SimulationDuration = time.Since(stageStart)
 	}
+
+	// Loot observes the generic authoritative Defeated transition before any managed corpse can
+	// leave the world. Item-drop ownership remains separate from corpse/despawn/respawn policy.
+	r.stepMonsterLoot(&report)
+
+	// Managed monsters keep a short authoritative corpse window after defeat. Removal happens
+	// only after defeated vitals have converged; EntityID reuse waits for old despawn knowledge.
+	r.stepMonsterLifecycles(tick, &report)
 
 	// Siege objective truth consumes post-simulation position/defeat/team state. Reuse this
 	// stable list later for SiegeMatchState replication so D.2B adds no extra session sort.
@@ -191,10 +211,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				MaxDespawns: r.config.MaxDespawnsPerSessionBuild,
 				MaxMessages: maxMessages,
 			}
-			// Initial bootstrap active時，fully-known Session不和仍在做 Spawn/Initial Vitals
-			// 的 Session同 tick競爭 remote snapshot candidate CPU。若目前 AOI membership 有
-			// lifecycle work，仍使用原 bounded builder；只有 lifecycle-complete view 才套
-			// 現有 MaxMessages=-1 deferred path，因此不改 lifecycle truth / Confirm semantics。
 			if suppressInitialSnapshots && !r.replication.NeedsLifecycleWork(s.ID, frame, visible) {
 				lifecycleLimits.MaxMessages = -1
 			}
@@ -233,8 +249,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 			selectedLifecycle := batch.Stats.SpawnSelected + batch.Stats.DespawnSelected
 			report.Metrics.LifecycleGlobalSelected += selectedLifecycle
 
-			// 第一個 departed candidate 就代表這不是 pure bootstrap，而是 mixed AOI churn。
-			// 立即把本 snapshot 的 global ceiling 收斂到較低 churn budget；第一個 Session 最多只先用32筆。
 			if batch.Stats.DespawnCandidates > 0 && !r.lifecycleChurnActive {
 				r.lifecycleChurnActive = true
 				if r.config.MaxChurnLifecycleMessagesPerSnapshot > 0 && (globalBudget <= 0 || r.config.MaxChurnLifecycleMessagesPerSnapshot < globalBudget) {
@@ -269,7 +283,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 						report.Metrics.LifecycleBackpressureStops++
 						continue
 					}
-					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: out.Delivery, MessageType: out.Message.Type(), Err: err})
+					report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: envelope.Delivery, MessageType: out.Message.Type(), Err: err})
 					continue
 				}
 				confirmLifecycleDelivery(r, s.ID, out.Message)
@@ -289,8 +303,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	}
 
 	if snapshotRan {
-		// Respawn position 可能同時改變 AOI membership；只有完整 normal snapshot 已讓每個
-		// Session rebuild desired view 後，revived Vitals 才能解除第一層 ordering barrier。
 		r.reconcileRespawnVitalsAfterSnapshot()
 	}
 

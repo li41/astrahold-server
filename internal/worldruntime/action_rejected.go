@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -54,10 +55,10 @@ func (r *Runtime) rejectClientAction(
 	}
 	if sendErr := s.Connection().TrySend(envelope); sendErr != nil {
 		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{
-			SessionID: sourceSessionID,
-			Delivery: protocol.DeliveryReliableOrdered,
+			SessionID:   sourceSessionID,
+			Delivery:    protocol.DeliveryReliableOrdered,
 			MessageType: protocol.MessageActionRejected,
-			Err: sendErr,
+			Err:         sendErr,
 		})
 	}
 }
@@ -68,6 +69,8 @@ func actionRejectionReason(err error) protocol.ActionRejectionReason {
 		return protocol.ActionRejectionCooldown
 	case errors.Is(err, character.ErrInsufficientResource):
 		return protocol.ActionRejectionInsufficientResource
+	case errors.Is(err, classaction.ErrWrongClass):
+		return protocol.ActionRejectionWrongClass
 	case errors.Is(err, ErrEntityOutOfRange), errors.Is(err, ErrPointOutOfRange), errors.Is(err, siege.ErrGateOutOfRange):
 		return protocol.ActionRejectionOutOfRange
 	case errors.Is(err, ErrEntityWrongLayer), errors.Is(err, siege.ErrGateWrongLayer):
@@ -83,6 +86,7 @@ func actionRejectionReason(err error) protocol.ActionRejectionReason {
 	case errors.Is(err, combat.ErrTargetNotAllowed),
 		errors.Is(err, ErrInvalidEntityTarget),
 		errors.Is(err, ErrSelfTarget),
+		errors.Is(err, ErrEntityEvading),
 		errors.Is(err, ErrResurrectionTargetNotPlayer),
 		errors.Is(err, character.ErrCharacterNotDefeated),
 		errors.Is(err, siege.ErrUnknownGate),

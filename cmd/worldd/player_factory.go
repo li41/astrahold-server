@@ -5,6 +5,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/netadapter/tcpudp"
+	"github.com/li41/astrahold-server/internal/playerarchetype"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -35,9 +36,10 @@ func newWorldPlayerFactory(spawn respawnpolicy.SpawnPoint, agent gameplayworld.A
 	return func(_ session.ID, entityID world.EntityID) tcpudp.PlayerSpec {
 		return tcpudp.PlayerSpec{
 			Entity: world.EntityState{
-				ID:        entityID,
-				Kind:      world.EntityPlayer,
-				Transform: world.Transform{Position: spawn.Position()},
+				ID:          entityID,
+				Kind:        world.EntityPlayer,
+				ArchetypeID: playerarchetype.DefaultID,
+				Transform:   world.Transform{Position: spawn.Position()},
 			},
 			// Normal on-foot movement is Server-authoritative. Unreal/Click-to-Move both
 			// consume this same world speed rather than inventing a presentation-only rate.

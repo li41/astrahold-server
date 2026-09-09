@@ -2,6 +2,7 @@ package worldruntime
 
 import (
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -51,6 +52,7 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 	r.characterIdentities.bindSession(c.session)
 	r.markCharacterStateAutosaveBaseline(c.session.EntityID, report.Tick)
 	r.replication.Register(c.session.ID)
+	r.ensureSessionInventory(c.session)
 }
 
 func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, report *StepReport) {
@@ -64,6 +66,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
+	r.removeSessionInventoryDelivery(c.id)
 	_ = s.Connection().Close()
 }
 
@@ -90,17 +93,26 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 
-	entity := request.Entity
+	entity := canonicalizeJoinEntity(request.Entity)
 	var restoredState *character.State
 	var defeatedRestore *preparedDefeatedRestore
+	var restoredInventory *inventory.Inventory
 	if request.Restore != nil {
 		if err := r.validateCharacterRestore(request.Session, *request.Restore); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 			return
 		}
+		if request.Restore.Inventory.Initialized {
+			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.ClassID)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+				return
+			}
+		}
 		entity.Transform = request.Restore.Transform
 		state := character.State{
 			EntityID: request.Entity.ID,
+			ClassID:  request.Restore.ClassID,
 			HP:       request.Restore.HP,
 			MaxHP:    request.Restore.MaxHP,
 			MP:       request.Restore.MP,
@@ -155,12 +167,16 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
+	if restoredInventory != nil {
+		r.inventories[request.Session.CharacterIdentity.ID] = restoredInventory
+	}
 	r.characterIdentities.bindSession(request.Session)
 	if request.AdmissionLease != nil { r.characterIdentities.consumeAdmission(*request.AdmissionLease) }
 	r.characterIdentities.activateOwnership(ownership)
 	if request.OwnershipFence != nil { *request.OwnershipFence = ownership }
 	r.markCharacterStateAutosaveBaseline(request.Entity.ID, report.Tick)
 	r.replication.Register(request.Session.ID)
+	r.ensureSessionInventory(request.Session)
 }
 
 func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
@@ -181,10 +197,13 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 	r.forgetCharacterStateAutosave(s.EntityID)
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
+	r.removeSessionInventoryDelivery(c.id)
 	r.removeEntityVitals(s.EntityID)
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
 	if r.respawnPolicy != nil { r.respawnPolicy.Remove(s.EntityID) }
+	if r.combat != nil { r.combat.ClearSelfMitigation(s.EntityID) }
+	r.clearTargetResourcesForEntity(s.EntityID, report)
 	r.characters.Remove(s.EntityID)
 	r.characterIdentities.removeEntity(s.EntityID)
 	r.world.Remove(s.EntityID)

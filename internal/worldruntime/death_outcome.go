@@ -13,16 +13,16 @@ import (
 var ErrDeathRevisionOverflow = errors.New("worldruntime: death revision overflow")
 
 type deathOutcome struct {
-	EntityID                    world.EntityID
-	CharacterID                 characteridentity.ID
-	CharacterIdentityAssurance  characteridentity.Assurance
-	Revision                    uint64
-	Context                     respawnpolicy.DeathContext
-	DefeatedTick                uint64
+	EntityID                   world.EntityID
+	CharacterID                characteridentity.ID
+	CharacterIdentityAssurance characteridentity.Assurance
+	Revision                   uint64
+	Context                    respawnpolicy.DeathContext
+	DefeatedTick               uint64
 }
 
 type deathPenaltyOutcome struct {
-	TransactionApplied bool
+	TransactionApplied  bool
 	CheckpointForfeited bool
 }
 
@@ -37,14 +37,17 @@ func WithDeathOutcomeOutbox(outbox *deathoutcome.Outbox) Option {
 // recordPlayerDefeat 是 player alive -> defeated transition 的單一 outcome boundary。
 // ordering刻意固定為：
 //
-//  1. 產生單調 DefeatRevision 並快照目前 active CharacterID；
-//  2. 先讓 respawn policy 綁定本次 context/checkpoint/destination/due tick；
-//  3. 再 exactly-once 套用 death penalty；
-//  4. 最後把已成立的 immutable outcome enqueue 到 process-local outbox。
+//  1. 清掉任何前一生命週期殘留的 respawn transition phase；
+//  2. 產生單調 DefeatRevision 並快照目前 active CharacterID；
+//  3. 先讓 respawn policy 綁定本次 context/checkpoint/destination/due tick；
+//  4. 再 exactly-once 套用 death penalty；
+//  5. 最後把已成立的 immutable outcome enqueue 到 process-local outbox。
 //
 // 因此 checkpoint forfeiture 不會改寫「這次死亡」已綁定的 respawn 目的地；
 // outbox/identity failure也不會 rollback已成立的 lethal / respawn / penalty truth。
 func (r *Runtime) recordPlayerDefeat(entityID world.EntityID, tick uint64, context respawnpolicy.DeathContext, report *StepReport) {
+	delete(r.respawnVitalsPhases, entityID)
+
 	outcome, err := r.beginDeathOutcome(entityID, tick, context, report)
 	if err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "record_death_outcome", Err: err})

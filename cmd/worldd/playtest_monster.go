@@ -2,20 +2,36 @@ package main
 
 import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
+	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
 const (
-	playtestMonsterEntityID    world.EntityID = 9001
-	playtestMonsterArchetypeID                = "wolf-gray-01"
-	playtestMonsterActionID                   = "wolf-bite"
-	playtestMonsterSpawnX       float32        = 2
-	playtestMonsterSpawnZ       float32        = -35
+	playtestMonsterEntityID                         world.EntityID = 9001
+	playtestMonsterArchetypeID                                     = "wolf-gray-01"
+	playtestMonsterActionID                                        = "wolf-bite"
+	playtestMonsterDropArchetypeID                                 = "item_gray_wolf_pelt"
+	playtestMonsterDropChanceBasisPoints              uint16       = 7_000
+	playtestMonsterSpawnX                              float32      = 2
+	playtestMonsterSpawnZ                              float32      = -35
+	playtestMonsterPatrolToleranceMeters               float32      = 0.2
+	playtestMonsterCorpseHoldSeconds                                = 2
+	playtestMonsterRespawnDelaySeconds                              = 8
 )
 
 func playtestMonsterHome() world.Position {
 	return world.Position{X: playtestMonsterSpawnX, Z: playtestMonsterSpawnZ, Layer: 0}
+}
+
+func playtestMonsterIdlePatrol() []world.Position {
+	home := playtestMonsterHome()
+	return []world.Position{
+		{X: home.X + 1.5, Y: home.Y, Z: home.Z, Layer: home.Layer},
+		{X: home.X + 0.5, Y: home.Y, Z: home.Z + 1.4, Layer: home.Layer},
+		{X: home.X - 1.2, Y: home.Y, Z: home.Z + 0.8, Layer: home.Layer},
+		home,
+	}
 }
 
 func newPlaytestMonsterSpawn(agent gameplayworld.AgentDefaults) worldruntime.SpawnEntityRequest {
@@ -43,5 +59,32 @@ func newPlaytestMonsterAIConfig() worldruntime.AutonomousMeleeAgentConfig {
 		LeashRange:      16,
 		AttackRange:     1.75,
 		ReturnTolerance: 0.25,
+		IdlePatrol:      playtestMonsterIdlePatrol(),
+		PatrolTolerance: playtestMonsterPatrolToleranceMeters,
 	}
+}
+
+func newPlaytestMonsterLifecycleConfig(agent gameplayworld.AgentDefaults, tickRate int) worldruntime.MonsterLifecycleConfig {
+	return worldruntime.MonsterLifecycleConfig{
+		Spawn:             newPlaytestMonsterSpawn(agent),
+		CorpseHoldTicks:   uint64(playtestMonsterCorpseHoldSeconds * tickRate),
+		RespawnDelayTicks: uint64(playtestMonsterRespawnDelaySeconds * tickRate),
+	}
+}
+
+func newPlaytestMonsterLootCatalog() *loot.Catalog {
+	catalog, err := loot.New(loot.Definition{
+		Revision: "playtest-monster-loot-v2",
+		Tables: []loot.Table{{
+			SourceArchetypeID: playtestMonsterArchetypeID,
+			Drops: []loot.Drop{{
+				ItemArchetypeID:   playtestMonsterDropArchetypeID,
+				ChanceBasisPoints: playtestMonsterDropChanceBasisPoints,
+			}},
+		}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return catalog
 }

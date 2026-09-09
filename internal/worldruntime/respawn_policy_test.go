@@ -45,6 +45,10 @@ func TestRespawnPolicyPvECheckpointAppliesAfterContextDelay(t *testing.T) {
 	if err := rt.EnqueueClearRespawnCheckpoint(2); err != nil {
 		t.Fatal(err)
 	}
+	// Protocol v19 restart intent 可在 due 前先 arm，但不可提前復活。
+	if err := rt.EnqueueRespawnRequest(2, 1, protocol.ClientRespawnRequest{}); err != nil {
+		t.Fatal(err)
+	}
 	beforeDue := rt.Step(4, 50*time.Millisecond)
 	if len(beforeDue.CommandErrors) != 0 || beforeDue.Metrics.RespawnsApplied != 0 {
 		t.Fatalf("before due=%#v", beforeDue)
@@ -54,7 +58,7 @@ func TestRespawnPolicyPvECheckpointAppliesAfterContextDelay(t *testing.T) {
 		t.Fatalf("pending changed after checkpoint clear=%#v ok=%v", pending, ok)
 	}
 
-	// due tick 的 ClientMoveInput 先以 Defeated 規則 consume/zero，之後才 respawn。
+	// due tick 的 ClientMoveInput 先以 Defeated 規則 consume/zero，之後才由已 arm 的 restart intent respawn。
 	if err := rt.EnqueueMove(2, 1, protocol.ClientMoveInput{DirectionX: 1}); err != nil {
 		t.Fatal(err)
 	}

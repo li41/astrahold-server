@@ -6,14 +6,18 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/deathoutcome"
 	"github.com/li41/astrahold-server/internal/deathpenalty"
+	"github.com/li41/astrahold-server/internal/inventory"
+	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/replication"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/shop"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
@@ -38,6 +42,9 @@ type Config struct {
 	PostReviveProtectionTicks            uint64
 	CharacterStateAutosaveEveryTicks     uint64
 	MaxCharacterStateAutosavesPerTick    int
+	InventoryMaxStacks                   int
+	StarterInventory                     []inventory.Stack
+	ShopCatalog                          *shop.Catalog
 	SiegeCompletedMinHold                time.Duration
 	SiegeCompletedMaxHold                time.Duration
 	AOIOptions                           spatial.QueryOptions
@@ -55,11 +62,17 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		CommandQueueCapacity:                 4096,
-		MaxCommandsPerTick:                   2048,
-		SnapshotEveryTicks:                   2,
-		CharacterMaxHP:                       1000,
-		MaxCharacterStateAutosavesPerTick:    32,
+		CommandQueueCapacity:              4096,
+		MaxCommandsPerTick:                2048,
+		SnapshotEveryTicks:                2,
+		CharacterMaxHP:                    1000,
+		MaxCharacterStateAutosavesPerTick: 32,
+		InventoryMaxStacks:                32,
+		StarterInventory: []inventory.Stack{
+			{ArchetypeID: "item_minor_healing_potion", Quantity: 5},
+			{ArchetypeID: "item_minor_mana_potion", Quantity: 3},
+			{ArchetypeID: "item_training_blade", Quantity: 1},
+		},
 		SiegeCompletedMinHold:                2 * time.Second,
 		SiegeCompletedMaxHold:                10 * time.Second,
 		AOIOptions:                           spatial.QueryOptions{SameLayer: false, MaxHeightDelta: 64},
@@ -93,19 +106,19 @@ type DeliveryError struct {
 }
 
 type StepMetrics struct {
-	CommandQueueDepthBefore                   int
-	CommandQueueDepthAfter                    int
+	CommandQueueDepthBefore                  int
+	CommandQueueDepthAfter                   int
 	CommandsDrained                          int
 	EntityActionsApplied                     int
-	CharacterStateSaveIntentsEnqueued         int
-	CharacterStateSaveIntentFailures          int
-	CharacterStateAutosaveBudget              int
-	CharacterStateAutosaveAttempts            int
-	CharacterStateAutosaveEnqueued            int
-	CharacterStateAutosaveBudgetExhausted     bool
+	CharacterStateSaveIntentsEnqueued        int
+	CharacterStateSaveIntentFailures         int
+	CharacterStateAutosaveBudget             int
+	CharacterStateAutosaveAttempts           int
+	CharacterStateAutosaveEnqueued           int
+	CharacterStateAutosaveBudgetExhausted    bool
 	DeathOutcomesRecorded                    int
-	DeathOutcomeEventsEnqueued                int
-	DeathOutcomeEventEnqueueFailures          int
+	DeathOutcomeEventsEnqueued               int
+	DeathOutcomeEventEnqueueFailures         int
 	DeathPenaltyTransactionsApplied          int
 	DeathPenaltyCheckpointForfeits           int
 	RespawnsScheduled                        int
@@ -188,49 +201,60 @@ type dirtyVitalsProgress struct {
 }
 
 type Runtime struct {
-	world                           *simulation.World
-	sessions                        *session.Registry
-	characterIdentities             *characterIdentityRegistry
-	characterStateOutbox            *characterstate.Outbox
-	characterStateWorld             characterstate.WorldRef
-	characterStateAutosaveLastTick  map[world.EntityID]uint64
-	characterStateAutosaveCursor    int
-	characterStateAutosaveNextTick  uint64
-	replication                     *replication.Service
-	replicationFrameBuilder         *simulation.ReplicationFrameBuilder
-	replicationVisibleScratch       []int
-	characters                      *character.Service
-	queue                           *commandQueue
-	config                          Config
-	dynamic                         DynamicWorld
-	siege                           *siege.Service
-	siegeStepDelta                  time.Duration
-	siegeCompletedRevision          uint64
-	siegeCompletedElapsed           time.Duration
-	siegeRoundResetQueued           bool
-	combat                          *combat.Service
-	autonomousMeleeAgents           []autonomousMeleeAgent
-	respawnPolicy                   *respawnpolicy.Service
-	deathPenalty                    *deathpenalty.Service
-	deathOutbox                     *deathoutcome.Outbox
-	deathRevision                   map[world.EntityID]uint64
-	dynamicRevision                 uint64
-	sessionDynamicRevision          map[session.ID]uint64
-	sessionSiegeState               map[session.ID]siegeDeliveryStamp
-	entityVitalsRevision            map[world.EntityID]uint64
-	dirtyVitalsEntities             map[world.EntityID]struct{}
-	dirtyVitalsScratch              []world.EntityID
-	dirtyVitalsNextEntity           world.EntityID
-	dirtyVitalsNextSession          map[world.EntityID]session.ID
-	dirtyVitalsProgress             map[world.EntityID]dirtyVitalsProgress
-	respawnVitalsPhases             map[world.EntityID]respawnVitalsPhase
-	reviveProtectionUntil           map[world.EntityID]uint64
-	sessionVitalsRevision           map[session.ID]map[world.EntityID]uint64
-	sessionVitalsPending            map[session.ID]map[world.EntityID]struct{}
-	lifecycleSessionCursor          int
-	vitalsSessionCursor             int
-	lifecycleChurnActive            bool
-	initialBootstrapState           uint8
+	world                          *simulation.World
+	sessions                       *session.Registry
+	characterIdentities            *characterIdentityRegistry
+	characterStateOutbox           *characterstate.Outbox
+	characterStateWorld            characterstate.WorldRef
+	characterStateAutosaveLastTick map[world.EntityID]uint64
+	characterStateAutosaveCursor   int
+	characterStateAutosaveNextTick uint64
+	inventories                    map[characteridentity.ID]*inventory.Inventory
+	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
+	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
+	pendingClassMessages           map[session.ID][]protocol.Message
+	initialClassSelectionFeedback  map[uint64]initialClassSelectionFeedback
+	sessionInventoryPending        map[session.ID]struct{}
+	replication                    *replication.Service
+	replicationFrameBuilder        *simulation.ReplicationFrameBuilder
+	replicationVisibleScratch      []int
+	characters                     *character.Service
+	queue                          *commandQueue
+	config                         Config
+	dynamic                        DynamicWorld
+	siege                          *siege.Service
+	siegeStepDelta                 time.Duration
+	siegeCompletedRevision         uint64
+	siegeCompletedElapsed          time.Duration
+	siegeRoundResetQueued          bool
+	combat                         *combat.Service
+	autonomousMeleeAgents          []autonomousMeleeAgent
+	monsterLifecycles              []monsterLifecycle
+	monsterLootCatalog             *loot.Catalog
+	monsterLootStates              map[world.EntityID]*monsterLootState
+	monsterLootEntityIDs           []world.EntityID
+	nextItemDropEntityID           world.EntityID
+	respawnPolicy                  *respawnpolicy.Service
+	deathPenalty                   *deathpenalty.Service
+	deathOutbox                    *deathoutcome.Outbox
+	deathRevision                  map[world.EntityID]uint64
+	dynamicRevision                uint64
+	sessionDynamicRevision         map[session.ID]uint64
+	sessionSiegeState              map[session.ID]siegeDeliveryStamp
+	entityVitalsRevision           map[world.EntityID]uint64
+	dirtyVitalsEntities            map[world.EntityID]struct{}
+	dirtyVitalsScratch             []world.EntityID
+	dirtyVitalsNextEntity          world.EntityID
+	dirtyVitalsNextSession         map[world.EntityID]session.ID
+	dirtyVitalsProgress            map[world.EntityID]dirtyVitalsProgress
+	respawnVitalsPhases            map[world.EntityID]respawnVitalsPhase
+	reviveProtectionUntil          map[world.EntityID]uint64
+	sessionVitalsRevision          map[session.ID]map[world.EntityID]uint64
+	sessionVitalsPending           map[session.ID]map[world.EntityID]struct{}
+	lifecycleSessionCursor         int
+	vitalsSessionCursor            int
+	lifecycleChurnActive           bool
+	initialBootstrapState          uint8
 }
 
 func New(w *simulation.World, config Config, options ...Option) *Runtime {
@@ -251,6 +275,12 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 	}
 	if config.CharacterStateAutosaveEveryTicks > 0 && config.MaxCharacterStateAutosavesPerTick <= 0 {
 		config.MaxCharacterStateAutosavesPerTick = 32
+	}
+	if config.InventoryMaxStacks <= 0 {
+		config.InventoryMaxStacks = 32
+	}
+	if err := validateStarterInventory(config.InventoryMaxStacks, config.StarterInventory); err != nil {
+		panic(err)
 	}
 	if config.SiegeCompletedMinHold < 0 || config.SiegeCompletedMaxHold < 0 || (config.SiegeCompletedMaxHold == 0 && config.SiegeCompletedMinHold > 0) || (config.SiegeCompletedMaxHold > 0 && config.SiegeCompletedMinHold > config.SiegeCompletedMaxHold) {
 		panic("worldruntime: invalid siege completed hold policy")
@@ -288,11 +318,19 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		sessions:                       session.NewRegistry(),
 		characterIdentities:            newCharacterIdentityRegistry(),
 		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
+		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
+		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
+		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),
+		pendingClassMessages:           make(map[session.ID][]protocol.Message),
+		initialClassSelectionFeedback:  make(map[uint64]initialClassSelectionFeedback),
+		sessionInventoryPending:        make(map[session.ID]struct{}),
 		replication:                    replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),
 		characters:                     characters,
 		queue:                          newCommandQueue(config.CommandQueueCapacity),
 		config:                         config,
+		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
+		nextItemDropEntityID:           firstItemDropEntityID,
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
 		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),

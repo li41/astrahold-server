@@ -82,8 +82,14 @@ func TestDeathOutcomeOutboxFullDoesNotRollbackGameplayTruth(t *testing.T) {
 	if len(first.CommandErrors) != 0 || outbox.Depth() != 1 {
 		t.Fatalf("first=%#v depth=%d", first, outbox.Depth())
 	}
-	// 保留第一個 event未 Confirm，讓 outbox持續滿載；角色仍照既有 policy復活。
-	rt.Step(4, 50*time.Millisecond)
+	// 保留第一個 event 未 Confirm，讓 outbox 持續滿載；restart intent 仍可讓角色依既有
+	// authoritative policy 在 due tick 復活，證明 durable side-effect failure 不會破壞 gameplay truth。
+	if err := rt.EnqueueRespawnRequest(2, 1, protocol.ClientRespawnRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if report := rt.Step(4, 50*time.Millisecond); len(report.CommandErrors) != 0 || report.Metrics.RespawnsApplied != 0 {
+		t.Fatalf("armed restart=%#v", report)
+	}
 	if due := rt.Step(5, 50*time.Millisecond); len(due.CommandErrors) != 0 || due.Metrics.RespawnsApplied != 1 {
 		t.Fatalf("due=%#v", due)
 	}

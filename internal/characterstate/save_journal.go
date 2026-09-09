@@ -15,15 +15,20 @@ import (
 	"sync"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 const (
-	LegacySaveJournalSchemaVersion uint16 = 1
-	SaveJournalSchemaVersion       uint16 = 2
-	saveCheckpointSchemaVersion    uint16 = 1
-	saveJournalIDSize                     = 16
-	maxSaveJournalPayload                 = 1 << 20
+	LegacySaveJournalSchemaVersion    uint16 = 1
+	ResourceSaveJournalSchemaVersion  uint16 = 2
+	InventorySaveJournalSchemaVersion uint16 = 3
+	EquipmentSaveJournalSchemaVersion uint16 = 4
+	ClassSaveJournalSchemaVersion     uint16 = 5
+	SaveJournalSchemaVersion          uint16 = ClassSaveJournalSchemaVersion
+	saveCheckpointSchemaVersion       uint16 = 1
+	saveJournalIDSize                        = 16
+	maxSaveJournalPayload                    = 1 << 20
 )
 
 var (
@@ -90,6 +95,7 @@ type saveJournalWireSnapshot struct {
 	WorldID         string               `json:"world_id"`
 	WorldRevision   string               `json:"world_revision"`
 	GameplaySHA256  string               `json:"gameplay_sha256"`
+	ClassID         string               `json:"class_id,omitempty"`
 	HP              uint32               `json:"hp"`
 	MaxHP           uint32               `json:"max_hp"`
 	MP              uint32               `json:"mp,omitempty"`
@@ -101,6 +107,7 @@ type saveJournalWireSnapshot struct {
 	Layer           world.LayerID        `json:"layer"`
 	Yaw             float32              `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
+	Inventory        InventoryState       `json:"inventory,omitempty"`
 }
 
 type saveCheckpointWire struct {
@@ -182,7 +189,7 @@ func (j *SaveJournal) Close() error {
 // Append advances durable save-intent truth only after the complete frame has been fsync'ed.
 // expectedRevision is part of the durable command and therefore survives restart.
 func (j *SaveJournal) Append(intent SaveIntent, expectedRevision uint64) (SaveJournalRecord, error) {
-	if err := validateSaveIntent(intent); err != nil {
+	if err := validateNewSaveIntent(intent); err != nil {
 		return SaveJournalRecord{}, err
 	}
 	if expectedRevision == ^uint64(0) {
@@ -346,17 +353,8 @@ func (s *SaveCheckpointStore) Save(journal *SaveJournal, record SaveJournalRecor
 		_ = os.Remove(tmpName)
 		return SaveCheckpoint{}, err
 	}
-	directory, err := os.Open(dir)
-	if err != nil {
+	if err := syncDirectory(dir); err != nil {
 		return SaveCheckpoint{}, err
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return SaveCheckpoint{}, syncErr
-	}
-	if closeErr != nil {
-		return SaveCheckpoint{}, closeErr
 	}
 	return checkpoint, nil
 }
@@ -558,15 +556,24 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: trailing record data", ErrCorruptSaveJournal)
 	}
-	if (wire.SchemaVersion != LegacySaveJournalSchemaVersion && wire.SchemaVersion != SaveJournalSchemaVersion) || wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
+	if (wire.SchemaVersion != LegacySaveJournalSchemaVersion &&
+		wire.SchemaVersion != ResourceSaveJournalSchemaVersion &&
+		wire.SchemaVersion != InventorySaveJournalSchemaVersion &&
+		wire.SchemaVersion != EquipmentSaveJournalSchemaVersion &&
+		wire.SchemaVersion != ClassSaveJournalSchemaVersion) ||
+		wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
 	}
 	identity, err := characteridentity.NewTrusted(wire.CharacterID)
 	if err != nil {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: character identity: %v", ErrCorruptSaveJournal, err)
 	}
-	intent := SaveIntent{IntentID: wire.IntentID, Identity: identity, Snapshot: saveJournalWireToSnapshot(wire.SchemaVersion, wire.Snapshot)}
-	if err := validateSaveIntent(intent); err != nil {
+	intent := SaveIntent{
+		IntentID: wire.IntentID,
+		Identity: identity,
+		Snapshot: saveJournalWireToSnapshot(wire.SchemaVersion, wire.Snapshot),
+	}
+	if err := validateDecodedSaveIntent(wire.SchemaVersion, intent); err != nil {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: intent: %v", ErrCorruptSaveJournal, err)
 	}
 	return wire.RecordID, wire.ExpectedRevision, intent, nil
@@ -575,8 +582,10 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 	wire := saveJournalWireSnapshot{
 		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
+		ClassID: string(snapshot.ClassID),
 		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated,
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
+		Inventory: snapshot.Inventory,
 	}
 	if snapshot.Defeated {
 		respawn := snapshot.Respawn
@@ -597,29 +606,75 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 		// a partially known resource state after restart.
 		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
 	}
+	inventoryState := InventoryState{}
+	if schemaVersion >= InventorySaveJournalSchemaVersion {
+		inventoryState = wire.Inventory
+	}
 	snapshot := Snapshot{
 		World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
+		ClassID: classid.ID(wire.ClassID),
 		HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 		Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
+		Inventory: inventoryState,
 	}
 	if wire.DefeatedRespawn != nil {
 		snapshot.Respawn = DefeatedRespawn{
 			Context: wire.DefeatedRespawn.Context, SpawnPointID: wire.DefeatedRespawn.SpawnPointID, SpawnClass: wire.DefeatedRespawn.SpawnClass,
-			Position: world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
+			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer},
 			RemainingTicks: wire.DefeatedRespawn.RemainingTicks, CheckpointID: wire.DefeatedRespawn.CheckpointID,
 		}
+		snapshot.Respawn.Position = world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer}
 	}
 	return snapshot
 }
 
-func validateSaveIntent(intent SaveIntent) error {
+func validateNewSaveIntent(intent SaveIntent) error {
 	if intent.IntentID == 0 {
 		return ErrUnknownSaveIntent
 	}
 	if err := validateTrustedIdentity(intent.Identity); err != nil {
 		return err
 	}
-	return validateSnapshotV3(intent.Snapshot)
+	if !intent.Snapshot.Inventory.Initialized {
+		return ErrInvalidSnapshot
+	}
+	return validateSnapshotV6(intent.Snapshot)
+}
+
+func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
+	if intent.IntentID == 0 {
+		return ErrUnknownSaveIntent
+	}
+	if err := validateTrustedIdentity(intent.Identity); err != nil {
+		return err
+	}
+	if err := validateSnapshotV5(intent.Snapshot); err != nil {
+		return err
+	}
+	switch schemaVersion {
+	case LegacySaveJournalSchemaVersion, ResourceSaveJournalSchemaVersion:
+		if intent.Snapshot.Inventory != (InventoryState{}) || intent.Snapshot.ClassID != "" {
+			return ErrInvalidSnapshot
+		}
+	case InventorySaveJournalSchemaVersion:
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.Inventory.OffHand != "" || intent.Snapshot.ClassID != "" {
+			return ErrInvalidSnapshot
+		}
+	case EquipmentSaveJournalSchemaVersion:
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.ClassID != "" {
+			return ErrInvalidSnapshot
+		}
+	case ClassSaveJournalSchemaVersion:
+		if !intent.Snapshot.Inventory.Initialized {
+			return ErrInvalidSnapshot
+		}
+		if err := validateSnapshotV6(intent.Snapshot); err != nil {
+			return err
+		}
+	default:
+		return ErrInvalidSnapshot
+	}
+	return nil
 }
 
 func makeSaveJournalFrame(payload []byte) []byte {

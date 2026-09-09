@@ -39,6 +39,17 @@ const (
 	EntityNPC
 	EntityMonster
 	EntitySiegeObject
+	EntityItemDrop
+)
+
+// EntityBodySize 是 Server-authored gameplay classification。它不是 Client 模型縮放資訊，
+// 也不會自動複製到 presentation protocol；combat system 可用它選擇正式體型規則。
+type EntityBodySize string
+
+const (
+	EntityBodySizeSmall EntityBodySize = "small"
+	EntityBodySizeLarge EntityBodySize = "large"
+	EntityBodySizeGiant EntityBodySize = "giant"
 )
 
 // Transform 是同步給其他系統的最小空間狀態。
@@ -49,10 +60,12 @@ type Transform struct {
 
 // EntityState 是世界層需要知道的最小實體狀態。
 // ArchetypeID 只引用 immutable authored content identity；它不包含 model path、AI runtime 或 HP truth。
+// BodySize 是 Server gameplay metadata，不是 Client presentation scale。
 type EntityState struct {
 	ID          EntityID
 	Kind        EntityKind
 	ArchetypeID string
+	BodySize    EntityBodySize
 	Transform   Transform
 }
 

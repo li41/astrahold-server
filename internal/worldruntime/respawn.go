@@ -6,8 +6,8 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// RespawnRequest 只接受 server-side gameplay / admin policy 產生的 authoritative 目的地。
-// Client protocol 不提供 respawn position，也不在 S3-F.2 新增 ClientRespawn message。
+// RespawnRequest only accepts an authoritative destination produced by server-side gameplay/admin
+// policy. Protocol v19 ClientRespawnRequest carries no position and can only arm this transition.
 type RespawnRequest struct {
 	EntityID world.EntityID
 	Position world.Position
@@ -17,14 +17,17 @@ type respawnCommand struct{ request RespawnRequest }
 
 func (respawnCommand) name() string { return "respawn_character" }
 
+// respawnVitalsPhase is the per-Runtime respawn transition barrier. RestartRequested is a
+// pre-respawn consent phase; the remaining phases protect post-respawn AOI/vitals ordering.
 type respawnVitalsPhase uint8
 
 const (
-	respawnVitalsAwaitingAOI respawnVitalsPhase = iota + 1
+	respawnVitalsRestartRequested respawnVitalsPhase = iota + 1
+	respawnVitalsAwaitingAOI
 	respawnVitalsDesiredOnly
 )
 
-// EnqueueRespawn 保持「所有 world mutable state 只能由 bounded command queue 進入」的不變量。
+// EnqueueRespawn keeps the invariant that all mutable world state enters through the bounded queue.
 func (r *Runtime) EnqueueRespawn(request RespawnRequest) error {
 	return r.queue.tryPush(respawnCommand{request: request})
 }
@@ -46,43 +49,46 @@ func (r *Runtime) applyRespawn(name string, request RespawnRequest, report *Step
 		return
 	}
 
-	// Teleport 是 authoritative gameplay-transition primitive，會同步更新 transform、movement
-	// position、spatial index，並清掉舊 movement direction。Character state 已在同一 owner
-	// goroutine preflight 為 Defeated，因此後續 ReviveFull 不存在競爭式 state change。
+	// Teleport is the authoritative gameplay-transition primitive: it updates transform, movement
+	// position and spatial index and clears old movement direction. Character state is already
+	// preflighted as Defeated on this same owner goroutine.
 	if err := r.world.Teleport(request.EntityID, request.Position); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err})
 		return
 	}
 	if _, err := r.characters.ReviveFull(request.EntityID); err != nil {
-		// 理論上只有 invariant violation 才會走到這裡。盡力還原原 position，避免 vitals / transform
-		// 分裂；rollback 本身若失敗也保留原錯誤作為主要 fault。
+		// Only an invariant violation should reach this branch. Best-effort restore the old position
+		// so vitals and transform do not intentionally diverge.
 		_ = r.world.Teleport(request.EntityID, previous.Transform.Position)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err})
 		return
 	}
 
-	// 手動 server respawn 與 policy due 共用同一 primitive；成功後一律清掉舊 pending，
-	// 避免之後同一 death schedule 再次觸發第二次 respawn。
+	// Server/admin respawn and policy due share this primitive. Success always consumes the old
+	// schedule so the same death cannot respawn twice.
 	if r.respawnPolicy != nil {
 		r.respawnPolicy.Cancel(request.EntityID)
 	}
 
-	// Protection 是純 server-side damage legality state；不需要改變 respawn AOI/Vitals ordering。
+	// Protection is server-side damage legality state and does not alter AOI/vitals ordering.
 	r.grantReviveProtection(request.EntityID, report.Tick, report)
 
-	// Respawn 同時改 vitals 與 AOI position。Dirty Vitals 先保留，但在下一次正常 snapshot
-	// 完成 desired membership rebuild 前不得 fan-out，避免 stale-known observer 先看到復活狀態。
+	// Respawn changes vitals and AOI position together. Keep dirty vitals, but suppress fan-out until
+	// the next normal snapshot rebuilds desired membership so stale-known observers cannot see revive.
 	r.markEntityVitalsDirty(request.EntityID)
 	r.respawnVitalsPhases[request.EntityID] = respawnVitalsAwaitingAOI
 	report.Metrics.RespawnsApplied++
 }
 
-// reconcileRespawnVitalsAfterSnapshot 只在完整 normal snapshot pass 後呼叫。
-// 若仍有 known-but-no-longer-desired relationship（通常是 Despawn backpressure），
-// respawn Vitals 進入 desired-only 模式；等 stale knowledge 全部確認清除後回到一般 hot path。
+// reconcileRespawnVitalsAfterSnapshot runs only after a complete normal snapshot pass. A pending
+// restart request must survive snapshots while the character is still defeated. Post-respawn phases
+// continue to guard stale known relationships until lifecycle convergence is confirmed.
 func (r *Runtime) reconcileRespawnVitalsAfterSnapshot() {
 	for entityID, phase := range r.respawnVitalsPhases {
 		switch phase {
+		case respawnVitalsRestartRequested:
+			// Consent remains armed until authoritative policy becomes due and applyRespawn replaces it.
+			continue
 		case respawnVitalsAwaitingAOI:
 			if r.replication.HasKnownOutsideDesired(entityID) {
 				r.respawnVitalsPhases[entityID] = respawnVitalsDesiredOnly
