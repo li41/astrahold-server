@@ -20,6 +20,7 @@ const (
 	StarfireColdStarChannel    = "starfire-cold-star-channel"
 	OathhealerOathlightStrike  = "oathhealer-oathlight-strike"
 	ShadowbladeDualBladeStrike = "shadowblade-dual-blade-strike"
+	ShadowbladeRiftStab        = "shadowblade-rift-stab"
 	ShadowbladeFlawExecute     = "shadowblade-flaw-execute"
 )
 
@@ -50,23 +51,24 @@ func (p TargetResourceSpendPolicy) Resolve(current uint32) (amount, damage uint3
 }
 
 type Policy struct {
-	RequiredClass             classid.ID
-	CostResource              classresource.ID
-	CostAmount                uint32
-	AcceptedResource          classresource.ID
-	AcceptedGain              uint32
-	AcceptedReductionResource classresource.ID
-	AcceptedReductionAmount   uint32
-	HitResource               classresource.ID
-	HitGain                   uint32
-	HitProgressResource       classresource.ID
-	HitProgressGain           uint32
-	HitTargetResource         targetresource.ID
-	HitTargetGain             uint32
-	HitTargetMax              uint32
-	HitTargetICDSeconds       float64
-	RequireSideOrBack         bool
-	TargetSpend               TargetResourceSpendPolicy
+	RequiredClass               classid.ID
+	CostResource                classresource.ID
+	CostAmount                  uint32
+	AcceptedResource            classresource.ID
+	AcceptedGain                uint32
+	AcceptedReductionResource   classresource.ID
+	AcceptedReductionAmount     uint32
+	HitResource                 classresource.ID
+	HitGain                     uint32
+	HitProgressResource         classresource.ID
+	HitProgressGain             uint32
+	HitTargetResource           targetresource.ID
+	HitTargetGain               uint32
+	HitTargetMax                uint32
+	HitTargetICDSeconds         float64
+	HitTargetPreserveReadyTick  bool
+	RequireSideOrBack           bool
+	TargetSpend                 TargetResourceSpendPolicy
 }
 
 func ForAction(actionID string) (Policy, bool) {
@@ -91,6 +93,8 @@ func ForAction(actionID string) (Policy, bool) {
 		return Policy{RequiredClass: classid.Oathhealer, HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
 	case ShadowbladeDualBladeStrike:
 		return Policy{RequiredClass: classid.Shadowblade, HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetICDSeconds: 2.5, RequireSideOrBack: true}, true
+	case ShadowbladeRiftStab:
+		return Policy{RequiredClass: classid.Shadowblade, HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetPreserveReadyTick: true, RequireSideOrBack: true}, true
 	case ShadowbladeFlawExecute:
 		return Policy{
 			RequiredClass: classid.Shadowblade,

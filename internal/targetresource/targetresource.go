@@ -67,6 +67,31 @@ func (s *Store) TryGain(key Key, amount, max uint32, tick, nextReadyTick uint64)
 	return state, true, nil
 }
 
+// GainPreservingReadyTick applies a bounded gain without consuming, resetting, extending, or
+// bypassing another action's build-ready tick. The calling action owns its own legality/cooldown.
+func (s *Store) GainPreservingReadyTick(key Key, amount, max uint32) (State, bool, error) {
+	if s == nil || key.SourceEntityID == 0 || key.TargetEntityID == 0 || key.SourceEntityID == key.TargetEntityID || key.ResourceID == "" || amount == 0 || max == 0 {
+		return State{}, false, ErrInvalidState
+	}
+	state, exists := s.states[key]
+	if exists && state.Max != max {
+		return state, false, ErrInvalidState
+	}
+	if !exists {
+		state = State{Key: key, Max: max}
+	}
+	if state.Current >= state.Max {
+		return state, false, nil
+	}
+	missing := state.Max - state.Current
+	if amount > missing {
+		amount = missing
+	}
+	state.Current += amount
+	s.states[key] = state
+	return state, true, nil
+}
+
 // Spend consumes an exact amount without resetting the Server-owned build-ready tick. A zero-current
 // state intentionally remains in the store so spending cannot bypass an already-running build ICD.
 func (s *Store) Spend(key Key, amount uint32) (State, error) {
