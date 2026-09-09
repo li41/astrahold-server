@@ -1,14 +1,17 @@
 // Package browserws adapts Browser WebSocket messages to the existing Astrahold ASTR transport frames.
-// It is an ephemeral-identity development/E2E adapter; gameplay authority remains in worldruntime.
+// Normal use issues ephemeral identity. An explicit loopback-only E2E bootstrap hook may inject
+// a Server-owned trusted identity/restore without changing gameplay authority or Client semantics.
 package browserws
 
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"sync/atomic"
 
 	"github.com/coder/websocket"
+	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/gateway"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -18,8 +21,10 @@ import (
 )
 
 var (
-	ErrInvalidPlayerSpec    = errors.New("browserws: invalid player bootstrap spec")
-	ErrInvalidWorldIdentity = errors.New("browserws: invalid world identity")
+	ErrInvalidPlayerSpec           = errors.New("browserws: invalid player bootstrap spec")
+	ErrInvalidWorldIdentity        = errors.New("browserws: invalid world identity")
+	ErrInvalidTrustedE2EBootstrap  = errors.New("browserws: invalid trusted E2E bootstrap")
+	ErrTrustedE2EBootstrapLoopback = errors.New("browserws: trusted E2E bootstrap requires loopback peer")
 )
 
 type RuntimeSink interface {
@@ -39,14 +44,24 @@ type PlayerSpec struct {
 
 type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 
+// TrustedE2EBootstrap is a Server-owned test harness value. The Client never supplies it.
+// Restore must describe the same trusted CharacterID and current WorldIdentity.
+type TrustedE2EBootstrap struct {
+	Identity characteridentity.Binding
+	Restore  worldruntime.CharacterRestore
+}
+
+type TrustedE2EBootstrapFactory func(session.ID, world.EntityID) (TrustedE2EBootstrap, error)
+
 type Config struct {
-	TickRateHz            uint16
-	SnapshotRateHz        uint16
-	ReliableQueueCapacity int
-	RealtimeQueueCapacity int
-	PlayerFactory         PlayerFactory
-	WorldIdentity         protocol.WorldIdentity
-	OriginPatterns        []string
+	TickRateHz                 uint16
+	SnapshotRateHz             uint16
+	ReliableQueueCapacity      int
+	RealtimeQueueCapacity      int
+	PlayerFactory              PlayerFactory
+	WorldIdentity              protocol.WorldIdentity
+	OriginPatterns             []string
+	TrustedE2EBootstrapFactory TrustedE2EBootstrapFactory
 }
 
 func DefaultConfig() Config {
@@ -112,6 +127,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, ErrInvalidWorldIdentity.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	if h.config.TrustedE2EBootstrapFactory != nil && !remoteAddressIsLoopback(r.RemoteAddr) {
+		http.Error(w, ErrTrustedE2EBootstrapLoopback.Error(), http.StatusForbidden)
+		return
+	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: h.config.OriginPatterns,
@@ -135,7 +154,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	outbound := session.NewQueueConnection(h.config.ReliableQueueCapacity, h.config.RealtimeQueueCapacity)
 	defer outbound.Close()
-	sess, err := session.New(sid, entityID, spec.AOIRadius, outbound)
+
+	var sess *session.Session
+	var restore *worldruntime.CharacterRestore
+	if h.config.TrustedE2EBootstrapFactory == nil {
+		sess, err = session.New(sid, entityID, spec.AOIRadius, outbound)
+	} else {
+		bootstrap, bootstrapErr := h.config.TrustedE2EBootstrapFactory(sid, entityID)
+		if bootstrapErr != nil || !bootstrap.Identity.Valid() || bootstrap.Identity.Assurance != characteridentity.AssuranceTrusted {
+			_ = conn.Close(websocket.StatusInternalError, ErrInvalidTrustedE2EBootstrap.Error())
+			return
+		}
+		if validationErr := worldruntime.ValidateCharacterRestore(bootstrap.Identity, bootstrap.Restore, h.config.WorldIdentity); validationErr != nil {
+			_ = conn.Close(websocket.StatusInternalError, ErrInvalidTrustedE2EBootstrap.Error())
+			return
+		}
+		sess, err = session.NewWithCharacterIdentity(sid, entityID, bootstrap.Identity, spec.AOIRadius, outbound)
+		candidate := bootstrap.Restore
+		restore = &candidate
+	}
 	if err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "session bootstrap failed")
 		return
@@ -147,6 +184,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Speed:         spec.Speed,
 		Radius:        spec.Radius,
 		MaxStepHeight: spec.MaxStepHeight,
+		Restore:       restore,
 	}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "world join failed")
 		return
@@ -204,6 +242,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
+}
+
+func remoteAddressIsLoopback(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func runWriter(ctx context.Context, conn *websocket.Conn, outbound *session.QueueConnection, codec transport.PayloadCodec) error {
