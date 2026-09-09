@@ -59,13 +59,40 @@ func TestPickedItemDropClearsExpiryBookkeeping(t *testing.T) {
 	}
 }
 
+func TestAutoLootClearsExpiryBookkeeping(t *testing.T) {
+	runtime, sim, s := newItemDropTestRuntime(t, world.Position{})
+	dropID, err := runtime.spawnExpiringItemDrop(testItemDropArchetypeID, world.Position{X: 1}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := StepReport{Tick: 1}
+	if ok := runtime.tryAutoGrantMonsterLoot(monsterLootCandidate{
+		sessionID: s.ID,
+		characterID: s.CharacterIdentity.ID,
+		damage: 1,
+	}, testItemDropArchetypeID, dropID, &report); !ok {
+		t.Fatalf("auto-loot failed: %#v", report.CommandErrors)
+	}
+	if _, exists := sim.Entity(dropID); exists {
+		t.Fatal("auto-looted drop still exists")
+	}
+
+	runtime.Step(2, 50*time.Millisecond)
+	if _, tracked := runtime.itemDropExpireTick[dropID]; tracked {
+		t.Fatal("auto-looted drop still has expiry bookkeeping")
+	}
+	if got := runtime.inventories[s.CharacterIdentity.ID].Quantity(testItemDropArchetypeID); got != 1 {
+		t.Fatalf("auto-loot quantity = %d, want 1", got)
+	}
+}
+
 func TestRemovedItemDropCleansExpiryBookkeepingWithoutSecondMutation(t *testing.T) {
 	runtime, sim, _ := newItemDropTestRuntime(t, world.Position{})
 	dropID, err := runtime.spawnExpiringItemDrop(testItemDropArchetypeID, world.Position{X: 1}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Models same-owner auto-loot or spawn rollback removal before the post-loot expiry stage.
+	// Models same-owner spawn rollback removal before the post-loot expiry stage.
 	sim.Remove(dropID)
 	runtime.Step(2, 50*time.Millisecond)
 	if _, tracked := runtime.itemDropExpireTick[dropID]; tracked {
