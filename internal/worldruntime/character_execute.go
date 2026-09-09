@@ -120,7 +120,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if state.Defeated {
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}) }
 			if target.Kind == world.EntityPlayer { r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report) }
-			if r.combat != nil { r.combat.ClearSelfMitigation(targetID) }
+			if r.combat != nil { r.combat.ClearTransientStatuses(targetID) }
 			r.clearTargetResourcesForEntity(targetID, report)
 		}
 		r.markEntityVitalsDirty(targetID)
