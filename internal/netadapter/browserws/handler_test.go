@@ -2,12 +2,16 @@ package browserws
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -32,6 +36,7 @@ type fakeRuntime struct {
 	moves   chan moveRecord
 	actions chan actionRecord
 	leaves  chan session.ID
+	joins   chan worldruntime.JoinRequest
 }
 
 func newFakeRuntime() *fakeRuntime {
@@ -39,6 +44,7 @@ func newFakeRuntime() *fakeRuntime {
 		moves:   make(chan moveRecord, 4),
 		actions: make(chan actionRecord, 4),
 		leaves:  make(chan session.ID, 4),
+		joins:   make(chan worldruntime.JoinRequest, 4),
 	}
 }
 
@@ -53,6 +59,7 @@ func (r *fakeRuntime) EnqueueUseAction(id session.ID, sequence uint32, action pr
 }
 
 func (r *fakeRuntime) AwaitJoinOwned(_ context.Context, request worldruntime.JoinRequest) (worldruntime.SessionOwnershipFence, error) {
+	r.joins <- request
 	_ = request.Session.Connection().TrySend(protocol.Envelope{
 		Delivery:   protocol.DeliveryReliableOrdered,
 		Sequence:   1,
@@ -143,6 +150,83 @@ func TestHandlerWelcomeSpawnAndRealtimeIngress(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for authoritative move ingress")
+	}
+}
+
+func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndRestore(t *testing.T) {
+	t.Parallel()
+
+	runtime := newFakeRuntime()
+	config := DefaultConfig()
+	config.WorldIdentity = testWorldIdentity()
+	identity, err := characteridentity.NewTrusted("e2e-shadowblade")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.TrustedE2EBootstrapFactory = func(session.ID, world.EntityID) (TrustedE2EBootstrap, error) {
+		return TrustedE2EBootstrap{
+			Identity: identity,
+			Restore: worldruntime.CharacterRestore{
+				SchemaVersion: characterstate.SchemaVersion,
+				CharacterID:   identity.ID,
+				Revision:      1,
+				World:         config.WorldIdentity,
+				ClassID:       classid.Shadowblade,
+				HP:            1000,
+				MaxHP:         1000,
+				MP:            100,
+				MaxMP:         100,
+				Transform:     world.Transform{Position: world.Position{Layer: 0}},
+				Inventory:     characterstate.InventoryState{Initialized: true},
+			},
+		}, nil
+	}
+
+	httpServer := httptest.NewServer(NewHandler(config, runtime, gamev1.Codec{}))
+	defer httpServer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.CloseNow()
+
+	_ = readEnvelope(t, ctx, conn, gamev1.Codec{})
+	select {
+	case join := <-runtime.joins:
+		if join.Session.CharacterIdentity != identity {
+			t.Fatalf("identity = %#v", join.Session.CharacterIdentity)
+		}
+		if join.Restore == nil || join.Restore.CharacterID != identity.ID || join.Restore.ClassID != classid.Shadowblade {
+			t.Fatalf("restore = %#v", join.Restore)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for trusted E2E join")
+	}
+}
+
+func TestHandlerTrustedE2EBootstrapRejectsNonLoopbackPeerBeforeFactory(t *testing.T) {
+	t.Parallel()
+
+	runtime := newFakeRuntime()
+	config := DefaultConfig()
+	config.WorldIdentity = testWorldIdentity()
+	called := false
+	config.TrustedE2EBootstrapFactory = func(session.ID, world.EntityID) (TrustedE2EBootstrap, error) {
+		called = true
+		return TrustedE2EBootstrap{}, nil
+	}
+	handler := NewHandler(config, runtime, gamev1.Codec{})
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	req.RemoteAddr = "203.0.113.10:4242"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d want %d", response.Code, http.StatusForbidden)
+	}
+	if called {
+		t.Fatal("trusted E2E bootstrap factory called for non-loopback peer")
 	}
 }
 
