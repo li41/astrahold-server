@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "world_id": "castle-sandbox",
-  "revision": "s5b-commercial-mpv-001",
+  "revision": "s5b-commercial-mpv-002",
   "units": "meters",
   "agent": {
     "radius": 0.35,
@@ -251,6 +251,106 @@
       "max_y": 3.8,
       "blocks_movement": true,
       "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-warden-post",
+      "layer": 0,
+      "bounds": { "min_x": -11.8, "max_x": -9.2, "min_z": -43.8, "max_z": -33.2 },
+      "min_y": 0,
+      "max_y": 4.6,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-house-west",
+      "layer": 0,
+      "bounds": { "min_x": -29.3, "max_x": -20.7, "min_z": -27.6, "max_z": -23.4 },
+      "min_y": 0,
+      "max_y": 5.2,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-cottage-west",
+      "layer": 0,
+      "bounds": { "min_x": -16.8, "max_x": -14.2, "min_z": -18, "max_z": -13 },
+      "min_y": 0,
+      "max_y": 4.6,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-house-east",
+      "layer": 0,
+      "bounds": { "min_x": 21.1, "max_x": 26.9, "min_z": -16.2, "max_z": -7.8 },
+      "min_y": 0,
+      "max_y": 5.2,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-gate-hut",
+      "layer": 0,
+      "bounds": { "min_x": 6.7, "max_x": 10.3, "min_z": -8.6, "max_z": 1.6 },
+      "min_y": 0,
+      "max_y": 4.6,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-cottage-east",
+      "layer": 0,
+      "bounds": { "min_x": 14.6, "max_x": 18.4, "min_z": -34, "max_z": -31 },
+      "min_y": 0,
+      "max_y": 4.6,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-chapel",
+      "layer": 0,
+      "bounds": { "min_x": -23.4, "max_x": -9.6, "min_z": -7.7, "max_z": 1.7 },
+      "min_y": 0,
+      "max_y": 12.1,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-market-shed",
+      "layer": 0,
+      "bounds": { "min_x": 4.6, "max_x": 13.4, "min_z": -38.5, "max_z": -36.5 },
+      "min_y": 0,
+      "max_y": 3.8,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-well",
+      "layer": 0,
+      "bounds": { "min_x": 4.6, "max_x": 7.4, "min_z": -34.4, "max_z": -31.6 },
+      "min_y": 0,
+      "max_y": 3,
+      "blocks_movement": true,
+      "blocks_los": false,
+      "enabled": true
+    },
+    {
+      "id": "emberwatch-campfire",
+      "layer": 0,
+      "bounds": { "min_x": -5.4, "max_x": -3.6, "min_z": -41.4, "max_z": -39.6 },
+      "min_y": 0,
+      "max_y": 1,
+      "blocks_movement": true,
+      "blocks_los": false,
       "enabled": true
     }
   ],
