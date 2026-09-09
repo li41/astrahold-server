@@ -81,7 +81,7 @@ func validateState(state State) error {
 	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 { return ErrInvalidState }
 	if state.ClassResourceProgress > 0 {
 		definition, ok := classresource.PrimaryForClass(state.ClassID)
-		if !ok || definition.ID != state.ClassResourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource { return ErrInvalidState }
+		if !ok || definition.ID != state.ClassResourceID || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource { return ErrInvalidState }
 	}
 	if state.Defeated { if state.HP != 0 { return ErrInvalidState } } else if state.HP == 0 { return ErrInvalidState }
 	return nil
