@@ -95,6 +95,7 @@ func (r *Runtime) stepMonsterLifecycles(tick uint64, report *StepReport) {
 			if _, exists := r.world.Entity(entityID); !exists {
 				continue
 			}
+			r.clearTargetResourcesForEntity(entityID, report)
 			r.world.Remove(entityID)
 			r.characters.Remove(entityID)
 			r.removeEntityVitals(entityID)
@@ -152,10 +153,15 @@ func (r *Runtime) entityVitalsConverged(entityID world.EntityID) bool {
 	return true
 }
 
+// clearAutonomousMeleeTarget is also an encounter-incarnation fence: lifecycle defeat/despawn/
+// respawn may reuse the same EntityID, but threat from the old incarnation must never survive.
 func (r *Runtime) clearAutonomousMeleeTarget(entityID world.EntityID) {
 	for i := range r.autonomousMeleeAgents {
 		if r.autonomousMeleeAgents[i].config.EntityID == entityID {
 			r.autonomousMeleeAgents[i].targetID = 0
+			if r.autonomousMeleeAgents[i].threat != nil {
+				r.autonomousMeleeAgents[i].threat.Clear()
+			}
 			return
 		}
 	}

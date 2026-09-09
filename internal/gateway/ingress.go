@@ -31,6 +31,9 @@ type PickupCommandSink interface {
 type ItemUseCommandSink interface {
 	EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error
 }
+type InitialClassSelectionCommandSink interface {
+	EnqueueInitialClassSelection(session.ID, uint32, protocol.ClientInitialClassSelection) error
+}
 type NPCCommandSink interface {
 	EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error
 }
@@ -58,126 +61,74 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 
 	switch message := envelope.Message.(type) {
 	case protocol.ClientMoveInput:
-		if envelope.Delivery != protocol.DeliveryRealtimeSequenced {
-			return ErrInvalidClientDelivery
-		}
+		if envelope.Delivery != protocol.DeliveryRealtimeSequenced { return ErrInvalidClientDelivery }
 		return g.sink.EnqueueMove(sessionID, envelope.Sequence, message)
 	case *protocol.ClientMoveInput:
-		if message == nil {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryRealtimeSequenced {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryRealtimeSequenced { return ErrInvalidClientDelivery }
 		return g.sink.EnqueueMove(sessionID, envelope.Sequence, *message)
 	case protocol.ClientUseAction:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
-		if !validAction(message) {
-			return ErrInvalidClientEnvelope
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if !validAction(message) { return ErrInvalidClientEnvelope }
 		return g.enqueueUseAction(sessionID, envelope.Sequence, message)
 	case *protocol.ClientUseAction:
-		if message == nil || !validAction(*message) {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil || !validAction(*message) { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueUseAction(sessionID, envelope.Sequence, *message)
 	case protocol.ClientEquipmentCommand:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
-		if !validEquipmentCommand(message) {
-			return ErrInvalidClientEnvelope
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if !validEquipmentCommand(message) { return ErrInvalidClientEnvelope }
 		return g.enqueueEquipmentCommand(sessionID, envelope.Sequence, message)
 	case *protocol.ClientEquipmentCommand:
-		if message == nil || !validEquipmentCommand(*message) {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil || !validEquipmentCommand(*message) { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueEquipmentCommand(sessionID, envelope.Sequence, *message)
 	case protocol.ClientPickupItem:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
-		if message.DropEntityID == 0 {
-			return ErrInvalidClientEnvelope
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if message.DropEntityID == 0 { return ErrInvalidClientEnvelope }
 		return g.enqueuePickupItem(sessionID, envelope.Sequence, message)
 	case *protocol.ClientPickupItem:
-		if message == nil || message.DropEntityID == 0 {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil || message.DropEntityID == 0 { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueuePickupItem(sessionID, envelope.Sequence, *message)
 	case protocol.ClientUseItem:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
-		if strings.TrimSpace(message.ItemArchetypeID) == "" {
-			return ErrInvalidClientEnvelope
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if strings.TrimSpace(message.ItemArchetypeID) == "" { return ErrInvalidClientEnvelope }
 		return g.enqueueUseItem(sessionID, envelope.Sequence, message)
 	case *protocol.ClientUseItem:
-		if message == nil || strings.TrimSpace(message.ItemArchetypeID) == "" {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil || strings.TrimSpace(message.ItemArchetypeID) == "" { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueUseItem(sessionID, envelope.Sequence, *message)
+	case protocol.ClientInitialClassSelection:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if strings.TrimSpace(message.ClassID) == "" { return ErrInvalidClientEnvelope }
+		return g.enqueueInitialClassSelection(sessionID, envelope.Sequence, message)
+	case *protocol.ClientInitialClassSelection:
+		if message == nil || strings.TrimSpace(message.ClassID) == "" { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		return g.enqueueInitialClassSelection(sessionID, envelope.Sequence, *message)
 	case protocol.ClientInteractNPC:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
-		if message.NPCEntityID == 0 {
-			return ErrInvalidClientEnvelope
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if message.NPCEntityID == 0 { return ErrInvalidClientEnvelope }
 		return g.enqueueInteractNPC(sessionID, envelope.Sequence, message)
 	case *protocol.ClientInteractNPC:
-		if message == nil || message.NPCEntityID == 0 {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil || message.NPCEntityID == 0 { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueInteractNPC(sessionID, envelope.Sequence, *message)
 	case protocol.ClientShopCommand:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
-		if !validShopCommand(message) {
-			return ErrInvalidClientEnvelope
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if !validShopCommand(message) { return ErrInvalidClientEnvelope }
 		return g.enqueueShopCommand(sessionID, envelope.Sequence, message)
 	case *protocol.ClientShopCommand:
-		if message == nil || !validShopCommand(*message) {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil || !validShopCommand(*message) { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueShopCommand(sessionID, envelope.Sequence, *message)
 	case protocol.ClientRespawnRequest:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueRespawnRequest(sessionID, envelope.Sequence, message)
 	case *protocol.ClientRespawnRequest:
-		if message == nil {
-			return ErrInvalidClientEnvelope
-		}
-		if envelope.Delivery != protocol.DeliveryReliableOrdered {
-			return ErrInvalidClientDelivery
-		}
+		if message == nil { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueRespawnRequest(sessionID, envelope.Sequence, *message)
 	default:
 		return ErrUnsupportedClientMessage
@@ -185,16 +136,12 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 }
 
 func validAction(action protocol.ClientUseAction) bool {
-	if action.ActionID == "" {
-		return false
-	}
+	if action.ActionID == "" { return false }
 	switch action.TargetKind {
 	case protocol.ActionTargetGate, protocol.ActionTargetEntity:
 		return action.TargetID != "" && action.TargetX == nil && action.TargetZ == nil
 	case protocol.ActionTargetPoint:
-		if action.TargetID != "" || action.TargetX == nil || action.TargetZ == nil {
-			return false
-		}
+		if action.TargetID != "" || action.TargetX == nil || action.TargetZ == nil { return false }
 		return finiteFloat32(*action.TargetX) && finiteFloat32(*action.TargetZ)
 	default:
 		return false
@@ -202,9 +149,7 @@ func validAction(action protocol.ClientUseAction) bool {
 }
 
 func validEquipmentCommand(command protocol.ClientEquipmentCommand) bool {
-	if command.Slot != protocol.EquipmentSlotMainHand {
-		return false
-	}
+	if command.Slot != protocol.EquipmentSlotMainHand { return false }
 	switch command.Operation {
 	case protocol.EquipmentOperationEquip:
 		return command.ItemArchetypeID != ""
@@ -216,9 +161,7 @@ func validEquipmentCommand(command protocol.ClientEquipmentCommand) bool {
 }
 
 func validShopCommand(command protocol.ClientShopCommand) bool {
-	if command.NPCEntityID == 0 {
-		return false
-	}
+	if command.NPCEntityID == 0 { return false }
 	switch command.Operation {
 	case protocol.ShopOperationOpen:
 		return strings.TrimSpace(command.OfferID) == ""
@@ -234,51 +177,34 @@ func float32NaN(value float32) bool    { return math.IsNaN(float64(value)) }
 func float32Inf(value float32) bool    { return math.IsInf(float64(value), 0) }
 
 func (g *Ingress) enqueueUseAction(sessionID session.ID, sequence uint32, action protocol.ClientUseAction) error {
-	sink, ok := g.sink.(ActionCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(ActionCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueUseAction(sessionID, sequence, action)
 }
 func (g *Ingress) enqueueEquipmentCommand(sessionID session.ID, sequence uint32, command protocol.ClientEquipmentCommand) error {
-	sink, ok := g.sink.(EquipmentCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(EquipmentCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueEquipmentCommand(sessionID, sequence, command)
 }
 func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, intent protocol.ClientPickupItem) error {
-	sink, ok := g.sink.(PickupCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(PickupCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueuePickupItem(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueUseItem(sessionID session.ID, sequence uint32, intent protocol.ClientUseItem) error {
-	sink, ok := g.sink.(ItemUseCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(ItemUseCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueUseItem(sessionID, sequence, intent)
 }
+func (g *Ingress) enqueueInitialClassSelection(sessionID session.ID, sequence uint32, intent protocol.ClientInitialClassSelection) error {
+	sink, ok := g.sink.(InitialClassSelectionCommandSink); if !ok { return ErrUnsupportedClientMessage }
+	return sink.EnqueueInitialClassSelection(sessionID, sequence, intent)
+}
 func (g *Ingress) enqueueInteractNPC(sessionID session.ID, sequence uint32, intent protocol.ClientInteractNPC) error {
-	sink, ok := g.sink.(NPCCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(NPCCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueInteractNPC(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueShopCommand(sessionID session.ID, sequence uint32, intent protocol.ClientShopCommand) error {
-	sink, ok := g.sink.(ShopCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(ShopCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueShopCommand(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueRespawnRequest(sessionID session.ID, sequence uint32, intent protocol.ClientRespawnRequest) error {
-	sink, ok := g.sink.(RespawnCommandSink)
-	if !ok {
-		return ErrUnsupportedClientMessage
-	}
+	sink, ok := g.sink.(RespawnCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueRespawnRequest(sessionID, sequence, intent)
 }

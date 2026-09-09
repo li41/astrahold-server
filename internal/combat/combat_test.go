@@ -61,7 +61,18 @@ func TestLoadNormalizesDamageAndAcceptsResurrection(t *testing.T) {
 				"range":4.5,
 				"base_damage":100,
 				"damage_type":"physical",
+				"blockable":true,
 				"cooldown_seconds":0.5
+			},
+			{
+				"id":"fireball",
+				"effect":"damage",
+				"targets":["point"],
+				"range":12,
+				"hit_radius":1,
+				"base_damage":150,
+				"damage_type":"magic",
+				"cooldown_seconds":2
 			},
 			{
 				"id":"resurrect",
@@ -76,26 +87,67 @@ func TestLoadNormalizesDamageAndAcceptsResurrection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Definition.Actions[0].Effect != EffectDamage || loaded.Definition.Actions[1].Effect != EffectResurrect {
-		t.Fatalf("effects=%#v", loaded.Definition.Actions)
+	if loaded.Definition.Actions[0].Effect != EffectDamage || !loaded.Definition.Actions[0].Blockable || loaded.Definition.Actions[1].DamageType != DamageMagic || loaded.Definition.Actions[2].Effect != EffectResurrect {
+		t.Fatalf("actions=%#v", loaded.Definition.Actions)
 	}
 }
 
 func TestPrepareBuildsServerOwnedDamageSource(t *testing.T) {
-	svc, err := NewService([]ActionDefinition{testAction()})
+	action := ActionDefinition{
+		ID:              "basic-attack",
+		Targets:         []TargetKind{TargetEntity},
+		Range:           4.5,
+		BaseDamage:      100,
+		DamageType:      DamagePhysical,
+		Blockable:       true,
+		CooldownSeconds: 0.5,
+	}
+	svc, err := NewService([]ActionDefinition{action})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	prepared, err := svc.Prepare(42, "basic-attack", Target{Kind: TargetGate, ID: "main-gate"}, 10)
+	prepared, err := svc.Prepare(42, "basic-attack", Target{Kind: TargetEntity, ID: "43"}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Definition.Effect != EffectDamage || prepared.Definition.Range != 4.5 || prepared.Damage.Amount != 100 || prepared.Damage.Type != DamagePhysical {
+	if prepared.Definition.Effect != EffectDamage || prepared.Definition.Range != 4.5 || prepared.Damage.Amount != 100 || prepared.Damage.Type != DamagePhysical || !prepared.Damage.Blockable {
 		t.Fatalf("prepared=%+v", prepared)
 	}
 	if prepared.Damage.Source.ActorEntityID != 42 || prepared.Damage.Source.ActionID != "basic-attack" {
 		t.Fatalf("source=%+v", prepared.Damage.Source)
+	}
+}
+
+func TestBlockableIsIndependentFromPhysicalDamageType(t *testing.T) {
+	physicalSkill := ActionDefinition{ID: "shatter", Targets: []TargetKind{TargetEntity}, Range: 4, BaseDamage: 10, DamageType: DamagePhysical, CooldownSeconds: 1}
+	svc, err := NewService([]ActionDefinition{physicalSkill})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := svc.Prepare(1, "shatter", Target{Kind: TargetEntity, ID: "2"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Damage.Blockable {
+		t.Fatal("physical damage must not become blockable implicitly")
+	}
+
+	magicBlock := physicalSkill
+	magicBlock.ID = "bad-magic-block"
+	magicBlock.DamageType = DamageMagic
+	magicBlock.Blockable = true
+	if _, err := NewService([]ActionDefinition{magicBlock}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("magic blockable err=%v", err)
+	}
+
+	pointBlock := physicalSkill
+	pointBlock.ID = "bad-point-block"
+	pointBlock.Targets = []TargetKind{TargetPoint}
+	pointBlock.HitRadius = 1
+	pointBlock.Blockable = true
+	if _, err := NewService([]ActionDefinition{pointBlock}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("point blockable err=%v", err)
 	}
 }
 
@@ -111,7 +163,7 @@ func TestPrepareResurrectionCarriesPolicyWithoutDamage(t *testing.T) {
 	if prepared.Definition.Effect != EffectResurrect || prepared.Definition.ReviveHPPercent != 30 {
 		t.Fatalf("prepared=%+v", prepared)
 	}
-	if prepared.Damage.Amount != 0 || prepared.Damage.Type != "" || prepared.Damage.Source.ActorEntityID != 0 {
+	if prepared.Damage.Amount != 0 || prepared.Damage.Type != "" || prepared.Damage.Source.ActorEntityID != 0 || prepared.Damage.Blockable {
 		t.Fatalf("resurrection unexpectedly carries damage=%+v", prepared.Damage)
 	}
 }
@@ -141,7 +193,6 @@ func TestCooldownStartsOnlyAfterCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Target domain 若拒絕，呼叫端不 Commit；同 tick 再 Prepare 仍應合法。
 	if _, err := svc.Prepare(1, "basic-attack", target, 10); err != nil {
 		t.Fatalf("prepare before commit should not consume cooldown: %v", err)
 	}

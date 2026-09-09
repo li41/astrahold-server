@@ -166,6 +166,8 @@ func recoverCharacterStateSaveJournal(
 // Store revision read -> journal append+fsync -> outbox Confirm -> Store CAS -> checkpoint.
 // Applying/checkpointing each record before journaling the next preserves the existing
 // per-character sequential revision contract even when consecutive snapshots are identical.
+// Completion-requested intents are published only after the checkpoint has advanced, so the
+// world owner never treats journal append or Store.Save alone as a durable gameplay commit.
 func persistCharacterStateOutboxBatch(
 	outbox *characterstate.Outbox,
 	journal *characterstate.SaveJournal,
@@ -190,6 +192,7 @@ func persistCharacterStateOutboxBatch(
 			return processed, fmt.Errorf("checkpoint character state record_id=%d: %w", record.RecordID, err)
 		}
 		*checkpoint = next
+		outbox.Complete(record.Intent)
 		processed++
 	}
 	return processed, nil

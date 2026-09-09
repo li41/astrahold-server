@@ -78,3 +78,70 @@ func TestEquipmentCommandMovesTrainingBladeAndReplicatesAuthoritativeTruth(t *te
 		t.Fatalf("equipment after unequip=%#v", equipmentAfterUnequip)
 	}
 }
+
+func TestEquipmentSnapshotReplicatesMainAndOffHandTogether(t *testing.T) {
+	sim := simulation.New(spatial.NewGrid(16), movement.NewService(navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100}, 0.1))
+	config := DefaultConfig()
+	config.SnapshotEveryTicks = 1000
+	runtime := New(sim, config)
+	connection := session.NewQueueConnection(32, 8)
+	s, err := session.New(2, 20, 32, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.EnqueueJoin(JoinRequest{Session: s, Entity: world.EntityState{ID: 20, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+	if report := runtime.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("join errors: %#v", report.CommandErrors)
+	}
+	<-connection.Reliable()
+	<-connection.Reliable()
+
+	inv := runtime.inventories[s.CharacterIdentity.ID]
+	if inv == nil {
+		t.Fatal("inventory missing")
+	}
+	if err := inv.Add("item_militia_iron_sword", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.Add("item_runed_square_shield", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.EnqueueEquipmentCommand(s.ID, 1, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotMainHand, ItemArchetypeID: "item_militia_iron_sword"}); err != nil {
+		t.Fatal(err)
+	}
+	if report := runtime.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("main-hand equip errors: %#v", report.CommandErrors)
+	}
+	<-connection.Reliable() // Inventory.
+	mainOnly := (<-connection.Reliable()).Message.(protocol.EquipmentSnapshot)
+	if len(mainOnly.Slots) != 1 || mainOnly.Slots[0].Slot != protocol.EquipmentSlotMainHand || mainOnly.Slots[0].ItemArchetypeID != "item_militia_iron_sword" {
+		t.Fatalf("main-only equipment=%#v", mainOnly)
+	}
+
+	if err := runtime.EnqueueEquipmentCommand(s.ID, 2, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotOffHand, ItemArchetypeID: "item_runed_square_shield"}); err != nil {
+		t.Fatal(err)
+	}
+	if report := runtime.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("off-hand equip errors: %#v", report.CommandErrors)
+	}
+	inventoryAfterBoth := (<-connection.Reliable()).Message.(protocol.InventorySnapshot)
+	equipmentAfterBoth := (<-connection.Reliable()).Message.(protocol.EquipmentSnapshot)
+	if len(equipmentAfterBoth.Slots) != 2 {
+		t.Fatalf("equipment slots=%#v", equipmentAfterBoth.Slots)
+	}
+	if equipmentAfterBoth.Slots[0].Slot != protocol.EquipmentSlotMainHand || equipmentAfterBoth.Slots[0].ItemArchetypeID != "item_militia_iron_sword" {
+		t.Fatalf("main-hand slot=%#v", equipmentAfterBoth.Slots[0])
+	}
+	if equipmentAfterBoth.Slots[1].Slot != protocol.EquipmentSlotOffHand || equipmentAfterBoth.Slots[1].ItemArchetypeID != "item_runed_square_shield" {
+		t.Fatalf("off-hand slot=%#v", equipmentAfterBoth.Slots[1])
+	}
+	if got := inventoryAfterBoth.CurrentCarryWeight; got != inv.CurrentWeight() {
+		t.Fatalf("snapshot carry weight=%d runtime=%d", got, inv.CurrentWeight())
+	}
+	if inv.MainHand() != "item_militia_iron_sword" || inv.OffHand() != "item_runed_square_shield" {
+		t.Fatalf("runtime equipment main=%q off=%q", inv.MainHand(), inv.OffHand())
+	}
+}

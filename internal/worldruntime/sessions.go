@@ -93,7 +93,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		return
 	}
 
-	entity := request.Entity
+	entity := canonicalizeJoinEntity(request.Entity)
 	var restoredState *character.State
 	var defeatedRestore *preparedDefeatedRestore
 	var restoredInventory *inventory.Inventory
@@ -103,7 +103,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			return
 		}
 		if request.Restore.Inventory.Initialized {
-			restoredInventory, err = restoreCharacterInventory(r.config.InventoryMaxStacks, request.Restore.Inventory)
+			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.ClassID)
 			if err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 				return
@@ -112,6 +112,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		entity.Transform = request.Restore.Transform
 		state := character.State{
 			EntityID: request.Entity.ID,
+			ClassID:  request.Restore.ClassID,
 			HP:       request.Restore.HP,
 			MaxHP:    request.Restore.MaxHP,
 			MP:       request.Restore.MP,
@@ -201,6 +202,8 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
 	if r.respawnPolicy != nil { r.respawnPolicy.Remove(s.EntityID) }
+	if r.combat != nil { r.combat.ClearSelfMitigation(s.EntityID) }
+	r.clearTargetResourcesForEntity(s.EntityID, report)
 	r.characters.Remove(s.EntityID)
 	r.characterIdentities.removeEntity(s.EntityID)
 	r.world.Remove(s.EntityID)

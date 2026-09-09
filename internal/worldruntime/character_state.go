@@ -18,38 +18,45 @@ func WithCharacterStateOutbox(outbox *characterstate.Outbox, worldRef characters
 	}
 }
 
-// enqueueCharacterStateSave captures authoritative state while the world owner still
-// owns the entity, then hands only immutable data to the process-local save outbox.
-// Disk I/O is deliberately performed by the worldd persistence worker, never here.
-func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world.EntityID, report *StepReport) bool {
-	if r.characterStateOutbox == nil {
-		return false
-	}
+// captureCharacterStateSnapshot reads only world-owner gameplay truth and produces immutable
+// persistence input. A completion transaction may project a target ClassID into saves while its
+// live gameplay mutation is waiting for durability acknowledgement. This prevents autosave/leave
+// from erasing an assignment that is already in the durable pipeline without making pending state
+// authoritative for combat/equipment/gameplay.
+func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID world.EntityID, report *StepReport) (characteridentity.Binding, characterstate.Snapshot, bool) {
 	binding, ok := r.characterIdentities.binding(entityID)
 	if !ok {
 		recordCharacterStateSaveFailure(report, sessionID, ErrCharacterIdentityMissing)
-		return false
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
 	if binding.Assurance != characteridentity.AssuranceTrusted {
-		return false
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
 	state, ok := r.characters.State(entityID)
 	if !ok {
 		recordCharacterStateSaveFailure(report, sessionID, ErrSessionEntityNotFound)
-		return false
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
 	entity, ok := r.world.Entity(entityID)
 	if !ok {
 		recordCharacterStateSaveFailure(report, sessionID, ErrSessionEntityNotFound)
-		return false
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
 	inventoryState, err := durableInventoryState(r.inventories[binding.ID])
 	if err != nil {
 		recordCharacterStateSaveFailure(report, sessionID, err)
-		return false
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
+	}
+
+	classForSave := state.ClassID
+	if r.characterStateOutbox != nil {
+		if pending, exists := r.characterStateOutbox.CompletionForCharacter(binding.ID); exists && pending.Snapshot.ClassID != "" {
+			classForSave = pending.Snapshot.ClassID
+		}
 	}
 	snapshot := characterstate.Snapshot{
 		World:     r.characterStateWorld,
+		ClassID:   classForSave,
 		HP:        state.HP,
 		MaxHP:     state.MaxHP,
 		MP:        state.MP,
@@ -64,12 +71,12 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 		// Never invent a context/destination during persistence.
 		if r.respawnPolicy == nil {
 			recordCharacterStateSaveFailure(report, sessionID, ErrCharacterStateDefeatedRespawnMissing)
-			return false
+			return characteridentity.Binding{}, characterstate.Snapshot{}, false
 		}
 		scheduled, ok := r.respawnPolicy.Pending(entityID)
 		if !ok {
 			recordCharacterStateSaveFailure(report, sessionID, ErrCharacterStateDefeatedRespawnMissing)
-			return false
+			return characteridentity.Binding{}, characterstate.Snapshot{}, false
 		}
 		remaining := uint64(0)
 		if report != nil && scheduled.DueTick > report.Tick {
@@ -84,6 +91,20 @@ func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world
 			RemainingTicks: remaining,
 			CheckpointID:   checkpointID,
 		}
+	}
+	return binding, snapshot, true
+}
+
+// enqueueCharacterStateSave captures authoritative state while the world owner still
+// owns the entity, then hands only immutable data to the process-local save outbox.
+// Disk I/O is deliberately performed by the worldd persistence worker, never here.
+func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world.EntityID, report *StepReport) bool {
+	if r.characterStateOutbox == nil {
+		return false
+	}
+	binding, snapshot, ok := r.captureCharacterStateSnapshot(sessionID, entityID, report)
+	if !ok {
+		return false
 	}
 	if _, err := r.characterStateOutbox.Enqueue(binding, snapshot); err != nil {
 		recordCharacterStateSaveFailure(report, sessionID, err)
