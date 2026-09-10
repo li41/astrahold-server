@@ -4,16 +4,23 @@ package skillloadout
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/li41/astrahold-server/internal/skillcatalog"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 var (
-	ErrInvalidEntity     = errors.New("skillloadout: invalid entity")
-	ErrNilStore          = errors.New("skillloadout: nil store")
-	ErrNonCanonicalSlots = errors.New("skillloadout: non-canonical slots")
+	ErrInvalidEntity         = errors.New("skillloadout: invalid entity")
+	ErrNilStore              = errors.New("skillloadout: nil store")
+	ErrNonCanonicalSlots     = errors.New("skillloadout: non-canonical slots")
+	ErrLearnedCheckRequired  = errors.New("skillloadout: learned skill check required")
+	ErrCombatSkillNotLearned = errors.New("skillloadout: combat skill is not learned")
 )
+
+// LearnedCheck reports whether the authoritative character state says a formal skill is learned.
+// The loadout store consumes this decision but does not decide acquisition semantics itself.
+type LearnedCheck func(skillcatalog.ID) bool
 
 // Slots is the comparable six-slot value form used across runtime and durable character state.
 // Configured skills occupy a contiguous prefix; unused trailing slots are empty.
@@ -71,10 +78,12 @@ func NewStore() *Store {
 }
 
 // SetCombat replaces the ordered combat loadout for an entity after validating the formal
-// six-slot classless rules. A rejected replacement leaves the previous authoritative state intact.
-// An empty loadout clears the entity's combat slots, which is useful while editing or restoring
-// a character before a complete build is selected.
-func (s *Store) SetCombat(entityID world.EntityID, ids []skillcatalog.ID) error {
+// six-slot classless rules and requiring every configured skill to already be learned. The
+// caller supplies the authoritative learned-skill lookup so this store does not create another
+// acquisition authority. A rejected replacement leaves the previous authoritative state intact.
+// An empty loadout clears the entity's combat slots without requiring a learned-skill lookup,
+// which is useful while editing or restoring a character before a complete build is selected.
+func (s *Store) SetCombat(entityID world.EntityID, ids []skillcatalog.ID, isLearned LearnedCheck) error {
 	if entityID == 0 {
 		return ErrInvalidEntity
 	}
@@ -90,6 +99,14 @@ func (s *Store) SetCombat(entityID world.EntityID, ids []skillcatalog.ID) error 
 	slots, err := NewSlots(ids)
 	if err != nil {
 		return err
+	}
+	if isLearned == nil {
+		return ErrLearnedCheckRequired
+	}
+	for _, id := range slots.IDs() {
+		if !isLearned(id) {
+			return fmt.Errorf("%w: %q", ErrCombatSkillNotLearned, id)
+		}
 	}
 	if s.combat == nil {
 		s.combat = make(map[world.EntityID]Slots)

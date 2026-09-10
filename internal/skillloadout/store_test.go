@@ -5,9 +5,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/skillcatalog"
 	"github.com/li41/astrahold-server/internal/world"
 )
+
+func allSkillsLearned(skillcatalog.ID) bool { return true }
 
 func TestSlotsCanonicalComparableForm(t *testing.T) {
 	ids := []skillcatalog.ID{skillcatalog.HeavyStrike, skillcatalog.PiercingShot, skillcatalog.FireBolt}
@@ -32,8 +35,9 @@ func TestSlotsCanonicalComparableForm(t *testing.T) {
 	}
 }
 
-func TestStorePreservesOrderedMixedCombatLoadout(t *testing.T) {
+func TestStorePreservesOrderedMixedLearnedCombatLoadout(t *testing.T) {
 	store := NewStore()
+	learned := learnedskills.NewStore()
 	entityID := world.EntityID(41)
 	loadout := []skillcatalog.ID{
 		skillcatalog.HeavyStrike,
@@ -43,8 +47,12 @@ func TestStorePreservesOrderedMixedCombatLoadout(t *testing.T) {
 		skillcatalog.Volley,
 		skillcatalog.Meteor,
 	}
+	if err := learned.SetLearned(entityID, append([]skillcatalog.ID(nil), loadout...)); err != nil {
+		t.Fatalf("SetLearned() error = %v", err)
+	}
+	isLearned := func(id skillcatalog.ID) bool { return learned.Contains(entityID, id) }
 
-	if err := store.SetCombat(entityID, loadout); err != nil {
+	if err := store.SetCombat(entityID, loadout, isLearned); err != nil {
 		t.Fatalf("SetCombat() error = %v", err)
 	}
 	if got := store.Combat(entityID); !reflect.DeepEqual(got, loadout) {
@@ -62,7 +70,7 @@ func TestStoreCopiesInputAndOutput(t *testing.T) {
 	entityID := world.EntityID(42)
 	input := []skillcatalog.ID{skillcatalog.HeavyStrike, skillcatalog.FireBolt}
 
-	if err := store.SetCombat(entityID, input); err != nil {
+	if err := store.SetCombat(entityID, input, allSkillsLearned); err != nil {
 		t.Fatalf("SetCombat() error = %v", err)
 	}
 	input[0] = skillcatalog.Meteor
@@ -81,12 +89,12 @@ func TestRejectedReplacementLeavesPreviousStateIntact(t *testing.T) {
 	store := NewStore()
 	entityID := world.EntityID(43)
 	original := []skillcatalog.ID{skillcatalog.Cleave, skillcatalog.ArcaneLance}
-	if err := store.SetCombat(entityID, original); err != nil {
+	if err := store.SetCombat(entityID, original, allSkillsLearned); err != nil {
 		t.Fatalf("initial SetCombat() error = %v", err)
 	}
 
 	invalid := []skillcatalog.ID{skillcatalog.Cleave, skillcatalog.Guard}
-	if err := store.SetCombat(entityID, invalid); !errors.Is(err, skillcatalog.ErrNotCombatLoadoutSkill) {
+	if err := store.SetCombat(entityID, invalid, allSkillsLearned); !errors.Is(err, skillcatalog.ErrNotCombatLoadoutSkill) {
 		t.Fatalf("replacement error = %v, want ErrNotCombatLoadoutSkill", err)
 	}
 	if got := store.Combat(entityID); !reflect.DeepEqual(got, original) {
@@ -94,9 +102,42 @@ func TestRejectedReplacementLeavesPreviousStateIntact(t *testing.T) {
 	}
 }
 
+func TestUnlearnedReplacementLeavesPreviousStateIntact(t *testing.T) {
+	store := NewStore()
+	learned := learnedskills.NewStore()
+	entityID := world.EntityID(46)
+	if err := learned.SetLearned(entityID, []skillcatalog.ID{skillcatalog.HeavyStrike, skillcatalog.FireBolt}); err != nil {
+		t.Fatalf("SetLearned() error = %v", err)
+	}
+	isLearned := func(id skillcatalog.ID) bool { return learned.Contains(entityID, id) }
+	original := []skillcatalog.ID{skillcatalog.HeavyStrike, skillcatalog.FireBolt}
+	if err := store.SetCombat(entityID, original, isLearned); err != nil {
+		t.Fatalf("initial SetCombat() error = %v", err)
+	}
+
+	replacement := []skillcatalog.ID{skillcatalog.HeavyStrike, skillcatalog.Meteor}
+	if err := store.SetCombat(entityID, replacement, isLearned); !errors.Is(err, ErrCombatSkillNotLearned) {
+		t.Fatalf("unlearned replacement error = %v, want ErrCombatSkillNotLearned", err)
+	}
+	if got := store.Combat(entityID); !reflect.DeepEqual(got, original) {
+		t.Fatalf("unlearned replacement mutated state: got %v, want %v", got, original)
+	}
+}
+
+func TestNonEmptyLoadoutRequiresLearnedCheck(t *testing.T) {
+	store := NewStore()
+	entityID := world.EntityID(47)
+	if err := store.SetCombat(entityID, []skillcatalog.ID{skillcatalog.HeavyStrike}, nil); !errors.Is(err, ErrLearnedCheckRequired) {
+		t.Fatalf("missing learned check error = %v, want ErrLearnedCheckRequired", err)
+	}
+	if got := store.Combat(entityID); len(got) != 0 {
+		t.Fatalf("missing learned check mutated state: got %v, want empty", got)
+	}
+}
+
 func TestStoreRejectsInvalidEntityWithoutMutation(t *testing.T) {
 	store := NewStore()
-	if err := store.SetCombat(0, []skillcatalog.ID{skillcatalog.HeavyStrike}); !errors.Is(err, ErrInvalidEntity) {
+	if err := store.SetCombat(0, []skillcatalog.ID{skillcatalog.HeavyStrike}, allSkillsLearned); !errors.Is(err, ErrInvalidEntity) {
 		t.Fatalf("error = %v, want ErrInvalidEntity", err)
 	}
 	if got := store.Combat(0); got != nil {
@@ -108,14 +149,14 @@ func TestEmptyLoadoutAndClearEntityRemoveRuntimeState(t *testing.T) {
 	store := NewStore()
 	entityA := world.EntityID(44)
 	entityB := world.EntityID(45)
-	if err := store.SetCombat(entityA, []skillcatalog.ID{skillcatalog.Execute}); err != nil {
+	if err := store.SetCombat(entityA, []skillcatalog.ID{skillcatalog.Execute}, allSkillsLearned); err != nil {
 		t.Fatalf("SetCombat(entityA) error = %v", err)
 	}
-	if err := store.SetCombat(entityB, []skillcatalog.ID{skillcatalog.RapidShot}); err != nil {
+	if err := store.SetCombat(entityB, []skillcatalog.ID{skillcatalog.RapidShot}, allSkillsLearned); err != nil {
 		t.Fatalf("SetCombat(entityB) error = %v", err)
 	}
 
-	if err := store.SetCombat(entityA, nil); err != nil {
+	if err := store.SetCombat(entityA, nil, nil); err != nil {
 		t.Fatalf("SetCombat(empty) error = %v", err)
 	}
 	if got := store.Combat(entityA); len(got) != 0 {
