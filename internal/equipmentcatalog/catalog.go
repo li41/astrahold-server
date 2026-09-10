@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-
-	"github.com/li41/astrahold-server/internal/classid"
 )
 
 //go:embed default.json
@@ -19,7 +17,6 @@ var ErrInvalidCatalog = errors.New("equipmentcatalog: invalid catalog")
 type Kind string
 type Slot string
 type BodySize string
-type ClassPolicy string
 
 const (
 	KindWeapon Kind = "weapon"
@@ -31,9 +28,6 @@ const (
 	BodySizeSmall BodySize = "small"
 	BodySizeLarge BodySize = "large"
 	BodySizeGiant BodySize = "giant"
-
-	ClassPolicyAll       ClassPolicy = "all"
-	ClassPolicyAllowList ClassPolicy = "allow_list"
 )
 
 type DamageRange struct {
@@ -57,15 +51,13 @@ type Shield struct {
 }
 
 type Definition struct {
-	ItemArchetypeID string      `json:"item_archetype_id"`
-	Kind            Kind        `json:"kind"`
-	Slot            Slot        `json:"slot"`
-	Weight          uint32      `json:"weight"`
-	Material        string      `json:"material"`
-	ClassPolicy     ClassPolicy `json:"class_policy,omitempty"`
-	AllowedClassIDs []string    `json:"allowed_class_ids,omitempty"`
-	Weapon          *Weapon     `json:"weapon,omitempty"`
-	Shield          *Shield     `json:"shield,omitempty"`
+	ItemArchetypeID string  `json:"item_archetype_id"`
+	Kind            Kind    `json:"kind"`
+	Slot            Slot    `json:"slot"`
+	Weight          uint32  `json:"weight"`
+	Material        string  `json:"material"`
+	Weapon          *Weapon `json:"weapon,omitempty"`
+	Shield          *Shield `json:"shield,omitempty"`
 }
 
 type CatalogDefinition struct {
@@ -99,8 +91,7 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	for _, item := range def.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
 		item.Material = strings.TrimSpace(item.Material)
-		item.ClassPolicy = effectiveClassPolicy(item.ClassPolicy)
-		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !normalizeClassPolicy(&item) {
+		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 {
 			return nil, ErrInvalidCatalog
 		}
 		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {
@@ -125,45 +116,6 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		catalog.byItem[item.ItemArchetypeID] = item
 	}
 	return catalog, nil
-}
-
-func effectiveClassPolicy(policy ClassPolicy) ClassPolicy {
-	if policy == "" {
-		return ClassPolicyAll
-	}
-	return policy
-}
-
-func normalizeClassPolicy(item *Definition) bool {
-	if item == nil {
-		return false
-	}
-	switch item.ClassPolicy {
-	case ClassPolicyAll:
-		return len(item.AllowedClassIDs) == 0
-	case ClassPolicyAllowList:
-		if len(item.AllowedClassIDs) == 0 {
-			return false
-		}
-		seen := make(map[string]struct{}, len(item.AllowedClassIDs))
-		for _, raw := range item.AllowedClassIDs {
-			if raw != strings.TrimSpace(raw) {
-				return false
-			}
-			id, ok := classid.Parse(raw)
-			if !ok {
-				return false
-			}
-			canonical := string(id)
-			if _, exists := seen[canonical]; exists {
-				return false
-			}
-			seen[canonical] = struct{}{}
-		}
-		return true
-	default:
-		return false
-	}
 }
 
 func validWeapon(w Weapon) bool {
@@ -194,7 +146,6 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 	if !ok {
 		return Definition{}, false
 	}
-	item.AllowedClassIDs = append([]string(nil), item.AllowedClassIDs...)
 	if item.Weapon != nil {
 		copy := *item.Weapon
 		item.Weapon = &copy
@@ -204,24 +155,6 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 		item.Shield = &copy
 	}
 	return item, true
-}
-
-func (d Definition) AllowsClass(raw string) bool {
-	switch effectiveClassPolicy(d.ClassPolicy) {
-	case ClassPolicyAll:
-		return true
-	case ClassPolicyAllowList:
-		id, ok := classid.Parse(raw)
-		if !ok {
-			return false
-		}
-		for _, allowed := range d.AllowedClassIDs {
-			if allowed == string(id) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // UnitWeights returns a defensive copy of the authored carry weight for every catalog item.

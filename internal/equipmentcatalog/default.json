@@ -7,7 +7,6 @@
       "slot": "main_hand",
       "weight": 7,
       "material": "iron",
-      "class_policy": "all",
       "weapon": {
         "small_damage": {"min": 6, "max": 9},
         "large_damage": {"min": 6, "max": 8},
@@ -22,7 +21,6 @@
       "slot": "main_hand",
       "weight": 6,
       "material": "iron",
-      "class_policy": "all",
       "weapon": {
         "small_damage": {"min": 5, "max": 8},
         "large_damage": {"min": 5, "max": 7},
@@ -37,7 +35,6 @@
       "slot": "main_hand",
       "weight": 8,
       "material": "iron",
-      "class_policy": "all",
       "weapon": {
         "small_damage": {"min": 7, "max": 10},
         "large_damage": {"min": 6, "max": 9},
@@ -52,7 +49,6 @@
       "slot": "main_hand",
       "weight": 10,
       "material": "iron_wood",
-      "class_policy": "all",
       "weapon": {
         "small_damage": {"min": 5, "max": 8},
         "large_damage": {"min": 8, "max": 12},
@@ -67,7 +63,6 @@
       "slot": "main_hand",
       "weight": 9,
       "material": "iron_wood",
-      "class_policy": "all",
       "weapon": {
         "small_damage": {"min": 6, "max": 9},
         "large_damage": {"min": 6, "max": 9},
@@ -82,7 +77,6 @@
       "slot": "off_hand",
       "weight": 6,
       "material": "wood_iron",
-      "class_policy": "all",
       "shield": {
         "physical_defense": 3,
         "block_chance_percent": 8,
@@ -96,7 +90,6 @@
       "slot": "off_hand",
       "weight": 8,
       "material": "wood_iron",
-      "class_policy": "all",
       "shield": {
         "physical_defense": 4,
         "block_chance_percent": 10,
@@ -110,7 +103,6 @@
       "slot": "off_hand",
       "weight": 6,
       "material": "wood_iron_low_enchantment",
-      "class_policy": "all",
       "shield": {
         "physical_defense": 2,
         "block_chance_percent": 6,
