@@ -9,6 +9,28 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+func TestSlotsCanonicalComparableForm(t *testing.T) {
+	ids := []skillcatalog.ID{skillcatalog.HeavyStrike, skillcatalog.PiercingShot, skillcatalog.FireBolt}
+	slots, err := NewSlots(ids)
+	if err != nil {
+		t.Fatalf("NewSlots() error = %v", err)
+	}
+	if err := slots.Validate(); err != nil {
+		t.Fatalf("Slots.Validate() error = %v", err)
+	}
+	if got := slots.IDs(); !reflect.DeepEqual(got, ids) {
+		t.Fatalf("Slots.IDs() = %v, want %v", got, ids)
+	}
+	if slots != slots {
+		t.Fatal("Slots must remain comparable for durable snapshot equality")
+	}
+
+	nonCanonical := Slots{skillcatalog.HeavyStrike, "", skillcatalog.FireBolt}
+	if err := nonCanonical.Validate(); !errors.Is(err, ErrNonCanonicalSlots) {
+		t.Fatalf("non-canonical error = %v, want ErrNonCanonicalSlots", err)
+	}
+}
+
 func TestStorePreservesOrderedMixedCombatLoadout(t *testing.T) {
 	store := NewStore()
 	entityID := world.EntityID(41)
