@@ -47,6 +47,11 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 		recordCharacterStateSaveFailure(report, sessionID, err)
 		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
+	learnedSkills, combatLoadout, err := r.characterSkills.capture(entityID)
+	if err != nil {
+		recordCharacterStateSaveFailure(report, sessionID, err)
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
+	}
 
 	classForSave := state.ClassID
 	if r.characterStateOutbox != nil {
@@ -55,16 +60,18 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 		}
 	}
 	snapshot := characterstate.Snapshot{
-		World:     r.characterStateWorld,
-		ClassID:   classForSave,
-		HP:        state.HP,
-		MaxHP:     state.MaxHP,
-		MP:        state.MP,
-		MaxMP:     state.MaxMP,
-		Defeated:  state.Defeated,
-		Position:  entity.Transform.Position,
-		Yaw:       entity.Transform.Yaw,
-		Inventory: inventoryState,
+		World:         r.characterStateWorld,
+		ClassID:       classForSave,
+		HP:            state.HP,
+		MaxHP:         state.MaxHP,
+		MP:            state.MP,
+		MaxMP:         state.MaxMP,
+		Defeated:      state.Defeated,
+		Position:      entity.Transform.Position,
+		Yaw:           entity.Transform.Yaw,
+		Inventory:     inventoryState,
+		CombatLoadout: combatLoadout,
+		LearnedSkills: learnedSkills,
 	}
 	if state.Defeated {
 		// Defeated records are written only when the already-established death-time binding exists.

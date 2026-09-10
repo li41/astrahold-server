@@ -209,6 +209,7 @@ type Runtime struct {
 	characterStateAutosaveLastTick map[world.EntityID]uint64
 	characterStateAutosaveCursor   int
 	characterStateAutosaveNextTick uint64
+	characterSkills                characterSkillRuntime
 	inventories                    map[characteridentity.ID]*inventory.Inventory
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult

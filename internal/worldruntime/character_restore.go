@@ -8,9 +8,11 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/classid"
+	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/skillloadout"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -39,6 +41,8 @@ type CharacterRestore struct {
 	Transform     world.Transform
 	Respawn       characterstate.DefeatedRespawn
 	Inventory     characterstate.InventoryState
+	CombatLoadout skillloadout.Slots
+	LearnedSkills learnedskills.Set
 }
 
 func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
@@ -51,15 +55,17 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 			Revision:       record.Snapshot.World.Revision,
 			GameplaySHA256: record.Snapshot.World.GameplaySHA256,
 		},
-		ClassID:   record.Snapshot.ClassID,
-		HP:        record.Snapshot.HP,
-		MaxHP:     record.Snapshot.MaxHP,
-		MP:        record.Snapshot.MP,
-		MaxMP:     record.Snapshot.MaxMP,
-		Defeated:  record.Snapshot.Defeated,
-		Transform: world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
-		Respawn:   record.Snapshot.Respawn,
-		Inventory: record.Snapshot.Inventory,
+		ClassID:       record.Snapshot.ClassID,
+		HP:            record.Snapshot.HP,
+		MaxHP:         record.Snapshot.MaxHP,
+		MP:            record.Snapshot.MP,
+		MaxMP:         record.Snapshot.MaxMP,
+		Defeated:      record.Snapshot.Defeated,
+		Transform:     world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
+		Respawn:       record.Snapshot.Respawn,
+		Inventory:     record.Snapshot.Inventory,
+		CombatLoadout: record.Snapshot.CombatLoadout,
+		LearnedSkills: record.Snapshot.LearnedSkills,
 	}
 }
 
@@ -106,6 +112,9 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		}
 	} else if restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
+	}
+	if err := validateCharacterSkillRestore(restore.SchemaVersion, restore.LearnedSkills, restore.CombatLoadout); err != nil {
+		return err
 	}
 	for _, value := range []float32{
 		restore.Transform.Position.X,
