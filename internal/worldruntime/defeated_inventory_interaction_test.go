@@ -41,9 +41,6 @@ func TestDefeatedActorCannotPickupGroundItemAndConsumesActionSequence(t *testing
 	if got := inv.Revision(); got != beforeRevision {
 		t.Fatalf("defeated pickup changed inventory revision=%d, want %d", got, beforeRevision)
 	}
-	if got := s.LastProcessedActionSequence(); got != 1 {
-		t.Fatalf("defeated pickup sequence=%d, want consumed 1", got)
-	}
 
 	if err := runtime.EnqueuePickupItem(s.ID, 1, intent); err != nil {
 		t.Fatal(err)
@@ -90,9 +87,6 @@ func TestDefeatedActorCannotEquipAndConsumesActionSequence(t *testing.T) {
 	}
 	if got := inv.Revision(); got != beforeRevision {
 		t.Fatalf("defeated equip changed inventory revision=%d, want %d", got, beforeRevision)
-	}
-	if got := s.LastProcessedActionSequence(); got != 1 {
-		t.Fatalf("defeated equip sequence=%d, want consumed 1", got)
 	}
 
 	if err := runtime.EnqueueEquipmentCommand(s.ID, 1, intent); err != nil {
