@@ -7,6 +7,7 @@ import (
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/skillcatalog"
 	"github.com/li41/astrahold-server/internal/skillloadout"
+	"github.com/li41/astrahold-server/internal/skilluse"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -92,6 +93,16 @@ func (s *characterSkillRuntime) capture(entityID world.EntityID) (learnedskills.
 		return learnedskills.Set{}, skillloadout.Slots{}, err
 	}
 	return learned, loadout, nil
+}
+
+// validateActiveUse is the world-owner seam for the new classless skill contract.
+// It intentionally stops before equipment, targeting, range, resource, cooldown and effect checks.
+func (s *characterSkillRuntime) validateActiveUse(entityID world.EntityID, id skillcatalog.ID) error {
+	learned, loadout, err := s.capture(entityID)
+	if err != nil {
+		return err
+	}
+	return skilluse.ValidateActive(id, learned, loadout)
 }
 
 func (s *characterSkillRuntime) clear(entityID world.EntityID) {
