@@ -21,8 +21,9 @@ func TestSlotsCanonicalComparableForm(t *testing.T) {
 	if got := slots.IDs(); !reflect.DeepEqual(got, ids) {
 		t.Fatalf("Slots.IDs() = %v, want %v", got, ids)
 	}
-	if slots != slots {
-		t.Fatal("Slots must remain comparable for durable snapshot equality")
+	copySlots := slots
+	if copySlots != slots {
+		t.Fatal("Slots copy changed comparable durable value")
 	}
 
 	nonCanonical := Slots{skillcatalog.HeavyStrike, "", skillcatalog.FireBolt}
