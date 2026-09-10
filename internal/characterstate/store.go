@@ -18,6 +18,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
+	"github.com/li41/astrahold-server/internal/skillloadout"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -28,7 +29,8 @@ const (
 	InventorySchemaVersion uint16 = 4
 	EquipmentSchemaVersion uint16 = 5
 	ClassSchemaVersion     uint16 = 6
-	SchemaVersion          uint16 = ClassSchemaVersion
+	LoadoutSchemaVersion   uint16 = 7
+	SchemaVersion          uint16 = LoadoutSchemaVersion
 	LegacyDefaultMaxMP     uint32 = 100
 )
 
@@ -57,17 +59,18 @@ type DefeatedRespawn struct {
 }
 
 type Snapshot struct {
-	World     WorldRef
-	ClassID   classid.ID
-	HP        uint32
-	MaxHP     uint32
-	MP        uint32
-	MaxMP     uint32
-	Defeated  bool
-	Position  world.Position
-	Yaw       float32
-	Respawn   DefeatedRespawn
-	Inventory InventoryState
+	World         WorldRef
+	ClassID       classid.ID
+	HP            uint32
+	MaxHP         uint32
+	MP            uint32
+	MaxMP         uint32
+	Defeated      bool
+	Position      world.Position
+	Yaw           float32
+	Respawn       DefeatedRespawn
+	Inventory     InventoryState
+	CombatLoadout skillloadout.Slots
 }
 
 type Record struct {
@@ -114,6 +117,7 @@ type wireRecord struct {
 	Yaw             float32               `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
 	Inventory        InventoryState        `json:"inventory,omitempty"`
+	CombatLoadout    []string              `json:"combat_loadout,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -125,9 +129,9 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v6 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v7 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
-// v6 adds durable ClassID; all earlier schemas restore as the canonical unassigned class state.
+// v6 adds durable ClassID. v7 adds the classless six-slot combat loadout; older records restore it empty.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -139,7 +143,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV6(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV7(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -175,6 +179,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory != (InventoryState{}) { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion == InventorySchemaVersion && wire.Inventory.OffHand != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < ClassSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < LoadoutSchemaVersion && len(wire.CombatLoadout) != 0 { return Record{}, false, ErrCorruptRecord }
 
 	classID := classid.ID("")
 	if wire.SchemaVersion >= ClassSchemaVersion && wire.ClassID != "" {
@@ -192,6 +197,12 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		inventoryState, err = CanonicalInventoryState(wire.Inventory)
 		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
+	combatLoadout := skillloadout.Slots{}
+	if wire.SchemaVersion >= LoadoutSchemaVersion {
+		var err error
+		combatLoadout, err = combatLoadoutFromWire(wire.CombatLoadout)
+		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
 		CharacterID: characteridentity.ID(wire.CharacterID),
@@ -202,6 +213,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 			HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
 			Inventory: inventoryState,
+			CombatLoadout: combatLoadout,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
@@ -225,6 +237,9 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion >= ClassSchemaVersion && record.Snapshot.ClassID != "" && !classid.IsCanonical(record.Snapshot.ClassID) {
 		return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot)
 	}
+	if wire.SchemaVersion >= LoadoutSchemaVersion {
+		if err := validateCombatLoadout(record.Snapshot.CombatLoadout); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	}
 	return record, true, nil
 }
 
@@ -238,6 +253,7 @@ func (s *Store) writeLocked(record Record) error {
 		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
 		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
 		Inventory: inventoryState,
+		CombatLoadout: combatLoadoutToWire(record.Snapshot.CombatLoadout),
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
@@ -269,6 +285,11 @@ func (s *Store) recordPath(id characteridentity.ID) string {
 func validateTrustedIdentity(identity characteridentity.Binding) error {
 	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted { return ErrIdentityNotDurable }
 	return nil
+}
+
+func validateSnapshotV7(snapshot Snapshot) error {
+	if err := validateSnapshotV6(snapshot); err != nil { return err }
+	return validateCombatLoadout(snapshot.CombatLoadout)
 }
 
 func validateSnapshotV6(snapshot Snapshot) error {
