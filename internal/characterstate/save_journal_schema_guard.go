@@ -28,6 +28,9 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	if decoded.SchemaVersion < LoadoutSaveJournalSchemaVersion && len(decoded.Snapshot.CombatLoadout) != 0 {
 		return fmt.Errorf("combat loadout requires save journal schema %d", LoadoutSaveJournalSchemaVersion)
 	}
+	if decoded.SchemaVersion < LearnedSkillsSaveJournalSchemaVersion && len(decoded.Snapshot.LearnedSkills) != 0 {
+		return fmt.Errorf("learned skills require save journal schema %d", LearnedSkillsSaveJournalSchemaVersion)
+	}
 
 	*wire = saveJournalWireRecord(decoded)
 	return nil

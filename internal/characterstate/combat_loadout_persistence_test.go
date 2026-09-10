@@ -11,7 +11,7 @@ import (
 	"github.com/li41/astrahold-server/internal/skillloadout"
 )
 
-func TestStoreV7RoundTripsCombatLoadout(t *testing.T) {
+func TestStoreCurrentSchemaRoundTripsCombatLoadout(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:loadout-v7")
@@ -20,12 +20,12 @@ func TestStoreV7RoundTripsCombatLoadout(t *testing.T) {
 
 	record, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if record.SchemaVersion != LoadoutSchemaVersion || record.Snapshot.CombatLoadout != snapshot.CombatLoadout {
+	if record.SchemaVersion != SchemaVersion || record.Snapshot.CombatLoadout != snapshot.CombatLoadout {
 		t.Fatalf("record=%#v", record)
 	}
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.SchemaVersion != LoadoutSchemaVersion || loaded.Snapshot.CombatLoadout != snapshot.CombatLoadout {
+	if loaded.SchemaVersion != SchemaVersion || loaded.Snapshot.CombatLoadout != snapshot.CombatLoadout {
 		t.Fatalf("loaded=%#v", loaded)
 	}
 }
@@ -60,9 +60,9 @@ func TestStoreRejectsCombatLoadoutThatDoesNotMatchSchema(t *testing.T) {
 		ids    []string
 	}{
 		{name: "legacy schema carries loadout", schema: ClassSchemaVersion, ids: []string{string(skillcatalog.HeavyStrike)}},
-		{name: "current schema unknown skill", schema: LoadoutSchemaVersion, ids: []string{"unknown-skill"}},
-		{name: "current schema duplicate skill", schema: LoadoutSchemaVersion, ids: []string{string(skillcatalog.FireBolt), string(skillcatalog.FireBolt)}},
-		{name: "current schema fixed skill", schema: LoadoutSchemaVersion, ids: []string{string(skillcatalog.Guard)}},
+		{name: "loadout schema unknown skill", schema: LoadoutSchemaVersion, ids: []string{"unknown-skill"}},
+		{name: "loadout schema duplicate skill", schema: LoadoutSchemaVersion, ids: []string{string(skillcatalog.FireBolt), string(skillcatalog.FireBolt)}},
+		{name: "loadout schema fixed skill", schema: LoadoutSchemaVersion, ids: []string{string(skillcatalog.Guard)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, err := Open(t.TempDir())
@@ -98,7 +98,7 @@ func TestStoreRejectsInvalidCombatLoadoutOnSave(t *testing.T) {
 	}
 }
 
-func TestSaveJournalV6RoundTripsCombatLoadout(t *testing.T) {
+func TestSaveJournalCurrentSchemaRoundTripsCombatLoadout(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "loadout-saves.journal")
 	journal, err := OpenSaveJournal(path)
 	if err != nil { t.Fatal(err) }
@@ -123,6 +123,7 @@ func TestSaveJournalV5MigratesToEmptyCombatLoadout(t *testing.T) {
 	snapshot := testSnapshot()
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
 	wireSnapshot.CombatLoadout = nil
+	wireSnapshot.LearnedSkills = nil
 	wire := saveJournalWireRecord{
 		SchemaVersion: ClassSaveJournalSchemaVersion,
 		RecordID: 1, ExpectedRevision: 0, IntentID: 1,
@@ -144,12 +145,13 @@ func TestSaveJournalRejectsCombatLoadoutThatDoesNotMatchSchema(t *testing.T) {
 		ids    []string
 	}{
 		{name: "legacy schema carries loadout", schema: ClassSaveJournalSchemaVersion, ids: []string{string(skillcatalog.HeavyStrike)}},
-		{name: "current schema unknown skill", schema: LoadoutSaveJournalSchemaVersion, ids: []string{"unknown-skill"}},
-		{name: "current schema duplicate skill", schema: LoadoutSaveJournalSchemaVersion, ids: []string{string(skillcatalog.FireBolt), string(skillcatalog.FireBolt)}},
+		{name: "loadout schema unknown skill", schema: LoadoutSaveJournalSchemaVersion, ids: []string{"unknown-skill"}},
+		{name: "loadout schema duplicate skill", schema: LoadoutSaveJournalSchemaVersion, ids: []string{string(skillcatalog.FireBolt), string(skillcatalog.FireBolt)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := testSnapshot()
 			wireSnapshot := snapshotToSaveJournalWire(snapshot)
+			wireSnapshot.LearnedSkills = nil
 			wireSnapshot.CombatLoadout = tc.ids
 			wire := saveJournalWireRecord{
 				SchemaVersion: tc.schema,

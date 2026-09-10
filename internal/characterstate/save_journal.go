@@ -16,21 +16,23 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/classid"
+	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/skillloadout"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 const (
-	LegacySaveJournalSchemaVersion    uint16 = 1
-	ResourceSaveJournalSchemaVersion  uint16 = 2
-	InventorySaveJournalSchemaVersion uint16 = 3
-	EquipmentSaveJournalSchemaVersion uint16 = 4
-	ClassSaveJournalSchemaVersion     uint16 = 5
-	LoadoutSaveJournalSchemaVersion   uint16 = 6
-	SaveJournalSchemaVersion          uint16 = LoadoutSaveJournalSchemaVersion
-	saveCheckpointSchemaVersion       uint16 = 1
-	saveJournalIDSize                        = 16
-	maxSaveJournalPayload                    = 1 << 20
+	LegacySaveJournalSchemaVersion        uint16 = 1
+	ResourceSaveJournalSchemaVersion      uint16 = 2
+	InventorySaveJournalSchemaVersion     uint16 = 3
+	EquipmentSaveJournalSchemaVersion     uint16 = 4
+	ClassSaveJournalSchemaVersion         uint16 = 5
+	LoadoutSaveJournalSchemaVersion       uint16 = 6
+	LearnedSkillsSaveJournalSchemaVersion uint16 = 7
+	SaveJournalSchemaVersion              uint16 = LearnedSkillsSaveJournalSchemaVersion
+	saveCheckpointSchemaVersion           uint16 = 1
+	saveJournalIDSize                            = 16
+	maxSaveJournalPayload                        = 1 << 20
 )
 
 var (
@@ -111,6 +113,7 @@ type saveJournalWireSnapshot struct {
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
 	Inventory        InventoryState       `json:"inventory,omitempty"`
 	CombatLoadout    []string             `json:"combat_loadout,omitempty"`
+	LearnedSkills    []string             `json:"learned_skills,omitempty"`
 }
 
 type saveCheckpointWire struct {
@@ -564,7 +567,8 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 		wire.SchemaVersion != InventorySaveJournalSchemaVersion &&
 		wire.SchemaVersion != EquipmentSaveJournalSchemaVersion &&
 		wire.SchemaVersion != ClassSaveJournalSchemaVersion &&
-		wire.SchemaVersion != LoadoutSaveJournalSchemaVersion) ||
+		wire.SchemaVersion != LoadoutSaveJournalSchemaVersion &&
+		wire.SchemaVersion != LearnedSkillsSaveJournalSchemaVersion) ||
 		wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
 	}
@@ -595,6 +599,7 @@ func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
 		Inventory: snapshot.Inventory,
 		CombatLoadout: combatLoadoutToWire(snapshot.CombatLoadout),
+		LearnedSkills: learnedSkillsToWire(snapshot.LearnedSkills),
 	}
 	if snapshot.Defeated {
 		respawn := snapshot.Respawn
@@ -627,6 +632,14 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 			return Snapshot{}, err
 		}
 	}
+	learnedSkills := learnedskills.Set{}
+	if schemaVersion >= LearnedSkillsSaveJournalSchemaVersion {
+		var err error
+		learnedSkills, err = learnedSkillsFromWire(wire.LearnedSkills)
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
 	snapshot := Snapshot{
 		World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
 		ClassID: classid.ID(wire.ClassID),
@@ -634,6 +647,7 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 		Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
 		Inventory: inventoryState,
 		CombatLoadout: combatLoadout,
+		LearnedSkills: learnedSkills,
 	}
 	if wire.DefeatedRespawn != nil {
 		snapshot.Respawn = DefeatedRespawn{
@@ -656,7 +670,7 @@ func validateNewSaveIntent(intent SaveIntent) error {
 	if !intent.Snapshot.Inventory.Initialized {
 		return ErrInvalidSnapshot
 	}
-	return validateSnapshotV7(intent.Snapshot)
+	return validateSnapshotV8(intent.Snapshot)
 }
 
 func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
@@ -671,29 +685,36 @@ func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
 	}
 	switch schemaVersion {
 	case LegacySaveJournalSchemaVersion, ResourceSaveJournalSchemaVersion:
-		if intent.Snapshot.Inventory != (InventoryState{}) || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) {
+		if intent.Snapshot.Inventory != (InventoryState{}) || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) {
 			return ErrInvalidSnapshot
 		}
 	case InventorySaveJournalSchemaVersion:
-		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.Inventory.OffHand != "" || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) {
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.Inventory.OffHand != "" || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) {
 			return ErrInvalidSnapshot
 		}
 	case EquipmentSaveJournalSchemaVersion:
-		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) {
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) {
 			return ErrInvalidSnapshot
 		}
 	case ClassSaveJournalSchemaVersion:
-		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) {
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) {
 			return ErrInvalidSnapshot
 		}
 		if err := validateSnapshotV6(intent.Snapshot); err != nil {
 			return err
 		}
 	case LoadoutSaveJournalSchemaVersion:
-		if !intent.Snapshot.Inventory.Initialized {
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) {
 			return ErrInvalidSnapshot
 		}
 		if err := validateSnapshotV7(intent.Snapshot); err != nil {
+			return err
+		}
+	case LearnedSkillsSaveJournalSchemaVersion:
+		if !intent.Snapshot.Inventory.Initialized {
+			return ErrInvalidSnapshot
+		}
+		if err := validateSnapshotV8(intent.Snapshot); err != nil {
 			return err
 		}
 	default:

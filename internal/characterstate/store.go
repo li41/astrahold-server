@@ -17,21 +17,23 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/classid"
+	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/skillloadout"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 const (
-	LegacySchemaVersion    uint16 = 1
-	RespawnSchemaVersion   uint16 = 2
-	ResourceSchemaVersion  uint16 = 3
-	InventorySchemaVersion uint16 = 4
-	EquipmentSchemaVersion uint16 = 5
-	ClassSchemaVersion     uint16 = 6
-	LoadoutSchemaVersion   uint16 = 7
-	SchemaVersion          uint16 = LoadoutSchemaVersion
-	LegacyDefaultMaxMP     uint32 = 100
+	LegacySchemaVersion        uint16 = 1
+	RespawnSchemaVersion       uint16 = 2
+	ResourceSchemaVersion      uint16 = 3
+	InventorySchemaVersion     uint16 = 4
+	EquipmentSchemaVersion     uint16 = 5
+	ClassSchemaVersion         uint16 = 6
+	LoadoutSchemaVersion       uint16 = 7
+	LearnedSkillsSchemaVersion uint16 = 8
+	SchemaVersion              uint16 = LearnedSkillsSchemaVersion
+	LegacyDefaultMaxMP         uint32 = 100
 )
 
 var (
@@ -71,6 +73,7 @@ type Snapshot struct {
 	Respawn       DefeatedRespawn
 	Inventory     InventoryState
 	CombatLoadout skillloadout.Slots
+	LearnedSkills learnedskills.Set
 }
 
 type Record struct {
@@ -118,6 +121,7 @@ type wireRecord struct {
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
 	Inventory        InventoryState        `json:"inventory,omitempty"`
 	CombatLoadout    []string              `json:"combat_loadout,omitempty"`
+	LearnedSkills    []string              `json:"learned_skills,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -129,9 +133,10 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v7 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v8 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
-// v6 adds durable ClassID. v7 adds the classless six-slot combat loadout; older records restore it empty.
+// v6 adds durable ClassID. v7 adds the classless six-slot combat loadout. v8 adds learned skills.
+// Older records restore fields introduced after their schema as empty values.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -143,7 +148,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV7(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV8(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -180,6 +185,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion == InventorySchemaVersion && wire.Inventory.OffHand != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < ClassSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LoadoutSchemaVersion && len(wire.CombatLoadout) != 0 { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < LearnedSkillsSchemaVersion && len(wire.LearnedSkills) != 0 { return Record{}, false, ErrCorruptRecord }
 
 	classID := classid.ID("")
 	if wire.SchemaVersion >= ClassSchemaVersion && wire.ClassID != "" {
@@ -203,6 +209,12 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		combatLoadout, err = combatLoadoutFromWire(wire.CombatLoadout)
 		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
+	learnedSkills := learnedskills.Set{}
+	if wire.SchemaVersion >= LearnedSkillsSchemaVersion {
+		var err error
+		learnedSkills, err = learnedSkillsFromWire(wire.LearnedSkills)
+		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
 		CharacterID: characteridentity.ID(wire.CharacterID),
@@ -214,6 +226,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
 			Inventory: inventoryState,
 			CombatLoadout: combatLoadout,
+			LearnedSkills: learnedSkills,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
@@ -240,6 +253,9 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion >= LoadoutSchemaVersion {
 		if err := validateCombatLoadout(record.Snapshot.CombatLoadout); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
+	if wire.SchemaVersion >= LearnedSkillsSchemaVersion {
+		if err := validateLearnedSkills(record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	}
 	return record, true, nil
 }
 
@@ -254,6 +270,7 @@ func (s *Store) writeLocked(record Record) error {
 		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
 		Inventory: inventoryState,
 		CombatLoadout: combatLoadoutToWire(record.Snapshot.CombatLoadout),
+		LearnedSkills: learnedSkillsToWire(record.Snapshot.LearnedSkills),
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
@@ -285,6 +302,11 @@ func (s *Store) recordPath(id characteridentity.ID) string {
 func validateTrustedIdentity(identity characteridentity.Binding) error {
 	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted { return ErrIdentityNotDurable }
 	return nil
+}
+
+func validateSnapshotV8(snapshot Snapshot) error {
+	if err := validateSnapshotV7(snapshot); err != nil { return err }
+	return validateLearnedSkills(snapshot.LearnedSkills)
 }
 
 func validateSnapshotV7(snapshot Snapshot) error {
