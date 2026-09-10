@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
+	"github.com/li41/astrahold-server/internal/legacyclassgate"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
@@ -26,19 +26,19 @@ func combatIntentFromClientAction(actorID world.EntityID, action protocol.Client
 func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.ID, clientActionSequence uint32, intent combat.Intent, tick uint64, delta time.Duration, report *StepReport) {
 	actor, ok := r.world.Entity(intent.ActorEntityID)
 	if !ok || !combatActorKind(actor.Kind) {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:ErrSessionEntityNotFound})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: ErrSessionEntityNotFound})
 		return
 	}
 	actorState, ok := r.combatantState(intent.ActorEntityID)
 	if !ok {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:character.ErrCharacterNotFound})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: character.ErrCharacterNotFound})
 		return
 	}
 	if actorState.Defeated {
 		r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), character.ErrCharacterDefeated, tick, report)
 		return
 	}
-	if err := classaction.ValidateClass(intent.ActionID, actorState.ClassID); err != nil {
+	if err := legacyclassgate.Validate(intent.ActionID, actorState.ClassID); err != nil {
 		r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), err, tick, report)
 		return
 	}
@@ -53,7 +53,7 @@ func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.
 			r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), err, tick, report)
 			return
 		}
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command:name,SessionID:sourceSessionID,Err:err})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
 		return
 	}
 	r.applyEquippedBasicAttackTiming(&prepared, sourceSessionID)
