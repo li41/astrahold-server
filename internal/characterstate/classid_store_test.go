@@ -22,14 +22,14 @@ func TestStoreV6RoundTripsCanonicalClassID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.SchemaVersion != ClassSchemaVersion || record.Snapshot.ClassID != classid.Oathguard {
+	if record.SchemaVersion != SchemaVersion || record.Snapshot.ClassID != classid.Oathguard {
 		t.Fatalf("record=%#v", record)
 	}
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok {
 		t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err)
 	}
-	if loaded.SchemaVersion != ClassSchemaVersion || loaded.Snapshot.ClassID != classid.Oathguard {
+	if loaded.SchemaVersion != SchemaVersion || loaded.Snapshot.ClassID != classid.Oathguard {
 		t.Fatalf("loaded=%#v", loaded)
 	}
 }
