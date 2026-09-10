@@ -90,8 +90,14 @@ func TestJoinLateFailureRollsBackRestoredCharacterSkillState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.sessions.Add(existing); err != nil {
+	if err := rt.world.Spawn(world.EntityState{ID: 99, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{Layer: 4}}}, 6, 0.35, 0.5); err != nil {
 		t.Fatal(err)
+	}
+	if err := rt.EnqueueRegister(existing); err != nil {
+		t.Fatal(err)
+	}
+	if report := rt.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("existing register errors=%#v", report.CommandErrors)
 	}
 
 	identity, _ := characteridentity.NewTrusted("character:skill-rollback")
@@ -112,7 +118,7 @@ func TestJoinLateFailureRollsBackRestoredCharacterSkillState(t *testing.T) {
 	if err := rt.EnqueueJoin(JoinRequest{Session: incoming, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}); err != nil {
 		t.Fatal(err)
 	}
-	report := rt.Step(1, 50*time.Millisecond)
+	report := rt.Step(2, 50*time.Millisecond)
 	if len(report.CommandErrors) != 1 || !errors.Is(report.CommandErrors[0].Err, session.ErrSessionExists) {
 		t.Fatalf("errors=%#v", report.CommandErrors)
 	}
