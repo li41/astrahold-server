@@ -52,11 +52,12 @@ func TestStoreV8RoundTripsLearnedSkills(t *testing.T) {
 	}
 }
 
-func TestStoreV7MigratesToEmptyLearnedSkills(t *testing.T) {
+func TestStoreV7InfersLearnedSkillsOnlyFromCombatLoadout(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:learned-v7")
 	snapshot := testSnapshot()
+	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.HeavyStrike, skillcatalog.FireBolt)
 	wire := wireRecord{
 		SchemaVersion: LoadoutSchemaVersion,
 		CharacterID: string(identity.ID), Revision: 1,
@@ -71,8 +72,45 @@ func TestStoreV7MigratesToEmptyLearnedSkills(t *testing.T) {
 	if err := os.WriteFile(store.recordPath(identity.ID), append(data, '\n'), 0o600); err != nil { t.Fatal(err) }
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.Snapshot.LearnedSkills != (learnedskills.Set{}) {
-		t.Fatalf("legacy learned skills=%v", loaded.Snapshot.LearnedSkills.IDs())
+	want := mustLearnedSet(t, skillcatalog.HeavyStrike, skillcatalog.FireBolt)
+	if loaded.Snapshot.LearnedSkills != want {
+		t.Fatalf("legacy learned skills=%v want=%v", loaded.Snapshot.LearnedSkills.IDs(), want.IDs())
+	}
+}
+
+func TestStoreRejectsCurrentSnapshotWithUnlearnedCombatLoadout(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil { t.Fatal(err) }
+	identity := trusted(t, "character:unlearned-loadout-save")
+	snapshot := testSnapshot()
+	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.HeavyStrike, skillcatalog.FireBolt)
+	snapshot.LearnedSkills = mustLearnedSet(t, skillcatalog.HeavyStrike)
+	if _, err := store.Save(identity, 0, snapshot); !errors.Is(err, ErrInvalidSnapshot) {
+		t.Fatalf("save err=%v want ErrInvalidSnapshot", err)
+	}
+}
+
+func TestStoreRejectsCurrentRecordWithUnlearnedCombatLoadout(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil { t.Fatal(err) }
+	identity := trusted(t, "character:unlearned-loadout-record")
+	snapshot := testSnapshot()
+	loadout := mustCombatSlots(t, skillcatalog.HeavyStrike, skillcatalog.FireBolt)
+	wire := wireRecord{
+		SchemaVersion: LearnedSkillsSchemaVersion,
+		CharacterID: string(identity.ID), Revision: 1,
+		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
+		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP,
+		Defeated: snapshot.Defeated, X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z,
+		Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw, Inventory: snapshot.Inventory,
+		CombatLoadout: combatLoadoutToWire(loadout),
+		LearnedSkills: []string{string(skillcatalog.HeavyStrike)},
+	}
+	data, err := json.Marshal(wire)
+	if err != nil { t.Fatal(err) }
+	if err := os.WriteFile(store.recordPath(identity.ID), append(data, '\n'), 0o600); err != nil { t.Fatal(err) }
+	if _, _, err := store.Load(identity); !errors.Is(err, ErrCorruptRecord) {
+		t.Fatalf("load err=%v want ErrCorruptRecord", err)
 	}
 }
 
@@ -131,8 +169,9 @@ func TestSaveJournalV7RoundTripsLearnedSkills(t *testing.T) {
 	}
 }
 
-func TestSaveJournalV6MigratesToEmptyLearnedSkills(t *testing.T) {
+func TestSaveJournalV6InfersLearnedSkillsOnlyFromCombatLoadout(t *testing.T) {
 	snapshot := testSnapshot()
+	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.Cleave, skillcatalog.Meteor)
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
 	wireSnapshot.LearnedSkills = nil
 	wire := saveJournalWireRecord{
@@ -144,8 +183,39 @@ func TestSaveJournalV6MigratesToEmptyLearnedSkills(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	_, _, intent, err := decodeSaveJournalRecord(payload)
 	if err != nil { t.Fatal(err) }
-	if intent.Snapshot.LearnedSkills != (learnedskills.Set{}) {
-		t.Fatalf("legacy learned skills=%v", intent.Snapshot.LearnedSkills.IDs())
+	want := mustLearnedSet(t, skillcatalog.Cleave, skillcatalog.Meteor)
+	if intent.Snapshot.LearnedSkills != want {
+		t.Fatalf("legacy learned skills=%v want=%v", intent.Snapshot.LearnedSkills.IDs(), want.IDs())
+	}
+}
+
+func TestSaveJournalRejectsCurrentSnapshotWithUnlearnedCombatLoadout(t *testing.T) {
+	journal, err := OpenSaveJournal(filepath.Join(t.TempDir(), "unlearned-loadout.journal"))
+	if err != nil { t.Fatal(err) }
+	defer journal.Close()
+	snapshot := testSnapshot()
+	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.Cleave, skillcatalog.Meteor)
+	snapshot.LearnedSkills = mustLearnedSet(t, skillcatalog.Cleave)
+	_, err = journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:journal-unlearned-loadout"), Snapshot: snapshot}, 0)
+	if !errors.Is(err, ErrInvalidSnapshot) {
+		t.Fatalf("append err=%v want ErrInvalidSnapshot", err)
+	}
+}
+
+func TestSaveJournalRejectsCurrentWireWithUnlearnedCombatLoadout(t *testing.T) {
+	snapshot := testSnapshot()
+	wireSnapshot := snapshotToSaveJournalWire(snapshot)
+	wireSnapshot.CombatLoadout = []string{string(skillcatalog.Cleave), string(skillcatalog.Meteor)}
+	wireSnapshot.LearnedSkills = []string{string(skillcatalog.Cleave)}
+	wire := saveJournalWireRecord{
+		SchemaVersion: LearnedSkillsSaveJournalSchemaVersion,
+		RecordID: 1, ExpectedRevision: 0, IntentID: 1,
+		CharacterID: string(trusted(t, "character:journal-unlearned-wire").ID), Snapshot: wireSnapshot,
+	}
+	payload, err := json.Marshal(wire)
+	if err != nil { t.Fatal(err) }
+	if _, _, _, err := decodeSaveJournalRecord(payload); !errors.Is(err, ErrCorruptSaveJournal) {
+		t.Fatalf("decode err=%v want ErrCorruptSaveJournal", err)
 	}
 }
 

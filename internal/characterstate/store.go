@@ -136,7 +136,7 @@ func (s *Store) Path() string { return s.root }
 // Load accepts v1-v8 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
 // v6 adds durable ClassID. v7 adds the classless six-slot combat loadout. v8 adds learned skills.
-// Older records restore fields introduced after their schema as empty values.
+// When loading v7, only configured combat skills are inferred as learned; no other skills are granted.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -214,6 +214,10 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		var err error
 		learnedSkills, err = learnedSkillsFromWire(wire.LearnedSkills)
 		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	} else if wire.SchemaVersion >= LoadoutSchemaVersion {
+		var err error
+		learnedSkills, err = learnedSkillsFromCombatLoadout(combatLoadout)
+		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
@@ -255,6 +259,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	}
 	if wire.SchemaVersion >= LearnedSkillsSchemaVersion {
 		if err := validateLearnedSkills(record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+		if err := validateCombatLoadoutLearned(record.Snapshot.CombatLoadout, record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
 	return record, true, nil
 }
@@ -306,7 +311,8 @@ func validateTrustedIdentity(identity characteridentity.Binding) error {
 
 func validateSnapshotV8(snapshot Snapshot) error {
 	if err := validateSnapshotV7(snapshot); err != nil { return err }
-	return validateLearnedSkills(snapshot.LearnedSkills)
+	if err := validateLearnedSkills(snapshot.LearnedSkills); err != nil { return err }
+	return validateCombatLoadoutLearned(snapshot.CombatLoadout, snapshot.LearnedSkills)
 }
 
 func validateSnapshotV7(snapshot Snapshot) error {

@@ -17,6 +17,7 @@ func TestStoreCurrentSchemaRoundTripsCombatLoadout(t *testing.T) {
 	identity := trusted(t, "character:loadout-v7")
 	snapshot := testSnapshot()
 	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.HeavyStrike, skillcatalog.PiercingShot, skillcatalog.FireBolt)
+	snapshot.LearnedSkills = mustLearnedSet(t, skillcatalog.HeavyStrike, skillcatalog.PiercingShot, skillcatalog.FireBolt)
 
 	record, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
@@ -104,6 +105,7 @@ func TestSaveJournalCurrentSchemaRoundTripsCombatLoadout(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	snapshot := testSnapshot()
 	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.Cleave, skillcatalog.RapidShot, skillcatalog.Meteor)
+	snapshot.LearnedSkills = mustLearnedSet(t, skillcatalog.Cleave, skillcatalog.RapidShot, skillcatalog.Meteor)
 	intent := SaveIntent{IntentID: 1, Identity: trusted(t, "character:journal-loadout"), Snapshot: snapshot}
 	record, err := journal.Append(intent, 0)
 	if err != nil { t.Fatal(err) }

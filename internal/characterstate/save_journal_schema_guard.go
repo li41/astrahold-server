@@ -8,7 +8,9 @@ import (
 )
 
 // UnmarshalJSON keeps save-journal schema boundaries fail-closed before legacy
-// migration can discard fields that did not exist in that schema version.
+// migration can discard fields that did not exist in that schema version. After
+// those guards pass, the loadout-only schema is normalized in memory to the
+// learned-skill schema using only skills that were already configured in combat.
 func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	type wireAlias saveJournalWireRecord
 
@@ -30,6 +32,11 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	}
 	if decoded.SchemaVersion < LearnedSkillsSaveJournalSchemaVersion && len(decoded.Snapshot.LearnedSkills) != 0 {
 		return fmt.Errorf("learned skills require save journal schema %d", LearnedSkillsSaveJournalSchemaVersion)
+	}
+
+	if decoded.SchemaVersion == LoadoutSaveJournalSchemaVersion {
+		decoded.Snapshot.LearnedSkills = append([]string(nil), decoded.Snapshot.CombatLoadout...)
+		decoded.SchemaVersion = LearnedSkillsSaveJournalSchemaVersion
 	}
 
 	*wire = saveJournalWireRecord(decoded)
