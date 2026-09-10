@@ -116,6 +116,10 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterNotFound})
 		return
 	}
+	if state.Defeated {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterDefeated})
+		return
+	}
 	inv := r.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
