@@ -20,6 +20,8 @@ const (
 	ScenarioDistributed   Scenario = "distributed"
 	ScenarioCrowd         Scenario = "crowd"
 	ScenarioTeleportChurn Scenario = "teleport-churn"
+
+	s3e9MixedMovementLeg = 250 * time.Millisecond
 )
 
 var (
@@ -167,18 +169,20 @@ func validateTeleportChurnLayout(layout scenarioLayout, totalClients int) error 
 
 func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gameplayworld.BoundsXZ) {
 	ground := layout.ground.Bounds
-	// Two deterministic ground clusters remain independent of blockers and presentation.
-	// On current castle-sandbox their nearest box corners are more than 64m apart.
+	// Keep both deterministic clusters well inside authored ground. S3-E.9 drives
+	// bounded ClientMoveInput around these boxes; the inset prevents the load
+	// fixture itself from manufacturing boundary corrections or village collisions.
+	// The nearest cluster corners remain more than the 64m AOI radius apart.
 	return gameplayworld.BoundsXZ{
-		MinX: ground.MinX + 2,
-		MaxX: ground.MinX + 14,
-		MinZ: ground.MinZ + 2,
-		MaxZ: ground.MinZ + 14,
+		MinX: ground.MinX + 11,
+		MaxX: ground.MinX + 23,
+		MinZ: ground.MinZ + 10,
+		MaxZ: ground.MinZ + 22,
 	}, gameplayworld.BoundsXZ{
 		MinX: ground.MaxX - 24,
 		MaxX: ground.MaxX - 12,
-		MinZ: ground.MaxZ - 18,
-		MaxZ: ground.MaxZ - 6,
+		MinZ: ground.MaxZ - 25,
+		MaxZ: ground.MaxZ - 13,
 	}
 }
 
@@ -236,6 +240,11 @@ func distributedMovementDirection(entityID world.EntityID, phase int) (float32, 
 	return direction[0], direction[1]
 }
 
+func s3e9MixedMovementDirection(entityID world.EntityID, elapsed time.Duration) (float32, float32) {
+	phase := int(elapsed / s3e9MixedMovementLeg)
+	return distributedMovementDirection(entityID, phase)
+}
+
 // MovementDirection 回傳 deterministic input pattern，避免 Load Lab 本身使用大量 RNG。
 func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.Duration) (float32, float32) {
 	phase := int(elapsed / (2 * time.Second))
@@ -246,7 +255,9 @@ func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.
 		if !s3e9MixedMovementEnabled || S3E9MixedStationaryEntity(entityID) {
 			return 0, 0
 		}
-		return distributedMovementDirection(entityID, phase)
+		// Mixed soak needs real ClientMoveInput and AOI churn, not repeated world
+		// boundary corrections. Eight short compass legs form a bounded 2s cycle.
+		return s3e9MixedMovementDirection(entityID, elapsed)
 	default:
 		return distributedMovementDirection(entityID, phase)
 	}
