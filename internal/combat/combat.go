@@ -413,7 +413,14 @@ func cooldownTicks(seconds float32, delta time.Duration) uint64 {
 	if seconds <= 0 || delta <= 0 {
 		return 1
 	}
-	ticks := uint64(math.Ceil(float64(seconds) / delta.Seconds()))
+	// Action timing is authored at float32 precision. Keep the tick duration at the same
+	// precision while forming the ratio; promoting only seconds to float64 can turn exact
+	// authored boundaries such as 0.05s / 50ms into 1.0000000149 and ceil them to two ticks.
+	tickSeconds := float32(delta.Seconds())
+	if tickSeconds <= 0 {
+		return 1
+	}
+	ticks := uint64(math.Ceil(float64(seconds / tickSeconds)))
 	if ticks == 0 {
 		return 1
 	}
