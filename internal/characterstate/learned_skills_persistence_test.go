@@ -12,10 +12,10 @@ import (
 	"github.com/li41/astrahold-server/internal/skillcatalog"
 )
 
-func TestStoreV8RoundTripsLearnedSkills(t *testing.T) {
+func TestStoreCurrentRoundTripsLearnedSkills(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
-	identity := trusted(t, "character:learned-v8")
+	identity := trusted(t, "character:learned-v9")
 	snapshot := testSnapshot()
 	snapshot.LearnedSkills = mustLearnedSet(t,
 		skillcatalog.Haste,
@@ -27,12 +27,12 @@ func TestStoreV8RoundTripsLearnedSkills(t *testing.T) {
 
 	record, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if record.SchemaVersion != LearnedSkillsSchemaVersion || record.Snapshot.LearnedSkills != snapshot.LearnedSkills {
+	if record.SchemaVersion != SchemaVersion || record.Snapshot.LearnedSkills != snapshot.LearnedSkills {
 		t.Fatalf("record=%#v", record)
 	}
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.SchemaVersion != LearnedSkillsSchemaVersion || loaded.Snapshot.LearnedSkills != snapshot.LearnedSkills {
+	if loaded.SchemaVersion != SchemaVersion || loaded.Snapshot.LearnedSkills != snapshot.LearnedSkills {
 		t.Fatalf("loaded=%#v", loaded)
 	}
 

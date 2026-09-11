@@ -68,9 +68,9 @@ func (o *Outbox) Enqueue(identity characteridentity.Binding, snapshot Snapshot) 
 
 // EnqueueWithCompletion reserves a process-local completion transaction together with the save
 // intent. The reservation remains visible across journal Confirm, Store application and checkpoint
-// advancement so later save projections cannot erase a pending durable mutation.
+// advancement so transient compatibility metadata does not need to become durable character truth.
 // CompletionRequested is deliberately not part of the durable wire schema: after a process crash
-// there is no live runtime mutation waiting for an acknowledgement; reconnect restores Snapshot.
+// there is no live runtime mutation waiting for an acknowledgement.
 func (o *Outbox) EnqueueWithCompletion(identity characteridentity.Binding, snapshot Snapshot) (SaveIntent, error) {
 	return o.enqueue(identity, snapshot, true)
 }
@@ -154,22 +154,22 @@ func (o *Outbox) Confirm(intentID uint64) error {
 	return nil
 }
 
-// Complete publishes an already-durable intent to the world-owner completion lane. A slot was
-// reserved atomically with EnqueueWithCompletion. Callers must invoke it only after the durable
-// checkpoint advances.
+// Complete publishes an already-durable intent to the world-owner completion lane. Completion
+// metadata is process-local by design, so publish the original reserved transaction rather than
+// the canonicalized journal payload. This keeps legacy compatibility metadata out of durable state.
 func (o *Outbox) Complete(intent SaveIntent) {
 	if !intent.CompletionRequested {
 		return
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.completed = append(o.completed, intent)
+	reserved, ok := o.completionByCharacter[intent.Identity.ID]
+	if !ok || reserved.IntentID != intent.IntentID {
+		return
+	}
+	o.completed = append(o.completed, reserved)
 }
 
-// Completed returns immutable durable acknowledgements without releasing their reservations.
-// The world owner must apply or idempotently resolve each acknowledgement first, then call
-// ConfirmCompletion. If gameplay application fails, the transaction remains visible and future
-// save projections keep using its durable target rather than reverting the Store.
 func (o *Outbox) Completed(limit int) []SaveIntent {
 	o.mu.Lock()
 	defer o.mu.Unlock()

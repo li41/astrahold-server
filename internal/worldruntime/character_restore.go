@@ -85,12 +85,19 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
 		return ErrCharacterRestoreInvalid
 	}
-	if restore.SchemaVersion < characterstate.ClassSchemaVersion {
+	switch {
+	case restore.SchemaVersion < characterstate.ClassSchemaVersion:
 		if restore.ClassID != "" {
 			return ErrCharacterRestoreInvalid
 		}
-	} else if restore.ClassID != "" && !classid.IsCanonical(restore.ClassID) {
-		return ErrCharacterRestoreInvalid
+	case restore.SchemaVersion >= characterstate.ClasslessSchemaVersion:
+		if restore.ClassID != "" {
+			return ErrCharacterRestoreInvalid
+		}
+	default:
+		if restore.ClassID != "" && !classid.IsCanonical(restore.ClassID) {
+			return ErrCharacterRestoreInvalid
+		}
 	}
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
@@ -127,8 +134,6 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		}
 	}
 	if restore.Defeated {
-		// v2 introduced durable defeated-respawn truth; later schemas must not invalidate
-		// already-restorable defeated characters.
 		if restore.SchemaVersion < characterstate.RespawnSchemaVersion {
 			return ErrCharacterRestoreDefeatedUnsupported
 		}
