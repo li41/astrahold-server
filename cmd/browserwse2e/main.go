@@ -172,20 +172,23 @@ func main() {
 		if sessionID != 1 {
 			return browserws.TrustedE2EBootstrap{}, fmt.Errorf("browserwse2e supports exactly one session: %d", sessionID)
 		}
+		// This harness intentionally exercises the still-supported v27 class/resource Protocol.
+		// Use an explicit v8 compatibility fixture; schema v9 remains classless and normal
+		// durable Store restores never synthesize LegacyRuntimeClassID.
 		return browserws.TrustedE2EBootstrap{
 			Identity: trustedIdentity,
 			Restore: worldruntime.CharacterRestore{
-				SchemaVersion: characterstate.SchemaVersion,
-				CharacterID:   trustedIdentity.ID,
-				Revision:      1,
-				World:         worldIdentity,
-				ClassID:       classid.Shadowblade,
-				HP:            1000,
-				MaxHP:         1000,
-				MP:            100,
-				MaxMP:         100,
-				Transform:     world.Transform{Position: world.Position{Layer: 0}},
-				Inventory:     characterstate.InventoryState{Initialized: true},
+				SchemaVersion:        characterstate.LearnedSkillsSchemaVersion,
+				CharacterID:          trustedIdentity.ID,
+				Revision:             1,
+				World:                worldIdentity,
+				LegacyRuntimeClassID: classid.Shadowblade,
+				HP:                   1000,
+				MaxHP:                1000,
+				MP:                   100,
+				MaxMP:                100,
+				Transform:            world.Transform{Position: world.Position{Layer: 0}},
+				Inventory:            characterstate.InventoryState{Initialized: true},
 			},
 		}, nil
 	}
