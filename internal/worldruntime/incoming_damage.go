@@ -53,14 +53,13 @@ func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatal
 	if r == nil || targetID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
-	// Character identity is already authoritative entity ownership truth inside the world owner.
-	// Looking up the binding directly avoids rebuilding/sorting the entire Session registry for
-	// every incoming hit while preserving the same player-inventory semantics.
-	binding, ok := r.characterIdentities.binding(targetID)
-	if !ok || !binding.Valid() {
+	// Damage mitigation applies player equipment only while that entity has an active Session.
+	// Registry maintains this relation directly, avoiding the previous per-hit full List/sort/scan.
+	s, ok := r.sessions.GetByEntity(targetID)
+	if !ok || !s.CharacterIdentity.Valid() {
 		return equipmentcatalog.Definition{}, false
 	}
-	inv := r.inventories[binding.ID]
+	inv := r.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
 		return equipmentcatalog.Definition{}, false
 	}
