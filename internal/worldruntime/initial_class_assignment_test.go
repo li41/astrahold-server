@@ -27,8 +27,12 @@ func TestInitialClassAssignmentCommitsOnlyAfterProcessLocalCompletion(t *testing
 	state, ok := rt.characters.State(fence.EntityID)
 	if !ok || state.ClassID != "" { t.Fatalf("class mutated before completion state=%#v ok=%v", state, ok) }
 	pending := outbox.Pending(1)
-	if len(pending) != 1 || !pending[0].CompletionRequested || pending[0].Snapshot.ClassID != classid.Oathguard { t.Fatalf("pending=%#v", pending) }
+	if len(pending) != 1 || !pending[0].CompletionRequested { t.Fatalf("pending=%#v", pending) }
 	intent := pending[0]
+	transaction, ok := rt.initialClassSelectionFeedback[intent.IntentID]
+	if !ok || transaction.target != classid.Oathguard || transaction.clientActionSequence != 0 || transaction.ownership != fence {
+		t.Fatalf("transaction=%#v ok=%v", transaction, ok)
+	}
 	if reserved, ok := outbox.CompletionForCharacter(fence.CharacterID); !ok || reserved != intent { t.Fatalf("reservation=%#v ok=%v", reserved, ok) }
 
 	if err := rt.EnqueueFencedInitialClassAssignment(fence, classid.Breaker); err != nil { t.Fatal(err) }
@@ -37,10 +41,8 @@ func TestInitialClassAssignmentCommitsOnlyAfterProcessLocalCompletion(t *testing
 	if state, _ := rt.characters.State(fence.EntityID); state.ClassID != "" { t.Fatalf("duplicate mutated class=%q", state.ClassID) }
 
 	_, projected, ok := rt.captureCharacterStateSnapshot(fence.SessionID, fence.EntityID, &StepReport{Tick: 3})
-	if !ok || projected.ClassID != "" { t.Fatalf("classless save projection=%#v ok=%v", projected, ok) }
+	if !ok || projected != intent.Snapshot { t.Fatalf("classless save projection=%#v intent=%#v ok=%v", projected, intent.Snapshot, ok) }
 
-	// The legacy v27 target stays only in the process-local completion reservation. Durable
-	// character snapshots are classless and therefore never project this target.
 	if err := outbox.Confirm(intent.IntentID); err != nil { t.Fatal(err) }
 	outbox.Complete(intent)
 	if state, _ := rt.characters.State(fence.EntityID); state.ClassID != "" { t.Fatalf("worker directly mutated gameplay class=%q", state.ClassID) }
@@ -51,6 +53,7 @@ func TestInitialClassAssignmentCommitsOnlyAfterProcessLocalCompletion(t *testing
 	if !ok || state.ClassID != classid.Oathguard { t.Fatalf("completed state=%#v ok=%v", state, ok) }
 	if outbox.CompletionDepth() != 0 { t.Fatalf("completion depth=%d", outbox.CompletionDepth()) }
 	if _, ok := outbox.CompletionForCharacter(fence.CharacterID); ok { t.Fatal("completed assignment retained transaction reservation") }
+	if _, ok := rt.initialClassSelectionFeedback[intent.IntentID]; ok { t.Fatal("completed assignment retained process-local target") }
 
 	if err := rt.EnqueueFencedInitialClassAssignment(fence, classid.Breaker); err != nil { t.Fatal(err) }
 	report = rt.Step(5, 50*time.Millisecond)
@@ -77,20 +80,21 @@ func TestInitialClassCompletionAfterLeaveDoesNotPersistClass(t *testing.T) {
 	if err := rt.EnqueueFencedInitialClassAssignment(fence, classid.Shadowblade); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("prepare errors=%#v", report.CommandErrors) }
 	intent := outbox.Pending(1)[0]
+	transaction, ok := rt.initialClassSelectionFeedback[intent.IntentID]
+	if !ok || transaction.target != classid.Shadowblade { t.Fatalf("transaction=%#v ok=%v", transaction, ok) }
 
 	if err := rt.EnqueueFencedLeave(fence); err != nil { t.Fatal(err) }
 	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("leave errors=%#v", report.CommandErrors) }
 	if _, ok := rt.characters.State(fence.EntityID); ok { t.Fatal("leave kept character state active") }
 	pending := outbox.Pending(0)
-	if len(pending) != 2 || pending[0].Snapshot.ClassID != classid.Shadowblade || pending[1].Snapshot.ClassID != "" {
-		t.Fatalf("pending completion/leave intents=%#v", pending)
-	}
+	if len(pending) != 2 { t.Fatalf("pending completion/leave intents=%#v", pending) }
 
 	if err := outbox.Confirm(intent.IntentID); err != nil { t.Fatal(err) }
 	outbox.Complete(intent)
 	report := rt.Step(4, 50*time.Millisecond)
 	if len(report.CommandErrors) != 0 { t.Fatalf("offline completion errors=%#v", report.CommandErrors) }
 	if outbox.CompletionDepth() != 0 { t.Fatalf("offline completion depth=%d", outbox.CompletionDepth()) }
+	if _, ok := rt.initialClassSelectionFeedback[intent.IntentID]; ok { t.Fatal("offline completion retained process-local target") }
 	if _, ok := rt.world.Entity(fence.EntityID); ok { t.Fatal("offline completion respawned world entity") }
 	if _, ok := rt.characters.State(fence.EntityID); ok { t.Fatal("offline completion recreated character state") }
 }
