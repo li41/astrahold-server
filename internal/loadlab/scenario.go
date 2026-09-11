@@ -21,7 +21,7 @@ const (
 	ScenarioCrowd         Scenario = "crowd"
 	ScenarioTeleportChurn Scenario = "teleport-churn"
 
-	s3e9MixedMovementLeg = 250 * time.Millisecond
+	s3e9MixedPulseLeg = 2 * time.Second
 )
 
 var (
@@ -169,20 +169,18 @@ func validateTeleportChurnLayout(layout scenarioLayout, totalClients int) error 
 
 func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gameplayworld.BoundsXZ) {
 	ground := layout.ground.Bounds
-	// Keep both deterministic clusters well inside authored ground. S3-E.9 drives
-	// bounded ClientMoveInput around these boxes; the inset prevents the load
-	// fixture itself from manufacturing boundary corrections or village collisions.
-	// The nearest cluster corners remain more than the 64m AOI radius apart.
+	// Keep the S3-E.8/S3-E.7 baseline topology independent from S3-E.9 movement.
+	// On current ground the nearest box corners remain more than the 64m AOI radius apart.
 	return gameplayworld.BoundsXZ{
-		MinX: ground.MinX + 11,
-		MaxX: ground.MinX + 23,
-		MinZ: ground.MinZ + 10,
-		MaxZ: ground.MinZ + 22,
+		MinX: ground.MinX + 2,
+		MaxX: ground.MinX + 14,
+		MinZ: ground.MinZ + 2,
+		MaxZ: ground.MinZ + 14,
 	}, gameplayworld.BoundsXZ{
 		MinX: ground.MaxX - 24,
 		MaxX: ground.MaxX - 12,
-		MinZ: ground.MaxZ - 25,
-		MaxZ: ground.MaxZ - 13,
+		MinZ: ground.MaxZ - 18,
+		MaxZ: ground.MaxZ - 6,
 	}
 }
 
@@ -240,9 +238,40 @@ func distributedMovementDirection(entityID world.EntityID, phase int) (float32, 
 	return direction[0], direction[1]
 }
 
-func s3e9MixedMovementDirection(entityID world.EntityID, elapsed time.Duration) (float32, float32) {
-	phase := int(elapsed / s3e9MixedMovementLeg)
-	return distributedMovementDirection(entityID, phase)
+func s3e9EntityOnWestAfterTeleport(entityID world.EntityID, totalClients int) (bool, bool) {
+	if totalClients < 4 || totalClients%4 != 0 || entityID == 0 || uint64(entityID) > uint64(totalClients) {
+		return false, false
+	}
+	index := int(uint64(entityID) - 1)
+	groupSize := totalClients / 2
+	localIndex := index % groupSize
+	west := index < groupSize
+	if localIndex < groupSize/2 {
+		west = !west
+	}
+	return west, true
+}
+
+// s3e9MixedPulseDirection drives a bounded center-and-return pulse after the authoritative
+// round-1 teleport. It creates real AOI churn without walking the old edge clusters into
+// ground bounds or starter-village blockers. Hot combat entities remain stationary.
+func s3e9MixedPulseDirection(entityID world.EntityID, totalClients int, activeElapsed time.Duration) (float32, float32) {
+	if S3E9MixedStationaryEntity(entityID) {
+		return 0, 0
+	}
+	west, ok := s3e9EntityOnWestAfterTeleport(entityID, totalClients)
+	if !ok {
+		return 0, 0
+	}
+	const diagonal = float32(0.70710677)
+	dx, dz := diagonal, diagonal
+	if !west {
+		dx, dz = -diagonal, -diagonal
+	}
+	if int(activeElapsed/s3e9MixedPulseLeg)%2 == 1 {
+		dx, dz = -dx, -dz
+	}
+	return dx, dz
 }
 
 // MovementDirection 回傳 deterministic input pattern，避免 Load Lab 本身使用大量 RNG。
@@ -255,9 +284,11 @@ func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.
 		if !s3e9MixedMovementEnabled || S3E9MixedStationaryEntity(entityID) {
 			return 0, 0
 		}
-		// Mixed soak needs real ClientMoveInput and AOI churn, not repeated world
-		// boundary corrections. Eight short compass legs form a bounded 2s cycle.
-		return s3e9MixedMovementDirection(entityID, elapsed)
+		activeElapsed, clients, ok := s3e9MixedMovementClock()
+		if !ok {
+			return 0, 0
+		}
+		return s3e9MixedPulseDirection(entityID, clients, activeElapsed)
 	default:
 		return distributedMovementDirection(entityID, phase)
 	}

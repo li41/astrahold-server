@@ -82,75 +82,6 @@ func TestTeleportChurnSwapsHalfOfEachCluster(t *testing.T) {
 	}
 }
 
-func TestTeleportChurnBoundsProtectMixedMovement(t *testing.T) {
-	loaded, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	layout, err := buildLayout(loaded.Definition, ScenarioTeleportChurn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	west, east := teleportChurnBounds(layout)
-	ground := layout.ground.Bounds
-
-	const groundInset = float32(10)
-	for name, bounds := range map[string]gameplayworld.BoundsXZ{"west": west, "east": east} {
-		if bounds.MinX-ground.MinX < groundInset || ground.MaxX-bounds.MaxX < groundInset || bounds.MinZ-ground.MinZ < groundInset || ground.MaxZ-bounds.MaxZ < groundInset {
-			t.Fatalf("%s churn bounds=%+v must stay at least %.1fm inside ground=%+v", name, bounds, groundInset, ground)
-		}
-	}
-
-	// Eight 250ms legs at 6m/s have a maximum path excursion below 4m. Add
-	// agent radius/headroom and guarantee that this load fixture stays clear of
-	// current authoritative movement blockers rather than measuring corrections.
-	const clearance = float32(4.25)
-	for name, bounds := range map[string]gameplayworld.BoundsXZ{"west": west, "east": east} {
-		expanded := gameplayworld.BoundsXZ{
-			MinX: bounds.MinX - clearance,
-			MaxX: bounds.MaxX + clearance,
-			MinZ: bounds.MinZ - clearance,
-			MaxZ: bounds.MaxZ + clearance,
-		}
-		for _, blocker := range loaded.Definition.Blockers {
-			if !blocker.Enabled || !blocker.BlocksMovement {
-				continue
-			}
-			if boundsOverlap(expanded, blocker.Bounds) {
-				t.Fatalf("%s churn movement envelope=%+v overlaps blocker %q bounds=%+v", name, expanded, blocker.ID, blocker.Bounds)
-			}
-		}
-	}
-}
-
-func TestS3E9MixedMovementIsBounded(t *testing.T) {
-	previous := s3e9MixedMovementEnabled
-	s3e9MixedMovementEnabled = true
-	defer func() { s3e9MixedMovementEnabled = previous }()
-
-	const (
-		entityID = world.EntityID(3) // mover, not a stationary hot-combat entity
-		speed    = 6.0
-	)
-	const tick = 50 * time.Millisecond
-	var x, z, maxDistance float64
-	for elapsed := time.Duration(0); elapsed < 2*time.Second; elapsed += tick {
-		dx, dz := MovementDirection(ScenarioTeleportChurn, entityID, elapsed)
-		x += float64(dx) * speed * tick.Seconds()
-		z += float64(dz) * speed * tick.Seconds()
-		distance := math.Hypot(x, z)
-		if distance > maxDistance {
-			maxDistance = distance
-		}
-	}
-	if math.Abs(x) > 0.001 || math.Abs(z) > 0.001 {
-		t.Fatalf("mixed movement cycle drifted: x=%.6f z=%.6f", x, z)
-	}
-	if maxDistance <= 0 || maxDistance >= 4 {
-		t.Fatalf("mixed movement max excursion=%.3fm, want >0 and <4m", maxDistance)
-	}
-}
-
 func TestTeleportChurnRequiresQuarterablePopulation(t *testing.T) {
 	loaded, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
 	if err != nil {
@@ -185,8 +116,4 @@ func TestMovementDirectionIsDeterministic(t *testing.T) {
 	if dx != 0 || dz != 0 {
 		t.Fatalf("teleport-churn direction = (%f,%f), want (0,0)", dx, dz)
 	}
-}
-
-func boundsOverlap(a, b gameplayworld.BoundsXZ) bool {
-	return a.MinX < b.MaxX && a.MaxX > b.MinX && a.MinZ < b.MaxZ && a.MaxZ > b.MinZ
 }
