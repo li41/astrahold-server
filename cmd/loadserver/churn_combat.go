@@ -14,13 +14,18 @@ import (
 	"github.com/li41/astrahold-server/internal/worldruntime"
 )
 
+const (
+	loadlabCombatActionsPerTick = 16
+	loadlabCombatBatchInterval  = 50 * time.Millisecond
+)
+
 var (
-	churnCombatPairsPerGroup            *int
-	s3e9MixedGameplayDuration           *time.Duration
-	s3e9MixedGameplayWaveInterval       *time.Duration
-	s3e9MixedGameplayDynamicInterval    *time.Duration
-	s3e9MixedGameplayActionID           *string
-	s3e9MixedGameplayDynamicBlockerID   string
+	churnCombatPairsPerGroup          *int
+	s3e9MixedGameplayDuration         *time.Duration
+	s3e9MixedGameplayWaveInterval     *time.Duration
+	s3e9MixedGameplayDynamicInterval  *time.Duration
+	s3e9MixedGameplayActionID         *string
+	s3e9MixedGameplayDynamicBlockerID string
 )
 
 // bindChurnCombatFlags keeps load-test-only CLI registration explicit from main.
@@ -79,18 +84,8 @@ type churnCombatMetrics struct {
 }
 
 func enqueueChurnCombatActions(runtime *worldruntime.Runtime, round int, pairs []loadlab.EntityCombatPair) error {
-	for _, pair := range pairs {
-		action := protocol.ClientUseAction{
-			ActionID:   "basic-attack",
-			TargetKind: protocol.ActionTargetEntity,
-			TargetID:   strconv.FormatUint(uint64(pair.TargetID), 10),
-		}
-		// Load Lab 的 tcpudp Server 以同一 atomic order 配發 SessionID / EntityID，
-		// 因此 deterministic player IDs 可直接對應 SessionID；每輪 round number 也是
-		// 每個 actor 嚴格遞增的 action sequence。
-		if err := runtime.EnqueueUseAction(session.ID(pair.ActorID), uint32(round), action); err != nil {
-			return fmt.Errorf("enqueue churn combat actor=%d target=%d round=%d: %w", pair.ActorID, pair.TargetID, round, err)
-		}
+	if err := enqueueCombatPairsPaced(runtime, uint32(round), "basic-attack", pairs, loadlabCombatActionsPerTick, loadlabCombatBatchInterval); err != nil {
+		return fmt.Errorf("enqueue churn combat round=%d: %w", round, err)
 	}
 
 	if round == 1 && s3e9MixedGameplayDuration != nil && *s3e9MixedGameplayDuration > 0 {
@@ -113,6 +108,35 @@ func enqueueChurnCombatActions(runtime *worldruntime.Runtime, round int, pairs [
 	return nil
 }
 
+func enqueueCombatPairsPaced(runtime *worldruntime.Runtime, sequence uint32, actionID string, pairs []loadlab.EntityCombatPair, batchSize int, batchInterval time.Duration) error {
+	if batchSize <= 0 {
+		return fmt.Errorf("loadlab: combat batch size must be > 0")
+	}
+	for start := 0; start < len(pairs); start += batchSize {
+		end := start + batchSize
+		if end > len(pairs) {
+			end = len(pairs)
+		}
+		for _, pair := range pairs[start:end] {
+			action := protocol.ClientUseAction{
+				ActionID:   actionID,
+				TargetKind: protocol.ActionTargetEntity,
+				TargetID:   strconv.FormatUint(uint64(pair.TargetID), 10),
+			}
+			// Load Lab 的 tcpudp Server 以同一 atomic order 配發 SessionID / EntityID，
+			// 因此 deterministic player IDs 可直接對應 SessionID。所有 mutation 仍
+			// 透過 Runtime command queue，分批只避免壓測器人工製造單 tick burst。
+			if err := runtime.EnqueueUseAction(session.ID(pair.ActorID), sequence, action); err != nil {
+				return fmt.Errorf("actor=%d target=%d sequence=%d: %w", pair.ActorID, pair.TargetID, sequence, err)
+			}
+		}
+		if end < len(pairs) && batchInterval > 0 {
+			time.Sleep(batchInterval)
+		}
+	}
+	return nil
+}
+
 func validateS3E9MixedGameplayConfig() error {
 	if s3e9MixedGameplayDuration == nil || s3e9MixedGameplayWaveInterval == nil || s3e9MixedGameplayDynamicInterval == nil || s3e9MixedGameplayActionID == nil {
 		return fmt.Errorf("loadlab: S3-E.9 mixed gameplay flags are not bound")
@@ -126,6 +150,9 @@ func validateS3E9MixedGameplayConfig() error {
 	if *s3e9MixedGameplayDynamicInterval%*s3e9MixedGameplayWaveInterval != 0 {
 		return fmt.Errorf("loadlab: S3-E.9 dynamic interval must be a multiple of wave interval")
 	}
+	if *s3e9MixedGameplayWaveInterval < loadlabCombatBatchInterval {
+		return fmt.Errorf("loadlab: S3-E.9 wave interval must be >= combat batch interval")
+	}
 	if *s3e9MixedGameplayActionID == "" {
 		return fmt.Errorf("loadlab: S3-E.9 action ID is required")
 	}
@@ -136,28 +163,27 @@ func validateS3E9MixedGameplayConfig() error {
 }
 
 func runS3E9MixedGameplay(runtime *worldruntime.Runtime, round int, hotPairs []loadlab.EntityCombatPair, waves int) {
-	ticker := time.NewTicker(*s3e9MixedGameplayWaveInterval)
-	defer ticker.Stop()
 	dynamicEvery := int(*s3e9MixedGameplayDynamicInterval / *s3e9MixedGameplayWaveInterval)
+	batchesPerWave := int(*s3e9MixedGameplayWaveInterval / loadlabCombatBatchInterval)
+	if batchesPerWave < 1 {
+		batchesPerWave = 1
+	}
+	batchSize := (len(hotPairs) + batchesPerWave - 1) / batchesPerWave
 	blockerEnabled := true
 	for wave := 1; wave <= waves; wave++ {
-		<-ticker.C
+		waveStarted := time.Now()
 		sequence := uint32(round + wave)
-		for _, pair := range hotPairs {
-			action := protocol.ClientUseAction{
-				ActionID:   *s3e9MixedGameplayActionID,
-				TargetKind: protocol.ActionTargetEntity,
-				TargetID:   strconv.FormatUint(uint64(pair.TargetID), 10),
-			}
-			if err := runtime.EnqueueUseAction(session.ID(pair.ActorID), sequence, action); err != nil {
-				log.Printf("S3-E.9 sustained action enqueue failed: wave=%d actor=%d target=%d err=%v", wave, pair.ActorID, pair.TargetID, err)
-			}
+		if err := enqueueCombatPairsPaced(runtime, sequence, *s3e9MixedGameplayActionID, hotPairs, batchSize, loadlabCombatBatchInterval); err != nil {
+			log.Printf("S3-E.9 sustained action enqueue failed: wave=%d err=%v", wave, err)
 		}
 		if wave%dynamicEvery == 0 {
 			blockerEnabled = !blockerEnabled
 			if err := runtime.EnqueueSetBlocker(s3e9MixedGameplayDynamicBlockerID, blockerEnabled); err != nil {
 				log.Printf("S3-E.9 dynamic-world enqueue failed: wave=%d blocker=%s enabled=%t err=%v", wave, s3e9MixedGameplayDynamicBlockerID, blockerEnabled, err)
 			}
+		}
+		if remaining := *s3e9MixedGameplayWaveInterval - time.Since(waveStarted); remaining > 0 {
+			time.Sleep(remaining)
 		}
 	}
 	if !blockerEnabled {
