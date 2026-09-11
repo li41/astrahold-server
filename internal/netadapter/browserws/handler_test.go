@@ -11,7 +11,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -153,13 +152,13 @@ func TestHandlerWelcomeSpawnAndRealtimeIngress(t *testing.T) {
 	}
 }
 
-func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndRestore(t *testing.T) {
+func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndClasslessRestore(t *testing.T) {
 	t.Parallel()
 
 	runtime := newFakeRuntime()
 	config := DefaultConfig()
 	config.WorldIdentity = testWorldIdentity()
-	identity, err := characteridentity.NewTrusted("e2e-shadowblade")
+	identity, err := characteridentity.NewTrusted("e2e-classless")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +170,6 @@ func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndRestore(t *testing.
 				CharacterID:   identity.ID,
 				Revision:      1,
 				World:         config.WorldIdentity,
-				ClassID:       classid.Shadowblade,
 				HP:            1000,
 				MaxHP:         1000,
 				MP:            100,
@@ -198,7 +196,7 @@ func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndRestore(t *testing.
 		if join.Session.CharacterIdentity != identity {
 			t.Fatalf("identity = %#v", join.Session.CharacterIdentity)
 		}
-		if join.Restore == nil || join.Restore.CharacterID != identity.ID || join.Restore.ClassID != classid.Shadowblade {
+		if join.Restore == nil || join.Restore.CharacterID != identity.ID || join.Restore.ClassID != "" {
 			t.Fatalf("restore = %#v", join.Restore)
 		}
 	case <-ctx.Done():
