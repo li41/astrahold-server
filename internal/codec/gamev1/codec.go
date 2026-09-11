@@ -97,11 +97,7 @@ func (c Codec) AppendMarshal(dst []byte, message protocol.Message) ([]byte, erro
 		}
 		return appendCorrection(dst, *m), nil
 	default:
-		payload, err := c.json.Marshal(message)
-		if err != nil {
-			return dst, err
-		}
-		return append(dst, payload...), nil
+		return c.json.AppendMarshal(dst, message)
 	}
 }
 
