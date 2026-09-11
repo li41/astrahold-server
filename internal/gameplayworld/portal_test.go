@@ -7,20 +7,20 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestCastleSandboxWorldIsValid(t *testing.T) {
+func TestCurrentStarterWorldIsValid(t *testing.T) {
 	loaded, err := LoadFile("../../worlds/castle-sandbox/gameplay.json")
 	if err != nil {
 		t.Fatalf("LoadFile(castle-sandbox) error = %v", err)
 	}
-	if loaded.Definition.Revision != "s5b-commercial-mpv-002" {
-		t.Fatalf("revision = %q, want s5b-commercial-mpv-002", loaded.Definition.Revision)
+	if loaded.Definition.Revision != "s5b-commercial-mpv-003" {
+		t.Fatalf("revision = %q, want s5b-commercial-mpv-003", loaded.Definition.Revision)
 	}
-	if len(loaded.Definition.Surfaces) != 7 || len(loaded.Definition.Portals) != 4 || len(loaded.Definition.Blockers) != 27 || len(loaded.Definition.Gates) != 1 {
-		t.Fatalf("unexpected castle topology: surfaces=%d portals=%d blockers=%d gates=%d", len(loaded.Definition.Surfaces), len(loaded.Definition.Portals), len(loaded.Definition.Blockers), len(loaded.Definition.Gates))
+	if len(loaded.Definition.Surfaces) != 1 || len(loaded.Definition.Portals) != 0 || len(loaded.Definition.Blockers) != 10 || len(loaded.Definition.Gates) != 0 {
+		t.Fatalf("unexpected starter world topology: surfaces=%d portals=%d blockers=%d gates=%d", len(loaded.Definition.Surfaces), len(loaded.Definition.Portals), len(loaded.Definition.Blockers), len(loaded.Definition.Gates))
 	}
-	gate := loaded.Definition.Gates[0]
-	if gate.ID != "main-gate" || gate.BlockerID != "main-gate" || gate.MaxHP != 1000 {
-		t.Fatalf("unexpected main gate: %+v", gate)
+	ground := loaded.Definition.Surfaces[0]
+	if ground.ID != "ground" || ground.Layer != 0 {
+		t.Fatalf("unexpected ground surface: %+v", ground)
 	}
 }
 
