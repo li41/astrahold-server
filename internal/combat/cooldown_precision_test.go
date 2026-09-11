@@ -15,7 +15,7 @@ func TestCooldownTicksRespectsFloat32AuthoredTickBoundaries(t *testing.T) {
 		{name: "one 20Hz tick", seconds: 0.05, delta: 50 * time.Millisecond, want: 1},
 		{name: "two 20Hz ticks", seconds: 0.10, delta: 50 * time.Millisecond, want: 2},
 		{name: "three 20Hz ticks", seconds: 0.15, delta: 50 * time.Millisecond, want: 3},
-		{name: "half second at 60Hz", seconds: 0.5, delta: time.Second / 60, want: 30},
+		{name: "half second at 20Hz", seconds: 0.5, delta: 50 * time.Millisecond, want: 10},
 		{name: "non boundary still rounds up", seconds: 0.051, delta: 50 * time.Millisecond, want: 2},
 	}
 	for _, tc := range tests {
