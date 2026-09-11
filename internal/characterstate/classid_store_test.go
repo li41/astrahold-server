@@ -11,29 +11,29 @@ import (
 	"github.com/li41/astrahold-server/internal/classid"
 )
 
-func TestStoreV9RetiresDurableClassID(t *testing.T) {
+func TestStoreV9SnapshotIsClassless(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:classless-v9")
 	snapshot := testSnapshot()
-	snapshot.ClassID = classid.Oathguard // transient legacy compatibility input
 	record, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if record.SchemaVersion != ClasslessSchemaVersion || record.Snapshot.ClassID != "" { t.Fatalf("record=%#v", record) }
+	if record.SchemaVersion != ClasslessSchemaVersion || record.Snapshot != snapshot { t.Fatalf("record=%#v", record) }
 	data, err := os.ReadFile(store.recordPath(identity.ID)); if err != nil { t.Fatal(err) }
 	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("v9 durable record still contains class_id: %s", data) }
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.Snapshot.ClassID != "" { t.Fatalf("loaded ClassID=%q", loaded.Snapshot.ClassID) }
+	if loaded.Snapshot != snapshot { t.Fatalf("loaded snapshot=%#v want=%#v", loaded.Snapshot, snapshot) }
 }
 
 func TestStoreV8ValidatesThenDiscardsLegacyClassID(t *testing.T) {
 	store, err := Open(t.TempDir()); if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:legacy-class-v8")
+	snapshot := testSnapshot()
 	writeClassIDStoreRecord(t, store, identity, LearnedSkillsSchemaVersion, string(classid.Breaker))
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.SchemaVersion != LearnedSkillsSchemaVersion || loaded.Snapshot.ClassID != "" { t.Fatalf("legacy loaded=%#v", loaded) }
+	if loaded.SchemaVersion != LearnedSkillsSchemaVersion || loaded.Snapshot != snapshot { t.Fatalf("legacy loaded=%#v", loaded) }
 }
 
 func TestStoreRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
@@ -50,13 +50,6 @@ func TestStoreRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
 			if _, _, err := store.Load(identity); !errors.Is(err, ErrCorruptRecord) { t.Fatalf("load err=%v", err) }
 		})
 	}
-}
-
-func TestStoreRejectsInvalidTransientClassIDOnSave(t *testing.T) {
-	store, err := Open(t.TempDir()); if err != nil { t.Fatal(err) }
-	identity := trusted(t, "character:class-invalid-save")
-	snapshot := testSnapshot(); snapshot.ClassID = classid.ID("class_oathguard ")
-	if _, err := store.Save(identity, 0, snapshot); !errors.Is(err, ErrInvalidSnapshot) { t.Fatalf("save err=%v", err) }
 }
 
 func writeClassIDStoreRecord(t *testing.T, store *Store, identity characteridentity.Binding, schema uint16, classID string) {
