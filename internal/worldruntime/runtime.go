@@ -214,7 +214,6 @@ type Runtime struct {
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
 	pendingClassMessages           map[session.ID][]protocol.Message
-	initialClassSelectionFeedback  map[uint64]initialClassSelectionFeedback
 	sessionInventoryPending        map[session.ID]struct{}
 	replication                    *replication.Service
 	replicationFrameBuilder        *simulation.ReplicationFrameBuilder
@@ -324,7 +323,6 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),
 		pendingClassMessages:           make(map[session.ID][]protocol.Message),
-		initialClassSelectionFeedback:  make(map[uint64]initialClassSelectionFeedback),
 		sessionInventoryPending:        make(map[session.ID]struct{}),
 		replication:                    replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),
