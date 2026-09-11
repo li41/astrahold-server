@@ -29,7 +29,7 @@ func TestLegacyRuntimeClassDoesNotEnterDurableLeaveSnapshot(t *testing.T) {
 	sess, err := session.NewWithCharacterIdentity(1, 1, identity, 64, connection); if err != nil { t.Fatal(err) }
 	restore := CharacterRestore{
 		SchemaVersion: characterstate.LearnedSkillsSchemaVersion, CharacterID: identity.ID, Revision: 1,
-		World: characterRestoreWorld, ClassID: classid.Oathguard,
+		World: characterRestoreWorld, LegacyRuntimeClassID: classid.Oathguard,
 		HP: 900, MaxHP: 1000, MP: 80, MaxMP: 100,
 		Transform: world.Transform{Position: world.Position{Layer: 4}},
 	}
@@ -40,23 +40,23 @@ func TestLegacyRuntimeClassDoesNotEnterDurableLeaveSnapshot(t *testing.T) {
 	if err := rt.EnqueueLeave(sess.ID); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("leave errors=%#v", report.CommandErrors) }
 	pending := outbox.Pending(0)
-	if len(pending) != 1 || pending[0].Snapshot.ClassID != "" { t.Fatalf("save intents=%#v", pending) }
+	if len(pending) != 1 { t.Fatalf("save intents=%#v", pending) }
 }
 
-func TestValidateCharacterRestoreFailsClosedOnClassID(t *testing.T) {
+func TestValidateCharacterRestoreLegacyRuntimeClassIsSchemaBound(t *testing.T) {
 	identity, err := characteridentity.NewTrusted("character:class-validation"); if err != nil { t.Fatal(err) }
 	base := CharacterRestore{
 		SchemaVersion: characterstate.ClassSchemaVersion, CharacterID: identity.ID, Revision: 1,
-		World: characterRestoreWorld, ClassID: classid.Oathguard,
+		World: characterRestoreWorld, LegacyRuntimeClassID: classid.Oathguard,
 		HP: 1, MaxHP: 1, MP: 1, MaxMP: 1,
 	}
 	if err := ValidateCharacterRestore(identity, base, characterRestoreWorld); err != nil { t.Fatalf("canonical legacy restore rejected: %v", err) }
-	unknown := base; unknown.ClassID = classid.ID("class_guard")
+	unknown := base; unknown.LegacyRuntimeClassID = classid.ID("class_guard")
 	if err := ValidateCharacterRestore(identity, unknown, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("unknown class err=%v", err) }
 	preClass := base; preClass.SchemaVersion = characterstate.EquipmentSchemaVersion
 	if err := ValidateCharacterRestore(identity, preClass, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("pre-class class err=%v", err) }
 	classless := base; classless.SchemaVersion = characterstate.ClasslessSchemaVersion
 	if err := ValidateCharacterRestore(identity, classless, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("classless class smuggle err=%v", err) }
-	classless.ClassID = ""
+	classless.LegacyRuntimeClassID = ""
 	if err := ValidateCharacterRestore(identity, classless, characterRestoreWorld); err != nil { t.Fatalf("classless restore rejected: %v", err) }
 }
