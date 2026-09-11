@@ -150,11 +150,6 @@ func (r *Runtime) applyInitialClassAssignment(name string, command initialClassA
 		}
 		return
 	}
-	if snapshot.ClassID != "" {
-		reject(ErrInitialClassAssignmentPending)
-		return
-	}
-	snapshot.ClassID = command.target
 	intent, err := r.characterStateOutbox.EnqueueWithCompletion(binding, snapshot)
 	if err != nil {
 		if errors.Is(err, characterstate.ErrSaveCompletionPending) {
@@ -166,12 +161,12 @@ func (r *Runtime) applyInitialClassAssignment(name string, command initialClassA
 		}
 		return
 	}
-	if command.protocolRequest {
-		r.initialClassSelectionFeedback[intent.IntentID] = initialClassSelectionFeedback{
-			ownership:            sourceOwnership,
-			clientActionSequence: command.sequence,
-			target:               command.target,
-		}
+	// The target and optional Protocol correlation are process-local transaction metadata.
+	// They never enter characterstate.Snapshot or the v9 durable schema.
+	r.initialClassSelectionFeedback[intent.IntentID] = initialClassSelectionFeedback{
+		ownership:            sourceOwnership,
+		clientActionSequence: command.sequence,
+		target:               command.target,
 	}
 	if report != nil {
 		report.Metrics.CharacterStateSaveIntentsEnqueued++
@@ -203,7 +198,7 @@ func initialClassAssignmentEquipmentAllowed(inv *inventory.Inventory, target cla
 // applyCharacterStateSaveCompletions is called only by Runtime.Step, before normal queued
 // gameplay commands. The persistence worker publishes an acknowledgement only after journal fsync,
 // Store application and checkpoint advancement. The world owner applies first, then releases the
-// completion transaction, so an invariant failure cannot erase the durable target via later saves.
+// process-local transaction so an invariant failure cannot lose its target metadata.
 func (r *Runtime) applyCharacterStateSaveCompletions(report *StepReport) {
 	if r.characterStateOutbox == nil {
 		return
@@ -213,7 +208,12 @@ func (r *Runtime) applyCharacterStateSaveCompletions(report *StepReport) {
 		limit = 1
 	}
 	for _, intent := range r.characterStateOutbox.Completed(limit) {
-		if err := r.applyDurableInitialClassAssignmentCompletion(intent); err != nil {
+		transaction, ok := r.initialClassSelectionFeedback[intent.IntentID]
+		if !ok || transaction.target == "" || !classid.IsCanonical(transaction.target) {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "complete_initial_class_assignment", Err: ErrInitialClassAssignmentCompletionInvalid})
+			return
+		}
+		if err := r.applyDurableInitialClassAssignmentCompletion(intent, transaction.target); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "complete_initial_class_assignment", Err: err})
 			return
 		}
@@ -224,25 +224,22 @@ func (r *Runtime) applyCharacterStateSaveCompletions(report *StepReport) {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "complete_initial_class_assignment", Err: err})
 			return
 		}
-		r.publishDurableInitialClassSelection(intent.IntentID, intent.Identity, intent.Snapshot.ClassID, report)
+		r.publishDurableInitialClassSelection(intent.IntentID, intent.Identity, transaction.target, report)
 		delete(r.initialClassSelectionFeedback, intent.IntentID)
 	}
 }
 
-func (r *Runtime) applyDurableInitialClassAssignmentCompletion(intent characterstate.SaveIntent) error {
-	if !intent.CompletionRequested || !intent.Identity.Valid() || intent.Identity.Assurance != characteridentity.AssuranceTrusted {
-		return ErrInitialClassAssignmentCompletionInvalid
-	}
-	target := intent.Snapshot.ClassID
-	if target == "" || !classid.IsCanonical(target) {
+func (r *Runtime) applyDurableInitialClassAssignmentCompletion(intent characterstate.SaveIntent, target classid.ID) error {
+	if !intent.CompletionRequested || !intent.Identity.Valid() || intent.Identity.Assurance != characteridentity.AssuranceTrusted || target == "" || !classid.IsCanonical(target) {
 		return ErrInitialClassAssignmentCompletionInvalid
 	}
 
 	ownership, err := r.characterIdentities.currentOwnership(intent.Identity)
 	if err != nil {
 		if errors.Is(err, ErrCharacterOwnershipNotActive) {
-			// The durable assignment already committed, but the character left before the world
-			// owner consumed the acknowledgement. Reconnect restores the Store's ClassID.
+			// The classless save barrier committed, but the character left before the world owner
+			// consumed the acknowledgement. There is no live profession state to mutate, and v9
+			// persistence intentionally does not restore this legacy runtime class on reconnect.
 			return nil
 		}
 		return err
@@ -255,7 +252,7 @@ func (r *Runtime) applyDurableInitialClassAssignmentCompletion(intent characters
 		return nil
 	}
 	if state.ClassID != "" {
-		return fmt.Errorf("%w: character=%s current=%s durable=%s", ErrInitialClassAssignmentCompletionInvalid, intent.Identity.ID, state.ClassID, target)
+		return fmt.Errorf("%w: character=%s current=%s target=%s", ErrInitialClassAssignmentCompletionInvalid, intent.Identity.ID, state.ClassID, target)
 	}
 	if !initialClassAssignmentEquipmentAllowed(r.inventories[intent.Identity.ID], target) {
 		return ErrInitialClassAssignmentEquipmentIllegal
