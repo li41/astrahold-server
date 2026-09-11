@@ -152,9 +152,17 @@ func (s *Session) NextOutboundSequence(delivery protocol.Delivery) uint32 {
 	}
 }
 
-type Registry struct{ sessions map[ID]*Session }
+type Registry struct {
+	sessions map[ID]*Session
+	byEntity map[world.EntityID]*Session
+}
 
-func NewRegistry() *Registry { return &Registry{sessions: make(map[ID]*Session)} }
+func NewRegistry() *Registry {
+	return &Registry{
+		sessions: make(map[ID]*Session),
+		byEntity: make(map[world.EntityID]*Session),
+	}
+}
 func (r *Registry) Add(s *Session) error {
 	if s == nil {
 		return ErrInvalidSession
@@ -163,6 +171,10 @@ func (r *Registry) Add(s *Session) error {
 		return ErrSessionExists
 	}
 	r.sessions[s.ID] = s
+	// Ownership transfer intentionally uses add-first semantics for a replacement Session
+	// sharing the same EntityID. Point lookups should therefore resolve the newest active
+	// registration; removing the old Session below is pointer-fenced so it cannot erase it.
+	r.byEntity[s.EntityID] = s
 	return nil
 }
 func (r *Registry) Remove(id ID) (*Session, error) {
@@ -171,9 +183,16 @@ func (r *Registry) Remove(id ID) (*Session, error) {
 		return nil, ErrSessionNotFound
 	}
 	delete(r.sessions, id)
+	if current, ok := r.byEntity[s.EntityID]; ok && current == s {
+		delete(r.byEntity, s.EntityID)
+	}
 	return s, nil
 }
 func (r *Registry) Get(id ID) (*Session, bool) { s, ok := r.sessions[id]; return s, ok }
+func (r *Registry) GetByEntity(entityID world.EntityID) (*Session, bool) {
+	s, ok := r.byEntity[entityID]
+	return s, ok
+}
 func (r *Registry) List() []*Session {
 	ids := make([]ID, 0, len(r.sessions))
 	for id := range r.sessions {
