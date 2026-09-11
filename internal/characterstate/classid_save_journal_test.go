@@ -11,20 +11,20 @@ import (
 	"github.com/li41/astrahold-server/internal/classid"
 )
 
-func TestSaveJournalV8RetiresDurableClassID(t *testing.T) {
+func TestSaveJournalV8SnapshotIsClassless(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "classless-saves.journal")
 	journal, err := OpenSaveJournal(path); if err != nil { t.Fatal(err) }
-	snapshot := testSnapshot(); snapshot.ClassID = classid.Breaker
+	snapshot := testSnapshot()
 	intent := SaveIntent{IntentID: 1, Identity: trusted(t, "character:journal-classless"), Snapshot: snapshot}
 	record, err := journal.Append(intent, 0); if err != nil { t.Fatal(err) }
-	if record.Intent.Snapshot.ClassID != "" { t.Fatalf("append returned durable ClassID=%q", record.Intent.Snapshot.ClassID) }
+	if record.Intent.Snapshot != snapshot { t.Fatalf("append snapshot=%#v want=%#v", record.Intent.Snapshot, snapshot) }
 	if err := journal.Close(); err != nil { t.Fatal(err) }
 	data, err := os.ReadFile(path); if err != nil { t.Fatal(err) }
 	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("v8 journal still contains class_id") }
 	reopened, err := OpenSaveJournal(path); if err != nil { t.Fatal(err) }
 	defer reopened.Close()
 	records, err := reopened.RecordsAfter(reopened.InitialCheckpoint(), 0); if err != nil { t.Fatal(err) }
-	if len(records) != 1 || records[0].RecordID != record.RecordID || records[0].Intent.Snapshot.ClassID != "" { t.Fatalf("records=%#v", records) }
+	if len(records) != 1 || records[0].RecordID != record.RecordID || records[0].Intent.Snapshot != snapshot { t.Fatalf("records=%#v", records) }
 }
 
 func TestSaveJournalV7ValidatesThenDiscardsLegacyClassID(t *testing.T) {
@@ -33,7 +33,7 @@ func TestSaveJournalV7ValidatesThenDiscardsLegacyClassID(t *testing.T) {
 	wire := saveJournalWireRecord{SchemaVersion: LearnedSkillsSaveJournalSchemaVersion, RecordID: 1, ExpectedRevision: 0, IntentID: 1, CharacterID: string(trusted(t, "character:journal-v7-class").ID), Snapshot: wireSnapshot}
 	payload, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 	_, _, intent, err := decodeSaveJournalRecord(payload); if err != nil { t.Fatal(err) }
-	if intent.Snapshot.ClassID != "" { t.Fatalf("legacy ClassID=%q want retired", intent.Snapshot.ClassID) }
+	if intent.Snapshot != snapshot { t.Fatalf("legacy snapshot=%#v want=%#v", intent.Snapshot, snapshot) }
 }
 
 func TestSaveJournalRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
@@ -50,12 +50,4 @@ func TestSaveJournalRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
 			if _, _, _, err := decodeSaveJournalRecord(payload); !errors.Is(err, ErrCorruptSaveJournal) { t.Fatalf("decode err=%v", err) }
 		})
 	}
-}
-
-func TestSaveJournalRejectsInvalidTransientClassIDBeforeAppend(t *testing.T) {
-	journal, err := OpenSaveJournal(filepath.Join(t.TempDir(), "invalid-class.journal")); if err != nil { t.Fatal(err) }
-	defer journal.Close()
-	snapshot := testSnapshot(); snapshot.ClassID = classid.ID("class_oathguard ")
-	_, err = journal.Append(SaveIntent{IntentID: 1, Identity: trusted(t, "character:journal-invalid-class"), Snapshot: snapshot}, 0)
-	if !errors.Is(err, ErrInvalidSnapshot) { t.Fatalf("append err=%v", err) }
 }
