@@ -18,7 +18,6 @@ on:
 
 jobs:
   mixed-gameplay-500:
-    if: startsWith(github.head_ref, 'agent/s3e9')
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
