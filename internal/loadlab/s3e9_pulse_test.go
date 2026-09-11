@@ -19,8 +19,8 @@ func TestS3E9MixedPulseUsesPostTeleportCluster(t *testing.T) {
 		t.Fatalf("teleported west mover direction=(%f,%f), want inward east (-diag,-diag)", dx, dz)
 	}
 
-	// Entity 253 starts in east group and is swapped to west.
-	dx, dz = s3e9MixedPulseDirection(world.EntityID(253), clients, 0)
+	// Entity 251 starts in east group, belongs to the moving cohort, and is swapped to west.
+	dx, dz = s3e9MixedPulseDirection(world.EntityID(251), clients, 0)
 	if dx != diagonal || dz != diagonal {
 		t.Fatalf("teleported east mover direction=(%f,%f), want inward west (+diag,+diag)", dx, dz)
 	}
