@@ -46,6 +46,7 @@ func main() {
 		allocProfilePrefix = flag.String("alloc-profile-prefix", "", "Optional steady-state allocation profile path prefix; writes <prefix>-before.pprof and <prefix>-after.pprof")
 		allocProfileRate   = flag.Int("alloc-profile-rate", 64*1024, "Allocation profiler sampling rate in bytes")
 	)
+	bindChurnCombatFlags(flag.CommandLine)
 	flag.Parse()
 
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
@@ -72,6 +73,9 @@ func main() {
 	loadedWorld, err := gameplayworld.LoadFile(*worldPath)
 	if err != nil {
 		log.Fatalf("load gameplay world %q: %v", *worldPath, err)
+	}
+	if err := configureS3E9DynamicStress(loadedWorld.Definition); err != nil {
+		log.Fatal(err)
 	}
 	loadedCombat, err := combat.LoadFile(*combatPath)
 	if err != nil {
