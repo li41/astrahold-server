@@ -6,7 +6,6 @@ import (
 
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/combat"
-	"github.com/li41/astrahold-server/internal/legacyclassgate"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
@@ -36,10 +35,6 @@ func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.
 	}
 	if actorState.Defeated {
 		r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), character.ErrCharacterDefeated, tick, report)
-		return
-	}
-	if err := legacyclassgate.Validate(intent.ActionID, actorState.ClassID); err != nil {
-		r.rejectClientAction(name, sourceSessionID, clientActionSequence, intent.ActorEntityID, intent.ActionID, protocol.ActionTargetKind(intent.Target.Kind), err, tick, report)
 		return
 	}
 

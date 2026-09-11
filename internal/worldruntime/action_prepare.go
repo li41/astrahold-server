@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/legacyclassgate"
 	"github.com/li41/astrahold-server/internal/session"
 )
 
@@ -60,6 +61,14 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 	}
 	if state.Defeated {
 		r.rejectClientAction(name, command.sessionID, command.sequence, s.EntityID, command.action.ActionID, command.action.TargetKind, character.ErrCharacterDefeated, tick, report)
+		return
+	}
+
+	// Fixed-class authorization survives only at the legacy v27 ClientUseAction compatibility
+	// boundary. Once converted to combat.Intent, the authoritative preparation/effect path is
+	// classless and can be reused by future SkillID and Server-owned action sources.
+	if err := legacyclassgate.Validate(command.action.ActionID, state.ClassID); err != nil {
+		r.rejectClientAction(name, command.sessionID, command.sequence, s.EntityID, command.action.ActionID, command.action.TargetKind, err, tick, report)
 		return
 	}
 
