@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	loadlabCombatActionsPerTick = 16
+	loadlabCombatActionsPerTick = 32
 	loadlabCombatBatchInterval  = 50 * time.Millisecond
 )
 
