@@ -20,6 +20,10 @@ const (
 	ScenarioDistributed   Scenario = "distributed"
 	ScenarioCrowd         Scenario = "crowd"
 	ScenarioTeleportChurn Scenario = "teleport-churn"
+
+	// ScenarioGateZerg is a source-compatibility alias for older load-tool callers.
+	// Its wire/CLI value is now "crowd"; the removed castle gate has no load authority.
+	ScenarioGateZerg Scenario = ScenarioCrowd
 )
 
 var (
