@@ -3,8 +3,6 @@ package characterstate
 import (
 	"errors"
 	"testing"
-
-	"github.com/li41/astrahold-server/internal/classid"
 )
 
 func TestSaveOutboxCompletionReservationSurvivesJournalConfirmUntilWorldConfirm(t *testing.T) {
@@ -12,10 +10,8 @@ func TestSaveOutboxCompletionReservationSurvivesJournalConfirmUntilWorldConfirm(
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := trusted(t, "character:class-completion")
-	snapshot := testSnapshot()
-	snapshot.ClassID = classid.Oathguard
-	intent, err := outbox.EnqueueWithCompletion(identity, snapshot)
+	identity := trusted(t, "character:completion")
+	intent, err := outbox.EnqueueWithCompletion(identity, testSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +21,7 @@ func TestSaveOutboxCompletionReservationSurvivesJournalConfirmUntilWorldConfirm(
 	if reserved, ok := outbox.CompletionForCharacter(identity.ID); !ok || reserved != intent {
 		t.Fatalf("reservation=%#v ok=%v", reserved, ok)
 	}
-	if _, err := outbox.EnqueueWithCompletion(identity, snapshot); !errors.Is(err, ErrSaveCompletionPending) {
+	if _, err := outbox.EnqueueWithCompletion(identity, testSnapshot()); !errors.Is(err, ErrSaveCompletionPending) {
 		t.Fatalf("duplicate completion err=%v", err)
 	}
 
@@ -65,14 +61,12 @@ func TestSaveOutboxCompletionConfirmIsOrderedAndNormalSaveDoesNotReserve(t *test
 	}
 	firstIdentity := trusted(t, "character:completion-first")
 	secondIdentity := trusted(t, "character:completion-second")
-	firstSnapshot := testSnapshot()
-	firstSnapshot.ClassID = classid.Ranger
-	secondSnapshot := testSnapshot()
-	secondSnapshot.ClassID = classid.Breaker
-	first, err := outbox.EnqueueWithCompletion(firstIdentity, firstSnapshot)
+	first, err := outbox.EnqueueWithCompletion(firstIdentity, testSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
+	secondSnapshot := testSnapshot()
+	secondSnapshot.HP--
 	second, err := outbox.EnqueueWithCompletion(secondIdentity, secondSnapshot)
 	if err != nil {
 		t.Fatal(err)
