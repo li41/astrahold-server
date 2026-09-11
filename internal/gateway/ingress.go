@@ -31,9 +31,6 @@ type PickupCommandSink interface {
 type ItemUseCommandSink interface {
 	EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error
 }
-type InitialClassSelectionCommandSink interface {
-	EnqueueInitialClassSelection(session.ID, uint32, protocol.ClientInitialClassSelection) error
-}
 type NPCCommandSink interface {
 	EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error
 }
@@ -54,6 +51,8 @@ func NewIngress(sink MoveCommandSink) *Ingress {
 }
 
 // Handle validates the client-owned message/delivery boundary before entering the bounded runtime queue.
+// Fixed-class selection is intentionally unsupported by the production ingress. The v27 wire type may
+// remain decodable for compatibility, but class/profession selection is no longer a gameplay command.
 func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error {
 	if sessionID == 0 || envelope.Sequence == 0 || envelope.Message == nil {
 		return ErrInvalidClientEnvelope
@@ -99,14 +98,6 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil || strings.TrimSpace(message.ItemArchetypeID) == "" { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueUseItem(sessionID, envelope.Sequence, *message)
-	case protocol.ClientInitialClassSelection:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
-		if strings.TrimSpace(message.ClassID) == "" { return ErrInvalidClientEnvelope }
-		return g.enqueueInitialClassSelection(sessionID, envelope.Sequence, message)
-	case *protocol.ClientInitialClassSelection:
-		if message == nil || strings.TrimSpace(message.ClassID) == "" { return ErrInvalidClientEnvelope }
-		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
-		return g.enqueueInitialClassSelection(sessionID, envelope.Sequence, *message)
 	case protocol.ClientInteractNPC:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		if message.NPCEntityID == 0 { return ErrInvalidClientEnvelope }
@@ -191,10 +182,6 @@ func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, inten
 func (g *Ingress) enqueueUseItem(sessionID session.ID, sequence uint32, intent protocol.ClientUseItem) error {
 	sink, ok := g.sink.(ItemUseCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueUseItem(sessionID, sequence, intent)
-}
-func (g *Ingress) enqueueInitialClassSelection(sessionID session.ID, sequence uint32, intent protocol.ClientInitialClassSelection) error {
-	sink, ok := g.sink.(InitialClassSelectionCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueInitialClassSelection(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueInteractNPC(sessionID session.ID, sequence uint32, intent protocol.ClientInteractNPC) error {
 	sink, ok := g.sink.(NPCCommandSink); if !ok { return ErrUnsupportedClientMessage }
