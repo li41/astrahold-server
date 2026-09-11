@@ -32,7 +32,8 @@ const (
 	ClassSchemaVersion         uint16 = 6
 	LoadoutSchemaVersion       uint16 = 7
 	LearnedSkillsSchemaVersion uint16 = 8
-	SchemaVersion              uint16 = LearnedSkillsSchemaVersion
+	ClasslessSchemaVersion     uint16 = 9
+	SchemaVersion              uint16 = ClasslessSchemaVersion
 	LegacyDefaultMaxMP         uint32 = 100
 )
 
@@ -61,7 +62,9 @@ type DefeatedRespawn struct {
 }
 
 type Snapshot struct {
-	World         WorldRef
+	World WorldRef
+	// ClassID is retained only as an in-process legacy v27 compatibility carrier while
+	// the old initial-class transaction is retired. Schema v9 never writes or restores it.
 	ClassID       classid.ID
 	HP            uint32
 	MaxHP         uint32
@@ -133,9 +136,10 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v8 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v9 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
-// v6 adds durable ClassID. v7 adds the classless six-slot combat loadout. v8 adds learned skills.
+// v6-v8 may contain the retired durable ClassID; it is validated during migration and discarded.
+// v7 adds the classless six-slot combat loadout. v8 adds learned skills. v9 retires durable ClassID.
 // When loading v7, only configured combat skills are inferred as learned; no other skills are granted.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
@@ -148,7 +152,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV8(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV9(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -158,6 +162,9 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 		return Record{}, fmt.Errorf("%w: character=%s expected=%d current=%d", ErrRevisionConflict, identity.ID, expectedRevision, currentRevision)
 	}
 	if expectedRevision == ^uint64(0) { return Record{}, ErrRevisionOverflow }
+	// ClassID is intentionally cleared from the durable Record contract at v9. A legacy v27
+	// caller may still carry it transiently while completing an in-process compatibility action.
+	snapshot.ClassID = ""
 	record := Record{SchemaVersion: SchemaVersion, CharacterID: identity.ID, Revision: expectedRevision + 1, Snapshot: snapshot}
 	if err := s.writeLocked(record); err != nil { return Record{}, err }
 	return record, nil
@@ -184,14 +191,14 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory != (InventoryState{}) { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion == InventorySchemaVersion && wire.Inventory.OffHand != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < ClassSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion >= ClasslessSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LoadoutSchemaVersion && len(wire.CombatLoadout) != 0 { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LearnedSkillsSchemaVersion && len(wire.LearnedSkills) != 0 { return Record{}, false, ErrCorruptRecord }
 
-	classID := classid.ID("")
-	if wire.SchemaVersion >= ClassSchemaVersion && wire.ClassID != "" {
-		parsed, ok := classid.Parse(wire.ClassID)
-		if !ok { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
-		classID = parsed
+	// Historical ClassID is migration-only input. Validate it so corrupt legacy state does not
+	// become silently acceptable, then discard it instead of restoring profession truth.
+	if wire.SchemaVersion >= ClassSchemaVersion && wire.SchemaVersion < ClasslessSchemaVersion && wire.ClassID != "" {
+		if _, ok := classid.Parse(wire.ClassID); !ok { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
 	}
 	mp, maxMP := wire.MP, wire.MaxMP
 	if wire.SchemaVersion < ResourceSchemaVersion {
@@ -225,7 +232,6 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		Revision: wire.Revision,
 		Snapshot: Snapshot{
 			World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
-			ClassID: classID,
 			HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
 			Inventory: inventoryState,
@@ -251,9 +257,6 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion >= InventorySchemaVersion {
 		if err := validateInventoryState(record.Snapshot.Inventory); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
-	if wire.SchemaVersion >= ClassSchemaVersion && record.Snapshot.ClassID != "" && !classid.IsCanonical(record.Snapshot.ClassID) {
-		return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot)
-	}
 	if wire.SchemaVersion >= LoadoutSchemaVersion {
 		if err := validateCombatLoadout(record.Snapshot.CombatLoadout); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
@@ -270,7 +273,6 @@ func (s *Store) writeLocked(record Record) error {
 	wire := wireRecord{
 		SchemaVersion: SchemaVersion, CharacterID: string(record.CharacterID), Revision: record.Revision,
 		WorldID: record.Snapshot.World.WorldID, WorldRevision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256,
-		ClassID: string(record.Snapshot.ClassID),
 		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
 		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
 		Inventory: inventoryState,
@@ -307,6 +309,13 @@ func (s *Store) recordPath(id characteridentity.ID) string {
 func validateTrustedIdentity(identity characteridentity.Binding) error {
 	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted { return ErrIdentityNotDurable }
 	return nil
+}
+
+func validateSnapshotV9(snapshot Snapshot) error {
+	// ClassID may still be carried by the in-process v27 compatibility transaction, but it is
+	// never serialized by schema v9. Validate the transient value while that bridge exists.
+	if snapshot.ClassID != "" && !classid.IsCanonical(snapshot.ClassID) { return ErrInvalidSnapshot }
+	return validateSnapshotV8(snapshot)
 }
 
 func validateSnapshotV8(snapshot Snapshot) error {

@@ -27,6 +27,12 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 		}
 		return err
 	}
+	if decoded.SchemaVersion < ClassSaveJournalSchemaVersion && decoded.Snapshot.ClassID != "" {
+		return fmt.Errorf("class id requires save journal schema %d", ClassSaveJournalSchemaVersion)
+	}
+	if decoded.SchemaVersion >= ClasslessSaveJournalSchemaVersion && decoded.Snapshot.ClassID != "" {
+		return fmt.Errorf("class id retired in save journal schema %d", ClasslessSaveJournalSchemaVersion)
+	}
 	if decoded.SchemaVersion < LoadoutSaveJournalSchemaVersion && len(decoded.Snapshot.CombatLoadout) != 0 {
 		return fmt.Errorf("combat loadout requires save journal schema %d", LoadoutSaveJournalSchemaVersion)
 	}
