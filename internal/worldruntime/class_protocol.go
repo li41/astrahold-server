@@ -15,6 +15,9 @@ const maxPendingClassMessagesPerSession = 8
 
 var ErrInitialClassSelectionFeedbackBacklog = errors.New("worldruntime: initial class selection feedback backlog full")
 
+// initialClassSelectionFeedback owns process-local metadata for a pending legacy class-selection
+// transaction. target is required for world-owner completion; clientActionSequence is zero for
+// internal fenced callers and non-zero only when a Protocol result must be correlated.
 type initialClassSelectionFeedback struct {
 	ownership            SessionOwnershipFence
 	clientActionSequence uint32
@@ -139,7 +142,7 @@ func (r *Runtime) sendCurrentClassResourceState(s *session.Session, report *Step
 
 // publishDurableInitialClassSelection emits authoritative class and runtime resource state to the
 // current owner after world-owner commit. The correlated result is emitted only if the original
-// ownership fence is still current, so takeover never receives another connection's result.
+// ownership fence is still current and this transaction originated from a Protocol request.
 func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, identity characteridentity.Binding, target classid.ID, report *StepReport) {
 	if report == nil || !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted {
 		return
@@ -163,7 +166,7 @@ func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, identity 
 		r.sendClassMessage(s, resourceState, report)
 	}
 	feedback, hasFeedback := r.initialClassSelectionFeedback[intentID]
-	if hasFeedback && current == feedback.ownership {
+	if hasFeedback && feedback.clientActionSequence != 0 && current == feedback.ownership {
 		r.sendClassMessage(s, protocol.InitialClassSelectionResult{
 			ClientActionSequence: feedback.clientActionSequence,
 			ClassID:              string(target),
