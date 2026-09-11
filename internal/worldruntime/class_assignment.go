@@ -36,14 +36,7 @@ func (r *Runtime) applyInitialClassAssignment(name string, command initialClassA
 	})
 }
 
-// applyCharacterStateSaveCompletions is kept only while characterstate's historical completion lane
-// still exists. Current worldruntime has no producer for completion-requested character saves.
-// Unexpected completions fail closed instead of resurrecting the retired profession transaction.
-func (r *Runtime) applyCharacterStateSaveCompletions(report *StepReport) {
-	if r.characterStateOutbox == nil || r.characterStateOutbox.CompletionDepth() == 0 || report == nil {
-		return
-	}
-	report.CommandErrors = append(report.CommandErrors, CommandError{
-		Command: "retired_character_state_completion", Err: ErrFixedClassSelectionRetired,
-	})
-}
+// Historical character-state completion acknowledgements belonged exclusively to the retired
+// fixed-class transaction. Current character saves have no completion lane, so this Step hook is
+// intentionally inert until the command tombstone itself is removed in the next Protocol cleanup.
+func (r *Runtime) applyCharacterStateSaveCompletions(_ *StepReport) {}
