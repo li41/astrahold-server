@@ -17,6 +17,7 @@ import (
 const (
 	loadlabCombatActionsPerTick = 16
 	loadlabCombatBatchInterval  = 50 * time.Millisecond
+	loadlabStepFenceTimeout     = 5 * time.Second
 )
 
 var (
@@ -162,6 +163,21 @@ func validateS3E9MixedGameplayConfig() error {
 	return nil
 }
 
+func waitForS3E9StepBoundary(runtime *worldruntime.Runtime) error {
+	reached, err := runtime.EnqueueStepFence()
+	if err != nil {
+		return fmt.Errorf("enqueue authoritative step fence: %w", err)
+	}
+	timer := time.NewTimer(loadlabStepFenceTimeout)
+	defer timer.Stop()
+	select {
+	case <-reached:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("authoritative step fence timed out after %s", loadlabStepFenceTimeout)
+	}
+}
+
 func runS3E9MixedGameplay(runtime *worldruntime.Runtime, round int, hotPairs []loadlab.EntityCombatPair, waves int) {
 	dynamicEvery := int(*s3e9MixedGameplayDynamicInterval / *s3e9MixedGameplayWaveInterval)
 	batchesPerWave := int(*s3e9MixedGameplayWaveInterval / loadlabCombatBatchInterval)
@@ -175,12 +191,21 @@ func runS3E9MixedGameplay(runtime *worldruntime.Runtime, round int, hotPairs []l
 		sequence := uint32(round + wave)
 		if err := enqueueCombatPairsPaced(runtime, sequence, *s3e9MixedGameplayActionID, hotPairs, batchSize, loadlabCombatBatchInterval); err != nil {
 			log.Printf("S3-E.9 sustained action enqueue failed: wave=%d err=%v", wave, err)
+			return
 		}
 		if wave%dynamicEvery == 0 {
 			blockerEnabled = !blockerEnabled
 			if err := runtime.EnqueueSetBlocker(s3e9MixedGameplayDynamicBlockerID, blockerEnabled); err != nil {
 				log.Printf("S3-E.9 dynamic-world enqueue failed: wave=%d blocker=%s enabled=%t err=%v", wave, s3e9MixedGameplayDynamicBlockerID, blockerEnabled, err)
+				return
 			}
+		}
+		// Wall-clock pacing alone can collapse two waves into one authoritative tick when a
+		// hosted runner stalls. The queue fence preserves the intended wave interval when healthy,
+		// but guarantees the next wave cannot be drained by the same world Step when it is not.
+		if err := waitForS3E9StepBoundary(runtime); err != nil {
+			log.Printf("S3-E.9 authoritative step fence failed: wave=%d err=%v", wave, err)
+			return
 		}
 		if remaining := *s3e9MixedGameplayWaveInterval - time.Since(waveStarted); remaining > 0 {
 			time.Sleep(remaining)

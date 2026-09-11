@@ -177,6 +177,12 @@ func (q *commandQueue) drain(max int) []command {
 	for len(out) < max {
 		select {
 		case c := <-q.ch:
+			// A step fence is a queue boundary, not gameplay work. Returning immediately keeps
+			// every later command in the channel for a subsequent authoritative Step.
+			if fence, ok := c.(stepFenceCommand); ok {
+				close(fence.reached)
+				return out
+			}
 			out = append(out, c)
 		default:
 			return out
