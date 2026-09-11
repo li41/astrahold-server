@@ -94,9 +94,10 @@ jobs:
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/mixed-server-convergence.json >/dev/null
 
           # 一次 authoritative teleport 只作為 phase trigger；其後 42 秒持續 gameplay、真實 bot movement 與 dynamic-world update。
-          # Movement 關閉後必須在 45 秒內完成 semantic drain；movers 也必須真的改變 AOI membership。
+          # Initial teleport 本身固定產生 62,500 spawn + 62,500 despawn；超過該數量直接證明 Client movement
+          # 另外改變了 AOI membership，不再用已退役 castle topology 的 relationship >140k 當代理。
           jq -e '.rounds == 1 and (.round | length) == 1 and .max_trigger_to_converged_seconds < 45' artifacts/mixed-server-churn-soak.json >/dev/null
-          jq -e '.round[0].observed_non_converged == true and .round[0].desired_relationships == .round[0].known_desired and .round[0].desired_relationships > 140000 and .round[0].pending_spawns == 0 and .round[0].pending_despawns == 0 and .round[0].pending_vitals_entities == 0 and .round[0].dirty_vitals_entities == 0 and .round[0].pending_dynamic_sessions == 0 and .round[0].reliable_queued == 0 and .round[0].reliable_in_flight == 0' artifacts/mixed-server-churn-soak.json >/dev/null
+          jq -e '.round[0].observed_non_converged == true and .round[0].desired_relationships == .round[0].known_desired and .round[0].spawn_selected > 62500 and .round[0].despawn_selected > 62500 and .round[0].pending_spawns == 0 and .round[0].pending_despawns == 0 and .round[0].pending_vitals_entities == 0 and .round[0].dirty_vitals_entities == 0 and .round[0].pending_dynamic_sessions == 0 and .round[0].reliable_queued == 0 and .round[0].reliable_in_flight == 0' artifacts/mixed-server-churn-soak.json >/dev/null
 
           # 112 個 initial basic-attack；56 個 stationary hot pairs × 280 個 150ms soak waves = 15,680。
           # 每個 hot target只承受100 + 280 = 380 damage，不混入 defeat semantics。
