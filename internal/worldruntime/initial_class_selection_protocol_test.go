@@ -39,8 +39,12 @@ func TestInitialClassSelectionProtocolCommitsOnlyAfterDurability(t *testing.T) {
 		}
 	}
 	pending := outbox.Pending(1)
-	if len(pending) != 1 || pending[0].Snapshot.ClassID != classid.Ranger || !pending[0].CompletionRequested {
+	if len(pending) != 1 || !pending[0].CompletionRequested {
 		t.Fatalf("pending=%#v", pending)
+	}
+	transaction, ok := rt.initialClassSelectionFeedback[pending[0].IntentID]
+	if !ok || transaction.target != classid.Ranger || transaction.clientActionSequence != 7 || transaction.ownership != fence {
+		t.Fatalf("transaction=%#v ok=%v", transaction, ok)
 	}
 
 	durable := pending[0]
@@ -54,6 +58,9 @@ func TestInitialClassSelectionProtocolCommitsOnlyAfterDurability(t *testing.T) {
 	}
 	if state, _ := rt.characters.State(fence.EntityID); state.ClassID != classid.Ranger {
 		t.Fatalf("completed class=%q", state.ClassID)
+	}
+	if _, ok := rt.initialClassSelectionFeedback[durable.IntentID]; ok {
+		t.Fatal("completed selection retained process-local transaction")
 	}
 
 	messages := classProtocolMessages(drainReliable(conn))
