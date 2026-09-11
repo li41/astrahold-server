@@ -53,21 +53,22 @@ func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatal
 	if r == nil || targetID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
-	for _, s := range r.sessions.List() {
-		if s.EntityID != targetID || !s.CharacterIdentity.Valid() {
-			continue
-		}
-		inv := r.inventories[s.CharacterIdentity.ID]
-		if inv == nil {
-			return equipmentcatalog.Definition{}, false
-		}
-		definition, ok := defaultEquipmentCatalog.Resolve(inv.OffHand())
-		if !ok || definition.Kind != equipmentcatalog.KindShield || definition.Shield == nil {
-			return equipmentcatalog.Definition{}, false
-		}
-		return definition, true
+	// Character identity is already authoritative entity ownership truth inside the world owner.
+	// Looking up the binding directly avoids rebuilding/sorting the entire Session registry for
+	// every incoming hit while preserving the same player-inventory semantics.
+	binding, ok := r.characterIdentities.binding(targetID)
+	if !ok || !binding.Valid() {
+		return equipmentcatalog.Definition{}, false
 	}
-	return equipmentcatalog.Definition{}, false
+	inv := r.inventories[binding.ID]
+	if inv == nil {
+		return equipmentcatalog.Definition{}, false
+	}
+	definition, ok := defaultEquipmentCatalog.Resolve(inv.OffHand())
+	if !ok || definition.Kind != equipmentcatalog.KindShield || definition.Shield == nil {
+		return equipmentcatalog.Definition{}, false
+	}
+	return definition, true
 }
 
 func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (DamageResult, error) {
