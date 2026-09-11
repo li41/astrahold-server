@@ -196,7 +196,7 @@ func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndClasslessRestore(t 
 		if join.Session.CharacterIdentity != identity {
 			t.Fatalf("identity = %#v", join.Session.CharacterIdentity)
 		}
-		if join.Restore == nil || join.Restore.CharacterID != identity.ID || join.Restore.ClassID != "" {
+		if join.Restore == nil || join.Restore.CharacterID != identity.ID || join.Restore.LegacyRuntimeClassID != "" {
 			t.Fatalf("restore = %#v", join.Restore)
 		}
 	case <-ctx.Done():
