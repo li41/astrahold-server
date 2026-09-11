@@ -20,10 +20,6 @@ const (
 	ScenarioDistributed   Scenario = "distributed"
 	ScenarioCrowd         Scenario = "crowd"
 	ScenarioTeleportChurn Scenario = "teleport-churn"
-
-	// ScenarioGateZerg is a source-compatibility alias for older load-tool callers.
-	// Its wire/CLI value is now "crowd"; the removed castle gate has no load authority.
-	ScenarioGateZerg Scenario = ScenarioCrowd
 )
 
 var (
@@ -172,7 +168,7 @@ func validateTeleportChurnLayout(layout scenarioLayout, totalClients int) error 
 func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gameplayworld.BoundsXZ) {
 	ground := layout.ground.Bounds
 	// Two deterministic ground clusters remain independent of blockers and presentation.
-	// On castle-sandbox the nearest box distance is sqrt(42^2 + 58^2) ~= 71.6m > 64m AOI radius.
+	// On current castle-sandbox their nearest box corners are more than 64m apart.
 	return gameplayworld.BoundsXZ{
 		MinX: ground.MinX + 2,
 		MaxX: ground.MinX + 14,
