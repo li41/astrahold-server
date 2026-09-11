@@ -16,8 +16,7 @@ on:
       - '.github/workflows/s3e-scaling.yml'
 
 jobs:
-  gate-zerg-500:
-    if: startsWith(github.head_ref, 'agent/s3e')
+  crowd-500:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -30,7 +29,7 @@ jobs:
         run: |
           go build -o /tmp/astrahold-loadserver ./cmd/loadserver
           go build -o /tmp/astrahold-loadbot ./cmd/loadbot
-      - name: Run 500-client Gate Zerg convergence + steady-state regression
+      - name: Run 500-client Crowd convergence + steady-state regression
         shell: bash
         run: |
           set -u
@@ -39,7 +38,7 @@ jobs:
             -tcp 127.0.0.1:18777 \
             -udp 127.0.0.1:18778 \
             -clients 500 \
-            -scenario gate-zerg \
+            -scenario crowd \
             -duration 10s \
             -shutdown-grace 2s \
             -ready-timeout 60s \
@@ -54,7 +53,7 @@ jobs:
           /tmp/astrahold-loadbot \
             -tcp 127.0.0.1:18777 \
             -clients 500 \
-            -scenario gate-zerg \
+            -scenario crowd \
             -input-rate 20 \
             -ramp-up 5s \
             -duration 45s \
@@ -72,13 +71,13 @@ jobs:
           test "$SERVER_STATUS" -eq 0
           jq -e '.ready_clients == .requested_clients' artifacts/bots.json >/dev/null
           jq -e '.decode_errors == 0 and .network_errors == 0 and .completed_snapshots > 0' artifacts/bots.json >/dev/null
-          # Gate Zerg 全員都在 AOI 內；500 peers 應收斂到 500*500 個 Reliable Spawn。
+          # Crowd 全員都在同一 AOI；500 peers 應收斂到 500*500 個 Reliable Spawn。
           # 至少還應包含同數量的 Vitals full state 與每個 Session 一份 Dynamic state。
           jq -e '.spawns == (.requested_clients * .requested_clients)' artifacts/bots.json >/dev/null
           jq -e '.reliable_messages >= ((.requested_clients * .requested_clients * 2) + .requested_clients)' artifacts/bots.json >/dev/null
           # Convergence phase 必須以 application lifecycle + Reliable transport 真正 drain 結束。
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == .convergence.observation.world.known_desired and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/server-convergence.json >/dev/null
-          # S3-E.6 同時限制 convergence tail 與完成時間：不能只把 burst 攤成過長登入等待。
+          # 同時限制 convergence tail 與完成時間：不能只把 burst 攤成過長登入等待。
           jq -e '.tick_duration.p99_ms < 50' artifacts/server-convergence.json >/dev/null
           jq -e '.convergence.ready_to_converged_seconds < 2' artifacts/server-convergence.json >/dev/null
           # 正式 steady-state capacity gate 保持不變。
@@ -88,11 +87,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: s3e-gate-zerg-500
+          name: s3e-crowd-500
           path: artifacts/
 
   teleport-churn-500:
-    if: startsWith(github.head_ref, 'agent/s3e')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,7 +155,7 @@ jobs:
 
           jq -e '.phase == "convergence" and .convergence.transition == "initial" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.ready_peers == 500 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-convergence.json >/dev/null
 
-          # S3-E.8 正式補回 S3-E.7 應有的 churn performance gates；不再只收 baseline。
+          # Churn performance gates 不只收 baseline。
           jq -e '.phase == "churn" and .convergence.transition == "teleport-churn" and .convergence.observed_non_converged == true and .convergence.trigger_to_converged_seconds > 0 and .convergence.trigger_to_converged_seconds < 2.75 and .tick_duration.p99_ms < 50 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/churn-server-churn.json >/dev/null
           jq -e '.lifecycle.spawn_selected >= 62500 and .lifecycle.despawn_selected >= 62500 and .lifecycle.max_global_selected_per_tick <= 6000 and .lifecycle.max_initial_vitals_selected_per_tick <= 5000' artifacts/churn-server-churn.json >/dev/null
           jq -e '.errors.datagram_too_large == 0 and .errors.unexpected_tick_errors == 0 and .errors.delivery_errors == 0 and .errors.network_errors == 0 and .errors.command_errors == 0' artifacts/churn-server-churn.json >/dev/null
