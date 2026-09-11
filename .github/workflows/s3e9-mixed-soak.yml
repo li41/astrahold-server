@@ -46,7 +46,7 @@ jobs:
             -combat-actions config/combat-actions-s3e9.json \
             -s3e9-mixed-gameplay-duration 42s \
             -s3e9-mixed-gameplay-wave-interval 150ms \
-            -s3e9-mixed-gameplay-objective-interval 1500ms \
+            -s3e9-mixed-gameplay-dynamic-interval 1500ms \
             -s3e9-mixed-gameplay-action soak-attack \
             -duration 5s \
             -shutdown-grace 2s \
@@ -85,7 +85,7 @@ jobs:
           test "$SERVER_STATUS" -eq 0
 
           # 500 bots 全程走真實 TCP/UDP。Bootstrap 500 筆 dynamic 完成前維持零方向；
-          # 第一個 objective delivery（501）語意啟動 movers；第 28 次 objective fan-out 全部完成
+          # 第一個 dynamic delivery（501）語意啟動 movers；第 28 次 dynamic fan-out 全部完成
           # 時累計正好 14,500 筆 dynamic，movement window 關閉並回到零方向，之後只等 semantic drain。
           jq -e '.ready_clients == 500 and .failed_connections == 0 and .decode_errors == 0 and .network_errors == 0 and .incomplete_snapshot_resets == 0 and .completed_snapshots > 0 and .moves_sent > 0' artifacts/mixed-bots.json >/dev/null
           jq -e '.dynamic_states == 14500' artifacts/mixed-bots.json >/dev/null
@@ -93,7 +93,7 @@ jobs:
           # Initial convergence 保留 S3-E.8 的 pure 125k relationship contract，不能被 active movement 污染。
           jq -e '.phase == "convergence" and .convergence.observation.world.replication_views == 500 and .convergence.observation.world.built_views == 500 and .convergence.observation.world.desired_relationships == 125000 and .convergence.observation.world.known_desired == 125000 and .convergence.observation.world.pending_spawns == 0 and .convergence.observation.world.pending_despawns == 0 and .convergence.observation.world.pending_vitals_entities == 0 and .convergence.observation.world.dirty_vitals_entities == 0 and .convergence.observation.world.pending_dynamic_sessions == 0 and .convergence.reliable.queued == 0 and .convergence.reliable.in_flight == 0' artifacts/mixed-server-convergence.json >/dev/null
 
-          # 一次 authoritative teleport 只作為 phase trigger；其後 42 秒持續 gameplay、真實 bot movement 與 objective update。
+          # 一次 authoritative teleport 只作為 phase trigger；其後 42 秒持續 gameplay、真實 bot movement 與 dynamic-world update。
           # Movement 關閉後必須在 45 秒內完成 semantic drain；movers 也必須真的改變 AOI membership。
           jq -e '.rounds == 1 and (.round | length) == 1 and .max_trigger_to_converged_seconds < 45' artifacts/mixed-server-churn-soak.json >/dev/null
           jq -e '.round[0].observed_non_converged == true and .round[0].desired_relationships == .round[0].known_desired and .round[0].desired_relationships > 140000 and .round[0].pending_spawns == 0 and .round[0].pending_despawns == 0 and .round[0].pending_vitals_entities == 0 and .round[0].dirty_vitals_entities == 0 and .round[0].pending_dynamic_sessions == 0 and .round[0].reliable_queued == 0 and .round[0].reliable_in_flight == 0' artifacts/mixed-server-churn-soak.json >/dev/null
