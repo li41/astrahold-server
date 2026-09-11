@@ -61,11 +61,11 @@ type DefeatedRespawn struct {
 	CheckpointID   string
 }
 
+// Snapshot is the current durable character-state contract. Profession/ClassID is deliberately
+// absent: schema v9 is classless. Historical class fields are accepted only by legacy wire decoders
+// and are validated then discarded before a Snapshot is constructed.
 type Snapshot struct {
-	World WorldRef
-	// ClassID is retained only as an in-process legacy v27 compatibility carrier while
-	// the old initial-class transaction is retired. Schema v9 never writes or restores it.
-	ClassID       classid.ID
+	World         WorldRef
 	HP            uint32
 	MaxHP         uint32
 	MP            uint32
@@ -104,27 +104,27 @@ type wireDefeatedRespawn struct {
 }
 
 type wireRecord struct {
-	SchemaVersion   uint16                `json:"schema_version"`
-	CharacterID     string                `json:"character_id"`
-	Revision        uint64                `json:"revision"`
-	WorldID         string                `json:"world_id"`
-	WorldRevision   string                `json:"world_revision"`
-	GameplaySHA256  string                `json:"gameplay_sha256"`
-	ClassID         string                `json:"class_id,omitempty"`
-	HP              uint32                `json:"hp"`
-	MaxHP           uint32                `json:"max_hp"`
-	MP              uint32                `json:"mp,omitempty"`
-	MaxMP           uint32                `json:"max_mp,omitempty"`
-	Defeated        bool                  `json:"defeated"`
-	X               float32               `json:"x"`
-	Y               float32               `json:"y"`
-	Z               float32               `json:"z"`
-	Layer           world.LayerID         `json:"layer"`
-	Yaw             float32               `json:"yaw"`
+	SchemaVersion   uint16               `json:"schema_version"`
+	CharacterID     string               `json:"character_id"`
+	Revision        uint64               `json:"revision"`
+	WorldID         string               `json:"world_id"`
+	WorldRevision   string               `json:"world_revision"`
+	GameplaySHA256  string               `json:"gameplay_sha256"`
+	ClassID         string               `json:"class_id,omitempty"`
+	HP              uint32               `json:"hp"`
+	MaxHP           uint32               `json:"max_hp"`
+	MP              uint32               `json:"mp,omitempty"`
+	MaxMP           uint32               `json:"max_mp,omitempty"`
+	Defeated        bool                 `json:"defeated"`
+	X               float32              `json:"x"`
+	Y               float32              `json:"y"`
+	Z               float32              `json:"z"`
+	Layer           world.LayerID        `json:"layer"`
+	Yaw             float32              `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
-	Inventory        InventoryState        `json:"inventory,omitempty"`
-	CombatLoadout    []string              `json:"combat_loadout,omitempty"`
-	LearnedSkills    []string              `json:"learned_skills,omitempty"`
+	Inventory       InventoryState       `json:"inventory,omitempty"`
+	CombatLoadout   []string             `json:"combat_loadout,omitempty"`
+	LearnedSkills   []string             `json:"learned_skills,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -162,9 +162,6 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 		return Record{}, fmt.Errorf("%w: character=%s expected=%d current=%d", ErrRevisionConflict, identity.ID, expectedRevision, currentRevision)
 	}
 	if expectedRevision == ^uint64(0) { return Record{}, ErrRevisionOverflow }
-	// ClassID is intentionally cleared from the durable Record contract at v9. A legacy v27
-	// caller may still carry it transiently while completing an in-process compatibility action.
-	snapshot.ClassID = ""
 	record := Record{SchemaVersion: SchemaVersion, CharacterID: identity.ID, Revision: expectedRevision + 1, Snapshot: snapshot}
 	if err := s.writeLocked(record); err != nil { return Record{}, err }
 	return record, nil
@@ -228,23 +225,30 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
-		CharacterID: characteridentity.ID(wire.CharacterID),
-		Revision: wire.Revision,
+		CharacterID:   characteridentity.ID(wire.CharacterID),
+		Revision:      wire.Revision,
 		Snapshot: Snapshot{
-			World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
-			HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
-			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
-			Inventory: inventoryState,
+			World:         WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
+			HP:            wire.HP,
+			MaxHP:         wire.MaxHP,
+			MP:            mp,
+			MaxMP:         maxMP,
+			Defeated:      wire.Defeated,
+			Position:      world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer},
+			Yaw:           wire.Yaw,
+			Inventory:     inventoryState,
 			CombatLoadout: combatLoadout,
 			LearnedSkills: learnedSkills,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
 		record.Snapshot.Respawn = DefeatedRespawn{
-			Context: wire.DefeatedRespawn.Context, SpawnPointID: wire.DefeatedRespawn.SpawnPointID,
-			SpawnClass: wire.DefeatedRespawn.SpawnClass,
-			Position: world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
-			RemainingTicks: wire.DefeatedRespawn.RemainingTicks, CheckpointID: wire.DefeatedRespawn.CheckpointID,
+			Context:        wire.DefeatedRespawn.Context,
+			SpawnPointID:   wire.DefeatedRespawn.SpawnPointID,
+			SpawnClass:     wire.DefeatedRespawn.SpawnClass,
+			Position:       world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
+			RemainingTicks: wire.DefeatedRespawn.RemainingTicks,
+			CheckpointID:   wire.DefeatedRespawn.CheckpointID,
 		}
 	}
 	if err := validateSnapshotBase(record.Snapshot); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
@@ -271,13 +275,25 @@ func (s *Store) writeLocked(record Record) error {
 	inventoryState, err := CanonicalInventoryState(record.Snapshot.Inventory)
 	if err != nil { return err }
 	wire := wireRecord{
-		SchemaVersion: SchemaVersion, CharacterID: string(record.CharacterID), Revision: record.Revision,
-		WorldID: record.Snapshot.World.WorldID, WorldRevision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256,
-		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
-		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
-		Inventory: inventoryState,
-		CombatLoadout: combatLoadoutToWire(record.Snapshot.CombatLoadout),
-		LearnedSkills: learnedSkillsToWire(record.Snapshot.LearnedSkills),
+		SchemaVersion:  SchemaVersion,
+		CharacterID:    string(record.CharacterID),
+		Revision:       record.Revision,
+		WorldID:        record.Snapshot.World.WorldID,
+		WorldRevision:  record.Snapshot.World.Revision,
+		GameplaySHA256: record.Snapshot.World.GameplaySHA256,
+		HP:             record.Snapshot.HP,
+		MaxHP:          record.Snapshot.MaxHP,
+		MP:             record.Snapshot.MP,
+		MaxMP:          record.Snapshot.MaxMP,
+		Defeated:       record.Snapshot.Defeated,
+		X:              record.Snapshot.Position.X,
+		Y:              record.Snapshot.Position.Y,
+		Z:              record.Snapshot.Position.Z,
+		Layer:          record.Snapshot.Position.Layer,
+		Yaw:            record.Snapshot.Yaw,
+		Inventory:      inventoryState,
+		CombatLoadout:  combatLoadoutToWire(record.Snapshot.CombatLoadout),
+		LearnedSkills:  learnedSkillsToWire(record.Snapshot.LearnedSkills),
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
@@ -312,9 +328,6 @@ func validateTrustedIdentity(identity characteridentity.Binding) error {
 }
 
 func validateSnapshotV9(snapshot Snapshot) error {
-	// ClassID may still be carried by the in-process v27 compatibility transaction, but it is
-	// never serialized by schema v9. Validate the transient value while that bridge exists.
-	if snapshot.ClassID != "" && !classid.IsCanonical(snapshot.ClassID) { return ErrInvalidSnapshot }
 	return validateSnapshotV8(snapshot)
 }
 
@@ -330,9 +343,7 @@ func validateSnapshotV7(snapshot Snapshot) error {
 }
 
 func validateSnapshotV6(snapshot Snapshot) error {
-	if err := validateSnapshotV5(snapshot); err != nil { return err }
-	if snapshot.ClassID != "" && !classid.IsCanonical(snapshot.ClassID) { return ErrInvalidSnapshot }
-	return nil
+	return validateSnapshotV5(snapshot)
 }
 
 func validateSnapshotV5(snapshot Snapshot) error {
