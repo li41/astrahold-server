@@ -43,7 +43,7 @@ func main() {
 		snapshotRate                     = flag.Int("snapshot-rate", 10, "Network snapshot rate (Hz)")
 		worldPath                        = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
 		combatPath                       = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
-		siegeMatchPath                   = flag.String("siege-match", "config/siege-match.json", "Authoritative Siege Match config JSON path")
+		siegeMatchPath                   = flag.String("siege-match", "", "Optional authoritative Siege Match config JSON path; empty disables siege")
 		respawnPolicyPath                = flag.String("respawn-policy", "config/respawn-policy.json", "Server respawn policy JSON path")
 		deathPenaltyPath                 = flag.String("death-penalty", "config/death-penalty.json", "Server death penalty policy JSON path")
 		deathOutcomeOutboxCapacity       = flag.Int("death-outcome-outbox-capacity", 4096, "Process-local death outcome outbox capacity")
@@ -137,17 +137,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("load gameplay world %q: %v", *worldPath, err)
 	}
-	loadedSiegeMatch, err := siege.LoadMatchFile(*siegeMatchPath)
-	if err != nil {
-		log.Fatalf("load siege match %q: %v", *siegeMatchPath, err)
-	}
-	if err := siege.ValidateMatchAgainstGates(loadedSiegeMatch.Definition, loadedWorld.Definition.Gates); err != nil {
-		log.Fatalf("validate siege match %q against gameplay world: %v", *siegeMatchPath, err)
-	}
-	siegeOwnershipPersistence, siegeOwnership, siegeOwnershipCreated, err := openSiegeOwnershipPersistence(*siegeOwnershipDir, loadedWorld.Definition.WorldID, loadedSiegeMatch.Definition.DefenderID)
-	if err != nil {
-		log.Fatalf("open siege ownership store %q for world %q: %v", *siegeOwnershipDir, loadedWorld.Definition.WorldID, err)
-	}
 	loadedCombat, err := combat.LoadFile(*combatPath)
 	if err != nil {
 		log.Fatalf("load combat actions %q: %v", *combatPath, err)
@@ -216,13 +205,32 @@ func main() {
 	runtimeOptions := []worldruntime.Option{
 		worldruntime.WithDynamicWorld(nav),
 		worldruntime.WithSiegeGates(loadedWorld.Definition.Gates),
-		worldruntime.WithSiegeMatch(loadedSiegeMatch.Definition),
-		worldruntime.WithSiegeOwnershipPersistence(siegeOwnership, siegeOwnershipPersistence.Commit),
 		worldruntime.WithCombatService(combatService),
 		worldruntime.WithRespawnPolicy(respawnService),
 		worldruntime.WithDeathPenalty(deathPenaltyService),
 		worldruntime.WithDeathOutcomeOutbox(deathOutbox),
 		worldruntime.WithCharacterStateOutbox(characterStateOutbox, characterStateWorld),
+	}
+	if *siegeMatchPath != "" {
+		loadedSiegeMatch, err := siege.LoadMatchFile(*siegeMatchPath)
+		if err != nil {
+			log.Fatalf("load siege match %q: %v", *siegeMatchPath, err)
+		}
+		if err := siege.ValidateMatchAgainstGates(loadedSiegeMatch.Definition, loadedWorld.Definition.Gates); err != nil {
+			log.Fatalf("validate siege match %q against gameplay world: %v", *siegeMatchPath, err)
+		}
+		siegeOwnershipPersistence, siegeOwnership, siegeOwnershipCreated, err := openSiegeOwnershipPersistence(*siegeOwnershipDir, loadedWorld.Definition.WorldID, loadedSiegeMatch.Definition.DefenderID)
+		if err != nil {
+			log.Fatalf("open siege ownership store %q for world %q: %v", *siegeOwnershipDir, loadedWorld.Definition.WorldID, err)
+		}
+		runtimeOptions = append(runtimeOptions,
+			worldruntime.WithSiegeMatch(loadedSiegeMatch.Definition),
+			worldruntime.WithSiegeOwnershipPersistence(siegeOwnership, siegeOwnershipPersistence.Commit),
+		)
+		log.Printf("siege match: enabled=true revision=%s match=%s attacker=%s defender=%s breach_gate=%s throne=%s", loadedSiegeMatch.Revision, loadedSiegeMatch.Definition.ID, loadedSiegeMatch.Definition.AttackerID, loadedSiegeMatch.Definition.DefenderID, loadedSiegeMatch.Definition.BreachGateID, loadedSiegeMatch.Definition.ThroneObjectiveID)
+		log.Printf("siege ownership durability: world=%s dir=%s revision=%d owner=%s previous_owner=%s last_transfer_match=%s created=%t single_writer=true optimistic_revision=true temp_fsync=true atomic_rename=true directory_fsync=%t startup_recovery=true completion_barrier=true", loadedWorld.Definition.WorldID, siegeOwnershipPersistence.Path(), siegeOwnership.Revision, siegeOwnership.OwnerID, siegeOwnership.PreviousOwnerID, siegeOwnership.LastTransferMatchID, siegeOwnershipCreated, goruntime.GOOS != "windows")
+	} else {
+		log.Printf("siege match: enabled=false")
 	}
 	if *playtestMonster {
 		runtimeOptions = append(
@@ -326,10 +334,9 @@ func main() {
 		characterStateDone <- err
 	}()
 
-	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d siege_match_revision=%s siege_match=%s attacker=%s defender=%s breach_gate=%s throne=%s respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d character_state_save_journal_id=%s character_state_save_journal_last_record=%d character_state_save_checkpoint_record=%d character_state_save_recovered_records=%d character_state_autosave_ticks=%d character_state_autosaves_per_tick=%d post_revive_protection_ticks=%d playtest_monster=%t playtest_npc=%t spawn_points=%d tcp=%s udp=%s browser_ws=%s network_mode=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), loadedSiegeMatch.Revision, loadedSiegeMatch.Definition.ID, loadedSiegeMatch.Definition.AttackerID, loadedSiegeMatch.Definition.DefenderID, loadedSiegeMatch.Definition.BreachGateID, loadedSiegeMatch.Definition.ThroneObjectiveID, respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, characterStateSaveJournal.ID(), characterStateSaveJournal.LastRecordID(), characterStateSaveCheckpoint.RecordID, recoveredCharacterStateSaves, autosaveTicks, *characterStateAutosavesPerTick, protectionTicks, *playtestMonster, *playtestNPC, respawnService.SpawnPointCount(), network.TCPAddr(), network.UDPAddr(), network.BrowserWSAddr(), network.Mode(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Astrahold worldd ready: protocol=%d world=%s revision=%s gameplay_sha256=%s combat_revision=%s actions=%d respawn_revision=%s respawn_pve_delay_ticks=%d respawn_pvp_delay_ticks=%d respawn_siege_delay_ticks=%d death_penalty_revision=%s checkpoint_forfeit_pve=%t checkpoint_forfeit_pvp=%t checkpoint_forfeit_siege=%t death_outcome_outbox_capacity=%d death_outcome_journal_id=%s death_outcome_journal_last_record=%d death_outcome_checkpoint_record=%d death_outcome_recovered_records=%d character_state_save_journal_id=%s character_state_save_journal_last_record=%d character_state_save_checkpoint_record=%d character_state_save_recovered_records=%d character_state_autosave_ticks=%d character_state_autosaves_per_tick=%d post_revive_protection_ticks=%d playtest_monster=%t playtest_npc=%t spawn_points=%d tcp=%s udp=%s browser_ws=%s network_mode=%s tick_rate=%dHz snapshot_rate=%dHz codec=gamev1 gates=%d", protocol.Version, loadedWorld.Definition.WorldID, loadedWorld.Definition.Revision, loadedWorld.SHA256[:12], loadedCombat.Definition.Revision, len(loadedCombat.Definition.Actions), respawnService.Revision(), pveRespawnDelay, pvpRespawnDelay, siegeRespawnDelay, deathPenaltyService.Revision(), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvE), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextPvP), deathPenaltyService.ForfeitsCheckpoint(respawnpolicy.DeathContextSiege), deathOutbox.Capacity(), deathJournal.ID(), deathJournal.LastRecordID(), deathCheckpoint.RecordID, recoveredDeathOutcomes, characterStateSaveJournal.ID(), characterStateSaveJournal.LastRecordID(), characterStateSaveCheckpoint.RecordID, recoveredCharacterStateSaves, autosaveTicks, *characterStateAutosavesPerTick, protectionTicks, *playtestMonster, *playtestNPC, respawnService.SpawnPointCount(), network.TCPAddr(), network.UDPAddr(), network.BrowserWSAddr(), network.Mode(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	log.Printf("death outcome durability: journal=%s checkpoint=%s append_fsync=true checkpoint_atomic_rename=true", deathJournal.Path(), deathCheckpointStore.Path())
 	log.Printf("character state durability: dir=%s outbox_capacity=%d trusted_only=true optimistic_revision=true atomic_rename=true save_journal=%s save_checkpoint=%s journal_append_fsync=true checkpoint_atomic_rename=true startup_recovery=true restore_exact_world=true defeated_restore=true autosave_ticks=%d autosaves_per_tick=%d autosave_capture_process_local=true", characterStateStore.Path(), characterStateOutbox.Capacity(), characterStateSaveJournal.Path(), characterStateSaveCheckpointStore.Path(), autosaveTicks, *characterStateAutosavesPerTick)
-	log.Printf("siege ownership durability: world=%s dir=%s revision=%d owner=%s previous_owner=%s last_transfer_match=%s created=%t single_writer=true optimistic_revision=true temp_fsync=true atomic_rename=true directory_fsync=%t startup_recovery=true completion_barrier=true", loadedWorld.Definition.WorldID, siegeOwnershipPersistence.Path(), siegeOwnership.Revision, siegeOwnership.OwnerID, siegeOwnership.PreviousOwnerID, siegeOwnership.LastTransferMatchID, siegeOwnershipCreated, goruntime.GOOS != "windows")
 	if trustedCharacterAuthenticator != nil {
 		log.Printf("trusted character authentication: enabled=true revision=%s identity_source=server_credential_map pre_gamev1=true tcp_loopback_required=true takeover_authorizer=credential_scoped_optional runtime_reload=%s", trustedCharacterAuthRevision, describeTrustedCharacterAuthRuntime(trustedCharacterAuthRuntime))
 	} else {
