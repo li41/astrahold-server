@@ -20,7 +20,7 @@ func parseS3E9MixedDynamicUpdates(value string) uint64 {
 
 // s3e9MixedMovementWindowOpen 使用正式 WorldDynamicState delivery 數定義 active phase，
 // 不依賴固定 warm-up / stop sleep。每個 ready bot先收到一筆 bootstrap dynamic state；
-// 第一個 objective revision完成任一 delivery後開始 movement，最後一個預期 objective revision
+// 第一個 dynamic revision完成任一 delivery後開始 movement，最後一個預期 dynamic revision
 // 全部 fan-out完成後關閉 movement，接著讓既有 semantic convergence tracker判斷 drain。
 func s3e9MixedMovementWindowOpen(dynamicStates, ready uint64) bool {
 	if !s3e9MixedMovementEnabled || ready == 0 || dynamicStates <= ready {
