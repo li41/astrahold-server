@@ -193,6 +193,21 @@ func (r *Registry) GetByEntity(entityID world.EntityID) (*Session, bool) {
 	s, ok := r.byEntity[entityID]
 	return s, ok
 }
+
+// RangeUnordered visits the currently active Sessions without allocating or sorting a mirror.
+// It is intended for owner-thread fan-out where cross-Session ordering has no protocol meaning;
+// callers that require deterministic SessionID order must continue to use List.
+func (r *Registry) RangeUnordered(visit func(*Session) bool) {
+	if visit == nil {
+		return
+	}
+	for _, s := range r.sessions {
+		if !visit(s) {
+			return
+		}
+	}
+}
+
 func (r *Registry) List() []*Session {
 	ids := make([]ID, 0, len(r.sessions))
 	for id := range r.sessions {
