@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/legacyclassgate"
 	"github.com/li41/astrahold-server/internal/session"
 )
 
@@ -64,16 +63,8 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		return
 	}
 
-	// Fixed-class authorization survives only at the legacy v27 ClientUseAction compatibility
-	// boundary. Once converted to combat.Intent, the authoritative preparation/effect path is
-	// classless and can be reused by future SkillID and Server-owned action sources.
-	if err := legacyclassgate.Validate(command.action.ActionID, state.ClassID); err != nil {
-		r.rejectClientAction(name, command.sessionID, command.sequence, s.EntityID, command.action.ActionID, command.action.TargetKind, err, tick, report)
-		return
-	}
-
-	// Network/session authority ends here. Combat execution consumes an ActorEntityID intent so
-	// future Server-owned AI can reuse the same legality/damage path without inventing fake Sessions.
+	// Class/profession identity no longer participates in production action authorization.
+	// Action legality is owned by the authoritative combat/skill/equipment systems below.
 	intent := combatIntentFromClientAction(s.EntityID, command.action)
 	r.prepareAndDispatchAction(name, command.sessionID, command.sequence, intent, tick, delta, report)
 }
