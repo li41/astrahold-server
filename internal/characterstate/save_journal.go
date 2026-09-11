@@ -106,9 +106,9 @@ type saveJournalWireSnapshot struct {
 	Layer           world.LayerID        `json:"layer"`
 	Yaw             float32              `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
-	Inventory        InventoryState       `json:"inventory,omitempty"`
-	CombatLoadout    []string             `json:"combat_loadout,omitempty"`
-	LearnedSkills    []string             `json:"learned_skills,omitempty"`
+	Inventory       InventoryState       `json:"inventory,omitempty"`
+	CombatLoadout   []string             `json:"combat_loadout,omitempty"`
+	LearnedSkills   []string             `json:"learned_skills,omitempty"`
 }
 
 type saveCheckpointWire struct {
@@ -165,9 +165,6 @@ func (j *SaveJournal) Append(intent SaveIntent, expectedRevision uint64) (SaveJo
 	if err := j.file.Sync(); err != nil { return SaveJournalRecord{}, err }
 	end := j.endOffset + int64(len(frame))
 	j.lastRecordID = recordID; j.endOffset = end; j.recordEnds = append(j.recordEnds, end)
-	// ClassID is intentionally absent from the durable v8 frame. Return the canonical durable
-	// intent as well, so callers cannot mistake a transient legacy class carrier for journal truth.
-	intent.Snapshot.ClassID = ""
 	return SaveJournalRecord{RecordID: recordID, ExpectedRevision: expectedRevision, Intent: intent, EndOffset: end}, nil
 }
 
@@ -368,11 +365,11 @@ func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
 	if err := validateSnapshotV5(intent.Snapshot); err != nil { return err }
 	switch schemaVersion {
 	case LegacySaveJournalSchemaVersion, ResourceSaveJournalSchemaVersion:
-		if intent.Snapshot.Inventory != (InventoryState{}) || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
+		if intent.Snapshot.Inventory != (InventoryState{}) || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
 	case InventorySaveJournalSchemaVersion:
-		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.Inventory.OffHand != "" || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.Inventory.OffHand != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
 	case EquipmentSaveJournalSchemaVersion:
-		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.ClassID != "" || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
+		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
 	case ClassSaveJournalSchemaVersion:
 		if !intent.Snapshot.Inventory.Initialized || intent.Snapshot.CombatLoadout != (skillloadout.Slots{}) || intent.Snapshot.LearnedSkills != (learnedskills.Set{}) { return ErrInvalidSnapshot }
 		if err := validateSnapshotV6(intent.Snapshot); err != nil { return err }
