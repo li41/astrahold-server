@@ -2,95 +2,27 @@ package worldruntime
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/characteridentity"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 )
 
 const maxPendingClassMessagesPerSession = 8
 
-var ErrInitialClassSelectionFeedbackBacklog = errors.New("worldruntime: initial class selection feedback backlog full")
+// ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
+// presentation lane. Fixed-class selection and CharacterClassState publication are retired.
+var ErrLegacyClassResourceFeedbackBacklog = errors.New("worldruntime: legacy class resource feedback backlog full")
 
-// initialClassSelectionFeedback owns process-local metadata for a pending legacy class-selection
-// transaction. target is required for world-owner completion; clientActionSequence is zero for
-// internal fenced callers and non-zero only when a Protocol result must be correlated.
-type initialClassSelectionFeedback struct {
-	ownership            SessionOwnershipFence
-	clientActionSequence uint32
-	target               classid.ID
+// EnqueueInitialClassSelection is a v27 source-compatibility tombstone. The production gateway no
+// longer routes this wire message and direct callers cannot mutate profession truth through it.
+func (r *Runtime) EnqueueInitialClassSelection(_ session.ID, _ uint32, _ protocol.ClientInitialClassSelection) error {
+	return ErrFixedClassSelectionRetired
 }
 
-// EnqueueInitialClassSelection is the unfenced gateway seam used by ephemeral development adapters.
-// World-owner validation still rejects any durable assignment without a trusted character identity.
-func (r *Runtime) EnqueueInitialClassSelection(id session.ID, sequence uint32, intent protocol.ClientInitialClassSelection) error {
-	if id == 0 || sequence == 0 || strings.TrimSpace(intent.ClassID) == "" {
-		return errors.New("worldruntime: invalid initial class selection intent")
-	}
-	return r.queue.tryPush(initialClassAssignmentCommand{
-		sessionID:       id,
-		sequence:        sequence,
-		target:          classid.ID(intent.ClassID),
-		protocolRequest: true,
-	})
-}
-
-// EnqueueFencedInitialClassSelection is the production network seam. The Client supplies only the
-// requested ClassID; the trusted adapter supplies the ownership fence established by admission.
-func (r *Runtime) EnqueueFencedInitialClassSelection(ownership SessionOwnershipFence, sequence uint32, intent protocol.ClientInitialClassSelection) error {
-	if !ownership.Valid() || sequence == 0 || strings.TrimSpace(intent.ClassID) == "" {
-		return ErrCharacterOwnershipFenceInvalid
-	}
-	return r.queue.tryPush(initialClassAssignmentCommand{
-		sessionID:       ownership.SessionID,
-		ownership:       ownership,
-		sequence:        sequence,
-		target:          classid.ID(intent.ClassID),
-		protocolRequest: true,
-	})
-}
-
-func (r *Runtime) guardInitialClassSelectionFeedbackCapacity(name string, s *session.Session, report *StepReport) bool {
-	if s == nil || report == nil {
-		return false
-	}
-	// Preserve three FIFO slots for an Oathguard durable completion's class state + resource state
-	// + committed result, plus one slot for the current request if it is rejected immediately.
-	if len(r.pendingClassMessages[s.ID])+4 <= maxPendingClassMessagesPerSession {
-		return true
-	}
-	report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: s.ID, Err: ErrInitialClassSelectionFeedbackBacklog})
-	if err := s.Connection().Close(); err != nil {
-		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageInitialClassSelectionResult, Err: err})
-	}
-	return false
-}
-
-func (r *Runtime) rejectInitialClassSelection(name string, s *session.Session, clientActionSequence uint32, err error, report *StepReport) {
-	if s == nil || report == nil {
-		return
-	}
-	report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: s.ID, Err: err})
-	r.sendClassMessage(s, protocol.InitialClassSelectionResult{
-		ClientActionSequence: clientActionSequence,
-		ClassID:              r.authoritativeClassID(s),
-		Outcome:              protocol.InitialClassSelectionRejected,
-		Reason:               initialClassSelectionRejectionReason(err),
-	}, report)
-}
-
-func (r *Runtime) authoritativeClassID(s *session.Session) string {
-	if s == nil {
-		return ""
-	}
-	state, ok := r.characters.State(s.EntityID)
-	if !ok {
-		return ""
-	}
-	return string(state.ClassID)
+// EnqueueFencedInitialClassSelection is a v27 source-compatibility tombstone. It never queues work.
+func (r *Runtime) EnqueueFencedInitialClassSelection(_ SessionOwnershipFence, _ uint32, _ protocol.ClientInitialClassSelection) error {
+	return ErrFixedClassSelectionRetired
 }
 
 func protocolClassResourceState(state character.State) (protocol.CharacterClassResourceState, bool) {
@@ -105,6 +37,9 @@ func protocolClassResourceState(state character.State) (protocol.CharacterClassR
 	}, true
 }
 
+// queueCurrentClassState intentionally no longer publishes CharacterClassState. Current classless
+// characters have no profession identity. A legacy v6-v8 E2E fixture may still expose its runtime
+// class-resource meter while Protocol v27 compatibility testing remains necessary.
 func (r *Runtime) queueCurrentClassState(s *session.Session) {
 	if s == nil {
 		return
@@ -113,16 +48,16 @@ func (r *Runtime) queueCurrentClassState(s *session.Session) {
 	if !ok {
 		return
 	}
-	messages := []protocol.Message{protocol.CharacterClassState{ClassID: string(state.ClassID)}}
-	if resourceState, ok := protocolClassResourceState(state); ok {
-		messages = append(messages, resourceState)
+	resourceState, ok := protocolClassResourceState(state)
+	if !ok {
+		return
 	}
 	pending := r.pendingClassMessages[s.ID]
-	if len(pending)+len(messages) > maxPendingClassMessagesPerSession {
+	if len(pending)+1 > maxPendingClassMessagesPerSession {
 		_ = s.Connection().Close()
 		return
 	}
-	r.pendingClassMessages[s.ID] = append(pending, messages...)
+	r.pendingClassMessages[s.ID] = append(pending, resourceState)
 }
 
 func (r *Runtime) sendCurrentClassResourceState(s *session.Session, report *StepReport) {
@@ -140,41 +75,8 @@ func (r *Runtime) sendCurrentClassResourceState(s *session.Session, report *Step
 	r.sendClassMessage(s, message, report)
 }
 
-// publishDurableInitialClassSelection emits authoritative class and runtime resource state to the
-// current owner after world-owner commit. The correlated result is emitted only if the original
-// ownership fence is still current and this transaction originated from a Protocol request.
-func (r *Runtime) publishDurableInitialClassSelection(intentID uint64, identity characteridentity.Binding, target classid.ID, report *StepReport) {
-	if report == nil || !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted {
-		return
-	}
-	current, err := r.characterIdentities.currentOwnership(identity)
-	if err != nil {
-		return
-	}
-	s, ok := r.sessions.Get(current.SessionID)
-	if !ok {
-		return
-	}
-	state, ok := r.characters.State(current.EntityID)
-	if !ok || state.ClassID != target {
-		return
-	}
-
-	// Identity state is ordered before the resource state, and both precede request correlation.
-	r.sendClassMessage(s, protocol.CharacterClassState{ClassID: string(target)}, report)
-	if resourceState, ok := protocolClassResourceState(state); ok {
-		r.sendClassMessage(s, resourceState, report)
-	}
-	feedback, hasFeedback := r.initialClassSelectionFeedback[intentID]
-	if hasFeedback && feedback.clientActionSequence != 0 && current == feedback.ownership {
-		r.sendClassMessage(s, protocol.InitialClassSelectionResult{
-			ClientActionSequence: feedback.clientActionSequence,
-			ClassID:              string(target),
-			Outcome:              protocol.InitialClassSelectionCommitted,
-		}, report)
-	}
-}
-
+// sendClassMessage is compatibility-only delivery for CharacterClassResourceState. Current gameplay
+// must not use this lane for class identity or selection results.
 func (r *Runtime) sendClassMessage(s *session.Session, message protocol.Message, report *StepReport) {
 	if s == nil || message == nil || report == nil {
 		return
@@ -182,7 +84,7 @@ func (r *Runtime) sendClassMessage(s *session.Session, message protocol.Message,
 	pending := r.pendingClassMessages[s.ID]
 	if len(pending) > 0 {
 		if len(pending) >= maxPendingClassMessagesPerSession {
-			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "class_feedback", SessionID: s.ID, Err: ErrInitialClassSelectionFeedbackBacklog})
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "legacy_class_resource_feedback", SessionID: s.ID, Err: ErrLegacyClassResourceFeedbackBacklog})
 			_ = s.Connection().Close()
 			return
 		}
@@ -237,24 +139,5 @@ func (r *Runtime) retryPendingClassMessages(tick uint64, report *StepReport) {
 		if _, ok := r.sessions.Get(id); !ok {
 			delete(r.pendingClassMessages, id)
 		}
-	}
-}
-
-func initialClassSelectionRejectionReason(err error) protocol.InitialClassSelectionRejectionReason {
-	switch {
-	case errors.Is(err, character.ErrInvalidClassAssignment):
-		return protocol.InitialClassSelectionInvalidClass
-	case errors.Is(err, character.ErrClassAlreadyAssigned):
-		return protocol.InitialClassSelectionAlreadyAssigned
-	case errors.Is(err, ErrInitialClassAssignmentPending):
-		return protocol.InitialClassSelectionAssignmentPending
-	case errors.Is(err, ErrInitialClassAssignmentEquipmentIllegal):
-		return protocol.InitialClassSelectionEquipmentIllegal
-	case errors.Is(err, ErrInitialClassAssignmentRequiresPersistence):
-		return protocol.InitialClassSelectionPersistenceUnavailable
-	case errors.Is(err, ErrInitialClassAssignmentRequiresTrustedIdentity):
-		return protocol.InitialClassSelectionTrustedIdentityRequired
-	default:
-		return protocol.InitialClassSelectionServerRejected
 	}
 }
