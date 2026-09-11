@@ -103,7 +103,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			return
 		}
 		if request.Restore.Inventory.Initialized {
-			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.ClassID)
+			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.LegacyRuntimeClassID)
 			if err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 				return
@@ -112,7 +112,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		entity.Transform = request.Restore.Transform
 		state := character.State{
 			EntityID: request.Entity.ID,
-			ClassID:  request.Restore.ClassID,
+			ClassID:  request.Restore.LegacyRuntimeClassID,
 			HP:       request.Restore.HP,
 			MaxHP:    request.Restore.MaxHP,
 			MP:       request.Restore.MP,
