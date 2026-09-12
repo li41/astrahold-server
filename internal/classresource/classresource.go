@@ -1,4 +1,6 @@
-// Package classresource defines stable Server-side class combat resource identities and caps.
+// Package classresource retains the stable combat-resource IDs used by shipped actions and the
+// Protocol v27 compatibility resource lane. The package name is historical: current classless
+// gameplay may use these resources through learned actions without a fixed-profession gate.
 package classresource
 
 import (
@@ -26,8 +28,8 @@ type Definition struct {
 	ProgressThreshold uint32
 }
 
-// PrimaryForClass returns the authored primary combat resource for a class. A missing definition
-// means that class has not yet shipped an authoritative class-resource contract.
+// PrimaryForClass is a fixed-profession compatibility lookup for legacy v27 resource state.
+// It must not be used to decide current classless action, equipment, or skill legality.
 func PrimaryForClass(id classid.ID) (Definition, bool) {
 	switch id {
 	case classid.Oathguard:
