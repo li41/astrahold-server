@@ -19,11 +19,24 @@ func TestRecordUDPFailureSuppressesCorrelatedShutdown(t *testing.T) {
 	}
 }
 
+func TestRecordUDPFailureSuppressesDelayedCorrelatedShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	collector := &botCollector{}
+	go func() {
+		time.Sleep(75 * time.Millisecond)
+		cancel()
+	}()
+	recordUDPFailureUnlessStoppingWithin(ctx, collector, 100*time.Millisecond)
+	if got := collector.networkErrors.Load(); got != 0 {
+		t.Fatalf("network errors=%d want=0 for delayed correlated shutdown", got)
+	}
+}
+
 func TestRecordUDPFailureCountsWhileTCPContextStaysAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	collector := &botCollector{}
-	recordUDPFailureUnlessStopping(ctx, collector)
+	recordUDPFailureUnlessStoppingWithin(ctx, collector, 10*time.Millisecond)
 	if got := collector.networkErrors.Load(); got != 1 {
 		t.Fatalf("network errors=%d want=1 for standalone UDP failure", got)
 	}
