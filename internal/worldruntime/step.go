@@ -21,9 +21,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	if measure {
 		stageStart = time.Now()
 	}
-	// Durability acknowledgements are consumed by the same single world owner before normal
-	// queued gameplay intents. This is the live commit point for one-time ClassID assignment.
-	r.applyCharacterStateSaveCompletions(&report)
 	report.Metrics.CommandQueueDepthBefore = r.queue.depth()
 	commands := r.queue.drain(r.config.MaxCommandsPerTick)
 	report.Metrics.CommandsDrained = len(commands)
@@ -62,8 +59,6 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: cmd.name(), SessionID: c.request.Expected.SessionID, Err: err})
 			}
 			completeWorldOwnerCommand(c.completion, err)
-		case initialClassAssignmentCommand:
-			r.applyInitialClassAssignment(cmd.name(), c, &report)
 		case leaveCommand:
 			r.applyLeave(cmd.name(), c, &report)
 		case moveInputCommand:
