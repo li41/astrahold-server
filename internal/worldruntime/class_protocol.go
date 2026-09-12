@@ -136,10 +136,3 @@ func (r *Runtime) retryPendingResourceMessages(tick uint64, report *StepReport) 
 		}
 	}
 }
-
-// retryPendingLegacyClassResourceMessages is a temporary source-compatibility name for the Step
-// call site. The underlying queue is already generic because Type118 shares it; no wire semantics
-// depend on this helper name.
-func (r *Runtime) retryPendingLegacyClassResourceMessages(tick uint64, report *StepReport) {
-	r.retryPendingResourceMessages(tick, report)
-}
