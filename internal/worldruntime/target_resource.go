@@ -112,14 +112,14 @@ func (r *Runtime) sendTargetResourceState(sessionID session.ID, message protocol
 		}
 	}
 	if len(pending) > 0 {
-		if len(pending) >= maxPendingClassMessagesPerSession {
+		if len(pending) >= maxPendingResourceMessagesPerSession {
 			_ = s.Connection().Close()
 			return
 		}
 		r.pendingClassMessages[s.ID] = append(pending, message)
 		return
 	}
-	if err := r.trySendClassMessage(s, message, report.Tick, report); err != nil {
+	if err := r.trySendResourceMessage(s, message, report.Tick, report); err != nil {
 		if errors.Is(err, session.ErrBackpressure) {
 			r.pendingClassMessages[s.ID] = []protocol.Message{message}
 			return

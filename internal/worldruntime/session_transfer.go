@@ -181,9 +181,9 @@ func (r *Runtime) applyOwnershipTransfer(request OwnershipTransferRequest) error
 	// removal cannot clear the newly installed by-character ownership.
 	r.characterIdentities.activateOwnership(newOwnership)
 	r.characterIdentities.removeOwnershipBySession(expected.SessionID)
-	// The replacement learns only current authoritative profession truth. Any correlated
-	// selection result remains fenced to the source ownership epoch and is never transferred.
-	r.queueCurrentClassState(replacement)
+	// Current classless characters transfer no profession identity. Only an explicit legacy v27
+	// compatibility resource fixture, if present, is queued for the replacement connection.
+	r.queueCurrentLegacyClassResourceState(replacement)
 	if request.Result != nil {
 		*request.Result = newOwnership
 	}

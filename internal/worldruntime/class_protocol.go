@@ -8,7 +8,10 @@ import (
 	"github.com/li41/astrahold-server/internal/session"
 )
 
-const maxPendingLegacyClassResourceMessagesPerSession = 8
+// Type117 legacy class-resource feedback and current Type118 target-resource feedback share one
+// bounded Reliable queue. The queue limit therefore belongs to generic resource delivery, not to
+// the retired fixed-profession model.
+const maxPendingResourceMessagesPerSession = 8
 
 // ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
 // presentation lane. Fixed-class selection and CharacterClassState publication are retired.
@@ -42,7 +45,7 @@ func (r *Runtime) queueCurrentLegacyClassResourceState(s *session.Session) {
 		return
 	}
 	pending := r.pendingClassMessages[s.ID]
-	if len(pending)+1 > maxPendingLegacyClassResourceMessagesPerSession {
+	if len(pending)+1 > maxPendingResourceMessagesPerSession {
 		_ = s.Connection().Close()
 		return
 	}
@@ -72,7 +75,7 @@ func (r *Runtime) sendLegacyClassResourceMessage(s *session.Session, message pro
 	}
 	pending := r.pendingClassMessages[s.ID]
 	if len(pending) > 0 {
-		if len(pending) >= maxPendingLegacyClassResourceMessagesPerSession {
+		if len(pending) >= maxPendingResourceMessagesPerSession {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "legacy_class_resource_feedback", SessionID: s.ID, Err: ErrLegacyClassResourceFeedbackBacklog})
 			_ = s.Connection().Close()
 			return
@@ -80,7 +83,7 @@ func (r *Runtime) sendLegacyClassResourceMessage(s *session.Session, message pro
 		r.pendingClassMessages[s.ID] = append(pending, message)
 		return
 	}
-	if err := r.trySendLegacyClassResourceMessage(s, message, report.Tick, report); err != nil {
+	if err := r.trySendResourceMessage(s, message, report.Tick, report); err != nil {
 		if errors.Is(err, session.ErrBackpressure) {
 			r.pendingClassMessages[s.ID] = append(r.pendingClassMessages[s.ID], message)
 			return
@@ -89,7 +92,10 @@ func (r *Runtime) sendLegacyClassResourceMessage(s *session.Session, message pro
 	}
 }
 
-func (r *Runtime) trySendLegacyClassResourceMessage(s *session.Session, message protocol.Message, tick uint64, report *StepReport) error {
+// trySendResourceMessage is the common Reliable send primitive for resource presentation state.
+// It carries both legacy Type117 class-resource compatibility and current Type118 target resources;
+// gameplay ownership remains in the authoritative character/action/target-resource services.
+func (r *Runtime) trySendResourceMessage(s *session.Session, message protocol.Message, tick uint64, report *StepReport) error {
 	envelope := protocol.Envelope{
 		Delivery:   protocol.DeliveryReliableOrdered,
 		Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
@@ -100,7 +106,7 @@ func (r *Runtime) trySendLegacyClassResourceMessage(s *session.Session, message 
 	return s.Connection().TrySend(envelope)
 }
 
-func (r *Runtime) retryPendingLegacyClassResourceMessages(tick uint64, report *StepReport) {
+func (r *Runtime) retryPendingResourceMessages(tick uint64, report *StepReport) {
 	if report == nil || len(r.pendingClassMessages) == 0 {
 		return
 	}
@@ -108,7 +114,7 @@ func (r *Runtime) retryPendingLegacyClassResourceMessages(tick uint64, report *S
 		pending := r.pendingClassMessages[s.ID]
 		for len(pending) > 0 {
 			message := pending[0]
-			if err := r.trySendLegacyClassResourceMessage(s, message, tick, report); err != nil {
+			if err := r.trySendResourceMessage(s, message, tick, report); err != nil {
 				if errors.Is(err, session.ErrBackpressure) {
 					break
 				}
@@ -129,4 +135,11 @@ func (r *Runtime) retryPendingLegacyClassResourceMessages(tick uint64, report *S
 			delete(r.pendingClassMessages, id)
 		}
 	}
+}
+
+// retryPendingLegacyClassResourceMessages is a temporary source-compatibility name for the Step
+// call site. The underlying queue is already generic because Type118 shares it; no wire semantics
+// depend on this helper name.
+func (r *Runtime) retryPendingLegacyClassResourceMessages(tick uint64, report *StepReport) {
+	r.retryPendingResourceMessages(tick, report)
 }
