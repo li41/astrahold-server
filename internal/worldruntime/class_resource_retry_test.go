@@ -65,12 +65,12 @@ func TestStepRetriesPendingLegacyClassResourceFeedback(t *testing.T) {
 	first := StepReport{Tick: 1}
 	rt.sendCurrentClassResourceState(s, &first)
 	if len(first.DeliveryErrors) != 0 { t.Fatalf("backpressure should defer, errors=%#v", first.DeliveryErrors) }
-	if got := len(rt.pendingClassMessages[s.ID]); got != 1 { t.Fatalf("pending class resource messages=%d want=1", got) }
+	if got := len(rt.pendingResourceMessages[s.ID]); got != 1 { t.Fatalf("pending class resource messages=%d want=1", got) }
 	if len(connection.sent) != 0 { t.Fatalf("backpressured resource state was sent: %d envelopes", len(connection.sent)) }
 
 	report := rt.Step(2, 50*time.Millisecond)
 	if len(report.DeliveryErrors) != 0 { t.Fatalf("retry delivery errors=%#v", report.DeliveryErrors) }
-	if _, ok := rt.pendingClassMessages[s.ID]; ok { t.Fatalf("pending class resource queue not drained: %#v", rt.pendingClassMessages[s.ID]) }
+	if _, ok := rt.pendingResourceMessages[s.ID]; ok { t.Fatalf("pending class resource queue not drained: %#v", rt.pendingResourceMessages[s.ID]) }
 
 	resourceMessages := 0
 	for _, envelope := range connection.sent {
@@ -105,17 +105,17 @@ func TestStepAttemptsPendingLegacyClassResourceFeedbackOncePerTick(t *testing.T)
 	first := StepReport{Tick: 1}
 	rt.sendCurrentClassResourceState(s, &first)
 	if connection.resourceAttempts != 1 { t.Fatalf("initial attempts=%d want=1", connection.resourceAttempts) }
-	if got := len(rt.pendingClassMessages[s.ID]); got != 1 { t.Fatalf("pending class resource messages=%d want=1", got) }
+	if got := len(rt.pendingResourceMessages[s.ID]); got != 1 { t.Fatalf("pending class resource messages=%d want=1", got) }
 
 	connection.resourceAttempts = 0
 	report := rt.Step(2, 50*time.Millisecond)
 	if len(report.DeliveryErrors) != 0 { t.Fatalf("retry delivery errors=%#v", report.DeliveryErrors) }
 	if connection.resourceAttempts != 1 { t.Fatalf("tick 2 resource attempts=%d want=1", connection.resourceAttempts) }
-	if got := len(rt.pendingClassMessages[s.ID]); got != 1 { t.Fatalf("tick 2 pending class resource messages=%d want=1", got) }
+	if got := len(rt.pendingResourceMessages[s.ID]); got != 1 { t.Fatalf("tick 2 pending class resource messages=%d want=1", got) }
 
 	connection.resourceAttempts = 0
 	report = rt.Step(3, 50*time.Millisecond)
 	if len(report.DeliveryErrors) != 0 { t.Fatalf("retry delivery errors=%#v", report.DeliveryErrors) }
 	if connection.resourceAttempts != 1 { t.Fatalf("tick 3 resource attempts=%d want=1", connection.resourceAttempts) }
-	if got := len(rt.pendingClassMessages[s.ID]); got != 1 { t.Fatalf("tick 3 pending class resource messages=%d want=1", got) }
+	if got := len(rt.pendingResourceMessages[s.ID]); got != 1 { t.Fatalf("tick 3 pending class resource messages=%d want=1", got) }
 }

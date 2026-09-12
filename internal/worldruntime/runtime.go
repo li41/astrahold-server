@@ -213,7 +213,7 @@ type Runtime struct {
 	inventories                    map[characteridentity.ID]*inventory.Inventory
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
-	pendingClassMessages           map[session.ID][]protocol.Message
+	pendingResourceMessages        map[session.ID][]protocol.Message
 	sessionInventoryPending        map[session.ID]struct{}
 	replication                    *replication.Service
 	replicationFrameBuilder        *simulation.ReplicationFrameBuilder
@@ -322,7 +322,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
 		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),
-		pendingClassMessages:           make(map[session.ID][]protocol.Message),
+		pendingResourceMessages:        make(map[session.ID][]protocol.Message),
 		sessionInventoryPending:        make(map[session.ID]struct{}),
 		replication:                    replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),

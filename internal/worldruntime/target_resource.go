@@ -103,11 +103,11 @@ func (r *Runtime) sendTargetResourceState(sessionID session.ID, message protocol
 	if !ok || s.EntityID != message.SourceEntityID || report == nil {
 		return
 	}
-	pending := r.pendingClassMessages[s.ID]
+	pending := r.pendingResourceMessages[s.ID]
 	for i, existing := range pending {
 		if current, ok := existing.(protocol.CharacterTargetResourceState); ok && sameTargetResourceState(current, message) {
 			pending[i] = message
-			r.pendingClassMessages[s.ID] = pending
+			r.pendingResourceMessages[s.ID] = pending
 			return
 		}
 	}
@@ -116,12 +116,12 @@ func (r *Runtime) sendTargetResourceState(sessionID session.ID, message protocol
 			_ = s.Connection().Close()
 			return
 		}
-		r.pendingClassMessages[s.ID] = append(pending, message)
+		r.pendingResourceMessages[s.ID] = append(pending, message)
 		return
 	}
 	if err := r.trySendResourceMessage(s, message, report.Tick, report); err != nil {
 		if errors.Is(err, session.ErrBackpressure) {
-			r.pendingClassMessages[s.ID] = []protocol.Message{message}
+			r.pendingResourceMessages[s.ID] = []protocol.Message{message}
 			return
 		}
 		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: message.Type(), Err: err})

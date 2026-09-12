@@ -174,7 +174,7 @@ func (r *Runtime) applyOwnershipTransfer(request OwnershipTransferRequest) error
 	r.replication.Remove(expected.SessionID)
 	r.removeSessionVitals(expected.SessionID)
 	delete(r.sessionDynamicRevision, expected.SessionID)
-	delete(r.pendingClassMessages, expected.SessionID)
+	delete(r.pendingResourceMessages, expected.SessionID)
 	r.replication.Register(replacement.ID)
 
 	// Activate the new epoch before removing the old by-session entry. The generation-fenced

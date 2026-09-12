@@ -44,12 +44,12 @@ func (r *Runtime) queueCurrentLegacyClassResourceState(s *session.Session) {
 	if !ok {
 		return
 	}
-	pending := r.pendingClassMessages[s.ID]
+	pending := r.pendingResourceMessages[s.ID]
 	if len(pending)+1 > maxPendingResourceMessagesPerSession {
 		_ = s.Connection().Close()
 		return
 	}
-	r.pendingClassMessages[s.ID] = append(pending, resourceState)
+	r.pendingResourceMessages[s.ID] = append(pending, resourceState)
 }
 
 func (r *Runtime) sendCurrentClassResourceState(s *session.Session, report *StepReport) {
@@ -73,19 +73,19 @@ func (r *Runtime) sendLegacyClassResourceMessage(s *session.Session, message pro
 	if s == nil || message == nil || report == nil {
 		return
 	}
-	pending := r.pendingClassMessages[s.ID]
+	pending := r.pendingResourceMessages[s.ID]
 	if len(pending) > 0 {
 		if len(pending) >= maxPendingResourceMessagesPerSession {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "legacy_class_resource_feedback", SessionID: s.ID, Err: ErrLegacyClassResourceFeedbackBacklog})
 			_ = s.Connection().Close()
 			return
 		}
-		r.pendingClassMessages[s.ID] = append(pending, message)
+		r.pendingResourceMessages[s.ID] = append(pending, message)
 		return
 	}
 	if err := r.trySendResourceMessage(s, message, report.Tick, report); err != nil {
 		if errors.Is(err, session.ErrBackpressure) {
-			r.pendingClassMessages[s.ID] = append(r.pendingClassMessages[s.ID], message)
+			r.pendingResourceMessages[s.ID] = append(r.pendingResourceMessages[s.ID], message)
 			return
 		}
 		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: message.Type(), Err: err})
@@ -107,11 +107,11 @@ func (r *Runtime) trySendResourceMessage(s *session.Session, message protocol.Me
 }
 
 func (r *Runtime) retryPendingResourceMessages(tick uint64, report *StepReport) {
-	if report == nil || len(r.pendingClassMessages) == 0 {
+	if report == nil || len(r.pendingResourceMessages) == 0 {
 		return
 	}
 	for _, s := range r.sessions.List() {
-		pending := r.pendingClassMessages[s.ID]
+		pending := r.pendingResourceMessages[s.ID]
 		for len(pending) > 0 {
 			message := pending[0]
 			if err := r.trySendResourceMessage(s, message, tick, report); err != nil {
@@ -125,14 +125,14 @@ func (r *Runtime) retryPendingResourceMessages(tick uint64, report *StepReport) 
 			pending = pending[1:]
 		}
 		if len(pending) == 0 {
-			delete(r.pendingClassMessages, s.ID)
+			delete(r.pendingResourceMessages, s.ID)
 		} else {
-			r.pendingClassMessages[s.ID] = pending
+			r.pendingResourceMessages[s.ID] = pending
 		}
 	}
-	for id := range r.pendingClassMessages {
+	for id := range r.pendingResourceMessages {
 		if _, ok := r.sessions.Get(id); !ok {
-			delete(r.pendingClassMessages, id)
+			delete(r.pendingResourceMessages, id)
 		}
 	}
 }
