@@ -48,23 +48,26 @@ func durableInventoryState(inv *inventory.Inventory) (characterstate.InventorySt
 	return characterstate.NewInventoryStateWithEquipment(durable, inv.MainHand(), inv.OffHand())
 }
 
-// restoreCharacterInventory preserves the unassigned-class compatibility seam for focused tests
-// and legacy internal callers. Production durable restore uses restoreCharacterInventoryForClass.
+// restoreCharacterInventory preserves the compatibility helper for focused tests and legacy
+// internal callers. Equipment legality is classless and depends only on the actual item/slot.
 func restoreCharacterInventory(maxStacks int, state characterstate.InventoryState) (*inventory.Inventory, error) {
 	return restoreCharacterInventoryForClass(maxStacks, state, "")
 }
 
-func restoreCharacterInventoryForClass(maxStacks int, state characterstate.InventoryState, classID classid.ID) (*inventory.Inventory, error) {
+// restoreCharacterInventoryForClass retains its historical source signature while class-retirement
+// callers are being removed. The legacy ClassID is intentionally ignored: fixed class never decides
+// current equipment legality.
+func restoreCharacterInventoryForClass(maxStacks int, state characterstate.InventoryState, _ classid.ID) (*inventory.Inventory, error) {
 	if !state.Initialized { return nil, nil }
 	stacks, err := state.Stacks(); if err != nil { return nil, err }
 	inv := newCharacterInventory(maxStacks)
 	if state.MainHand != "" {
-		if !mainHandItemAllowedForClass(state.MainHand, classID) { return nil, ErrEquipmentItemNotAllowed }
+		if !mainHandItemAllowed(state.MainHand) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.MainHand, 1); err != nil { return nil, err }
 		if err := inv.EquipMainHand(state.MainHand); err != nil { return nil, err }
 	}
 	if state.OffHand != "" {
-		if !offHandItemAllowedForClass(state.OffHand, classID) { return nil, ErrEquipmentItemNotAllowed }
+		if !offHandItemAllowed(state.OffHand) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.OffHand, 1); err != nil { return nil, err }
 		if err := inv.EquipOffHand(state.OffHand); err != nil { return nil, err }
 	}

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -44,24 +43,12 @@ func mainHandItemAllowed(itemArchetypeID string) bool {
 	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand)
 }
 
-// mainHandItemAllowedForClass is a temporary v27/internal-call compatibility seam. ClassID no
-// longer participates in gameplay legality and this wrapper can disappear with the legacy callers.
-func mainHandItemAllowedForClass(itemArchetypeID string, _ classid.ID) bool {
-	return mainHandItemAllowed(itemArchetypeID)
-}
-
 func offHandItemAllowed(itemArchetypeID string) bool {
 	definition, ok := defaultEquipmentCatalog.Resolve(strings.TrimSpace(itemArchetypeID))
 	if !ok {
 		return false
 	}
 	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand)
-}
-
-// offHandItemAllowedForClass is a temporary v27/internal-call compatibility seam. ClassID no
-// longer participates in gameplay legality and this wrapper can disappear with the legacy callers.
-func offHandItemAllowedForClass(itemArchetypeID string, _ classid.ID) bool {
-	return offHandItemAllowed(itemArchetypeID)
 }
 
 func (r *Runtime) EnqueueEquipmentCommand(id session.ID, sequence uint32, equipment protocol.ClientEquipmentCommand) error {
