@@ -8,7 +8,7 @@ import (
 	"github.com/li41/astrahold-server/internal/session"
 )
 
-const maxPendingClassMessagesPerSession = 8
+const maxPendingLegacyClassResourceMessagesPerSession = 8
 
 // ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
 // presentation lane. Fixed-class selection and CharacterClassState publication are retired.
@@ -26,10 +26,10 @@ func protocolClassResourceState(state character.State) (protocol.CharacterClassR
 	}, true
 }
 
-// queueCurrentClassState intentionally no longer publishes CharacterClassState. Current classless
-// characters have no profession identity. A legacy v6-v8 E2E fixture may still expose its runtime
-// class-resource meter while Protocol v27 compatibility testing remains necessary.
-func (r *Runtime) queueCurrentClassState(s *session.Session) {
+// queueCurrentLegacyClassResourceState intentionally no longer publishes CharacterClassState.
+// Current classless characters have no profession identity. A legacy v6-v8 E2E fixture may still
+// expose its runtime class-resource meter while Protocol v27 compatibility testing remains necessary.
+func (r *Runtime) queueCurrentLegacyClassResourceState(s *session.Session) {
 	if s == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (r *Runtime) queueCurrentClassState(s *session.Session) {
 		return
 	}
 	pending := r.pendingClassMessages[s.ID]
-	if len(pending)+1 > maxPendingClassMessagesPerSession {
+	if len(pending)+1 > maxPendingLegacyClassResourceMessagesPerSession {
 		_ = s.Connection().Close()
 		return
 	}
@@ -61,18 +61,18 @@ func (r *Runtime) sendCurrentClassResourceState(s *session.Session, report *Step
 	if !ok {
 		return
 	}
-	r.sendClassMessage(s, message, report)
+	r.sendLegacyClassResourceMessage(s, message, report)
 }
 
-// sendClassMessage is compatibility-only delivery for CharacterClassResourceState. Current gameplay
-// must not use this lane for class identity or selection results.
-func (r *Runtime) sendClassMessage(s *session.Session, message protocol.Message, report *StepReport) {
+// sendLegacyClassResourceMessage is compatibility-only delivery for CharacterClassResourceState.
+// Current gameplay must not use this lane for class identity or selection results.
+func (r *Runtime) sendLegacyClassResourceMessage(s *session.Session, message protocol.Message, report *StepReport) {
 	if s == nil || message == nil || report == nil {
 		return
 	}
 	pending := r.pendingClassMessages[s.ID]
 	if len(pending) > 0 {
-		if len(pending) >= maxPendingClassMessagesPerSession {
+		if len(pending) >= maxPendingLegacyClassResourceMessagesPerSession {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: "legacy_class_resource_feedback", SessionID: s.ID, Err: ErrLegacyClassResourceFeedbackBacklog})
 			_ = s.Connection().Close()
 			return
@@ -80,7 +80,7 @@ func (r *Runtime) sendClassMessage(s *session.Session, message protocol.Message,
 		r.pendingClassMessages[s.ID] = append(pending, message)
 		return
 	}
-	if err := r.trySendClassMessage(s, message, report.Tick, report); err != nil {
+	if err := r.trySendLegacyClassResourceMessage(s, message, report.Tick, report); err != nil {
 		if errors.Is(err, session.ErrBackpressure) {
 			r.pendingClassMessages[s.ID] = append(r.pendingClassMessages[s.ID], message)
 			return
@@ -89,7 +89,7 @@ func (r *Runtime) sendClassMessage(s *session.Session, message protocol.Message,
 	}
 }
 
-func (r *Runtime) trySendClassMessage(s *session.Session, message protocol.Message, tick uint64, report *StepReport) error {
+func (r *Runtime) trySendLegacyClassResourceMessage(s *session.Session, message protocol.Message, tick uint64, report *StepReport) error {
 	envelope := protocol.Envelope{
 		Delivery:   protocol.DeliveryReliableOrdered,
 		Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
@@ -100,7 +100,7 @@ func (r *Runtime) trySendClassMessage(s *session.Session, message protocol.Messa
 	return s.Connection().TrySend(envelope)
 }
 
-func (r *Runtime) retryPendingClassMessages(tick uint64, report *StepReport) {
+func (r *Runtime) retryPendingLegacyClassResourceMessages(tick uint64, report *StepReport) {
 	if report == nil || len(r.pendingClassMessages) == 0 {
 		return
 	}
@@ -108,7 +108,7 @@ func (r *Runtime) retryPendingClassMessages(tick uint64, report *StepReport) {
 		pending := r.pendingClassMessages[s.ID]
 		for len(pending) > 0 {
 			message := pending[0]
-			if err := r.trySendClassMessage(s, message, tick, report); err != nil {
+			if err := r.trySendLegacyClassResourceMessage(s, message, tick, report); err != nil {
 				if errors.Is(err, session.ErrBackpressure) {
 					break
 				}

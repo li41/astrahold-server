@@ -79,7 +79,7 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 	// explicit legacy v27 resource fixture, so the compatibility lane queues only a resource state
 	// when one actually exists; it never publishes a current CharacterClassState.
 	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
-		r.queueCurrentClassState(s)
+		r.queueCurrentLegacyClassResourceState(s)
 	}
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }

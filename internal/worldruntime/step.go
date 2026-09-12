@@ -19,7 +19,7 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	report := StepReport{Tick: tick}
 	// Legacy v27 class-resource feedback is Reliable and bounded. Retry an older
 	// backpressured state before this tick can append newer resource feedback behind it.
-	r.retryPendingClassMessages(tick, &report)
+	r.retryPendingLegacyClassResourceMessages(tick, &report)
 	var stageStart time.Time
 	if measure {
 		stageStart = time.Now()
