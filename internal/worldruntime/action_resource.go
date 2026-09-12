@@ -3,18 +3,18 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/actionresource"
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/classaction"
-	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// validateActionClassResourceCost runs after target/range/LOS legality has passed and before any
-// action resource is mutated. It keeps a future mixed MP + class-resource cost from partially
-// spending one resource before discovering that the other is insufficient.
+// validateActionClassResourceCost retains its historical name because several shipped legacy
+// action paths still call it, but the resource definition is classless and actionresource-owned.
+// It runs after target/range/LOS legality has passed and before any action resource is mutated.
 func (r *Runtime) validateActionClassResourceCost(
 	name string,
 	sourceSessionID session.ID,
@@ -26,7 +26,7 @@ func (r *Runtime) validateActionClassResourceCost(
 	report *StepReport,
 ) bool {
 	policy, ok := classaction.ForAction(prepared.Definition.ID)
-	if !ok || policy.CostResource == classresource.Empty || policy.CostAmount == 0 {
+	if !ok || policy.CostResource == actionresource.Empty || policy.CostAmount == 0 {
 		return true
 	}
 	state, ok := r.characters.State(actorID)
@@ -35,7 +35,7 @@ func (r *Runtime) validateActionClassResourceCost(
 		return false
 	}
 	if state.ClassResourceID != policy.CostResource || state.MaxClassResource == 0 {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: classresource.ErrResourceMismatch})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: actionresource.ErrResourceMismatch})
 		return false
 	}
 	if state.ClassResource < policy.CostAmount {
@@ -45,9 +45,9 @@ func (r *Runtime) validateActionClassResourceCost(
 	return true
 }
 
-// consumeActionClassResource commits a prevalidated class-resource cost immediately before an
-// action becomes accepted. Complete authoritative class-resource state is then re-sent to the
-// owning session; the Client never subtracts a local cost as gameplay truth.
+// consumeActionClassResource retains its historical name while production callers migrate. The
+// authoritative mutation uses the classless action-resource service, then v27 compatibility state
+// is re-sent to the owning session; the Client never subtracts a local cost as gameplay truth.
 func (r *Runtime) consumeActionClassResource(
 	name string,
 	sourceSessionID session.ID,
@@ -59,10 +59,10 @@ func (r *Runtime) consumeActionClassResource(
 	report *StepReport,
 ) bool {
 	policy, ok := classaction.ForAction(prepared.Definition.ID)
-	if !ok || policy.CostResource == classresource.Empty || policy.CostAmount == 0 {
+	if !ok || policy.CostResource == actionresource.Empty || policy.CostAmount == 0 {
 		return true
 	}
-	if _, err := r.characters.SpendClassResource(actorID, policy.CostResource, policy.CostAmount); err != nil {
+	if _, err := r.characters.SpendActionResource(actorID, policy.CostResource, policy.CostAmount); err != nil {
 		if errors.Is(err, character.ErrInsufficientResource) || errors.Is(err, character.ErrCharacterDefeated) {
 			r.rejectClientAction(name, sourceSessionID, clientActionSequence, actorID, prepared.Definition.ID, targetKind, err, tick, report)
 			return false
@@ -76,10 +76,9 @@ func (r *Runtime) consumeActionClassResource(
 	return true
 }
 
-// applyAcceptedActionClassResourceReduction commits a Server-authored reduction that is not a
-// legality cost. The amount clamps at zero, so a cooling/relief action remains usable when the
-// current burden is below the authored reduction amount. This is deliberately distinct from
-// CostResource, whose insufficiency rejects the action.
+// applyAcceptedActionClassResourceReduction retains its historical name while production callers
+// migrate. The amount clamps at zero, so a cooling/relief action remains usable when the current
+// burden is below the authored reduction amount. This is distinct from a legality cost.
 func (r *Runtime) applyAcceptedActionClassResourceReduction(
 	name string,
 	sourceSessionID session.ID,
@@ -88,7 +87,7 @@ func (r *Runtime) applyAcceptedActionClassResourceReduction(
 	report *StepReport,
 ) bool {
 	policy, ok := classaction.ForAction(actionID)
-	if !ok || policy.AcceptedReductionResource == classresource.Empty || policy.AcceptedReductionAmount == 0 {
+	if !ok || policy.AcceptedReductionResource == actionresource.Empty || policy.AcceptedReductionAmount == 0 {
 		return true
 	}
 	state, ok := r.characters.State(actorID)
@@ -97,7 +96,7 @@ func (r *Runtime) applyAcceptedActionClassResourceReduction(
 		return false
 	}
 	if state.ClassResourceID != policy.AcceptedReductionResource || state.MaxClassResource == 0 {
-		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: classresource.ErrResourceMismatch})
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: actionresource.ErrResourceMismatch})
 		return false
 	}
 	amount := policy.AcceptedReductionAmount
@@ -105,7 +104,7 @@ func (r *Runtime) applyAcceptedActionClassResourceReduction(
 		amount = state.ClassResource
 	}
 	if amount > 0 {
-		if _, err := r.characters.SpendClassResource(actorID, policy.AcceptedReductionResource, amount); err != nil {
+		if _, err := r.characters.SpendActionResource(actorID, policy.AcceptedReductionResource, amount); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
 			return false
 		}

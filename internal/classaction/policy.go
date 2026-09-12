@@ -1,8 +1,10 @@
-// Package classaction defines legacy action resource outcomes. Action authorization is owned by the legacy class-gate compatibility boundary.
+// Package classaction defines shipped legacy action IDs and their resource/effect policy fixtures.
+// It does not authorize fixed professions; current classless legality is decided by the authoritative
+// action, learned-skill and equipment paths.
 package classaction
 
 import (
-	"github.com/li41/astrahold-server/internal/classresource"
+	"github.com/li41/astrahold-server/internal/actionresource"
 	"github.com/li41/astrahold-server/internal/targetresource"
 )
 
@@ -46,15 +48,15 @@ func (p TargetResourceSpendPolicy) Resolve(current uint32) (amount, damage uint3
 }
 
 type Policy struct {
-	CostResource               classresource.ID
+	CostResource               actionresource.ID
 	CostAmount                 uint32
-	AcceptedResource           classresource.ID
+	AcceptedResource           actionresource.ID
 	AcceptedGain               uint32
-	AcceptedReductionResource  classresource.ID
+	AcceptedReductionResource  actionresource.ID
 	AcceptedReductionAmount    uint32
-	HitResource                classresource.ID
+	HitResource                actionresource.ID
 	HitGain                    uint32
-	HitProgressResource        classresource.ID
+	HitProgressResource        actionresource.ID
 	HitProgressGain            uint32
 	HitTargetResource          targetresource.ID
 	HitTargetGain              uint32
@@ -68,23 +70,23 @@ type Policy struct {
 func ForAction(actionID string) (Policy, bool) {
 	switch actionID {
 	case OathguardSwordStrike:
-		return Policy{HitResource: classresource.Resolve, HitGain: 8}, true
+		return Policy{HitResource: actionresource.Resolve, HitGain: 8}, true
 	case OathguardFortify:
-		return Policy{CostResource: classresource.Resolve, CostAmount: 30}, true
+		return Policy{CostResource: actionresource.Resolve, CostAmount: 30}, true
 	case BreakerHeavySlash:
-		return Policy{HitResource: classresource.Momentum, HitGain: 10}, true
+		return Policy{HitResource: actionresource.Momentum, HitGain: 10}, true
 	case BreakerStaggerStrike:
-		return Policy{CostResource: classresource.Momentum, CostAmount: 20}, true
+		return Policy{CostResource: actionresource.Momentum, CostAmount: 20}, true
 	case RangerHuntingShot:
-		return Policy{HitResource: classresource.HuntMomentum, HitGain: 8}, true
+		return Policy{HitResource: actionresource.HuntMomentum, HitGain: 8}, true
 	case RangerArmorPiercingArrow:
-		return Policy{CostResource: classresource.HuntMomentum, CostAmount: 30}, true
+		return Policy{CostResource: actionresource.HuntMomentum, CostAmount: 30}, true
 	case StarfireFireBolt:
-		return Policy{AcceptedResource: classresource.StarHeat, AcceptedGain: 8}, true
+		return Policy{AcceptedResource: actionresource.StarHeat, AcceptedGain: 8}, true
 	case StarfireColdStarChannel:
-		return Policy{AcceptedReductionResource: classresource.StarHeat, AcceptedReductionAmount: 45}, true
+		return Policy{AcceptedReductionResource: actionresource.StarHeat, AcceptedReductionAmount: 45}, true
 	case OathhealerOathlightStrike:
-		return Policy{HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
+		return Policy{HitProgressResource: actionresource.OathSeal, HitProgressGain: 20}, true
 	case ShadowbladeDualBladeStrike:
 		return Policy{HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetICDSeconds: 2.5, RequireSideOrBack: true}, true
 	case ShadowbladeRiftStab:
