@@ -5,7 +5,6 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -48,16 +47,9 @@ func durableInventoryState(inv *inventory.Inventory) (characterstate.InventorySt
 	return characterstate.NewInventoryStateWithEquipment(durable, inv.MainHand(), inv.OffHand())
 }
 
-// restoreCharacterInventory preserves the compatibility helper for focused tests and legacy
-// internal callers. Equipment legality is classless and depends only on the actual item/slot.
+// restoreCharacterInventory restores classless durable inventory/equipment truth. Equipment
+// legality depends only on the actual item and slot; retired ClassID never participates.
 func restoreCharacterInventory(maxStacks int, state characterstate.InventoryState) (*inventory.Inventory, error) {
-	return restoreCharacterInventoryForClass(maxStacks, state, "")
-}
-
-// restoreCharacterInventoryForClass retains its historical source signature while class-retirement
-// callers are being removed. The legacy ClassID is intentionally ignored: fixed class never decides
-// current equipment legality.
-func restoreCharacterInventoryForClass(maxStacks int, state characterstate.InventoryState, _ classid.ID) (*inventory.Inventory, error) {
 	if !state.Initialized { return nil, nil }
 	stacks, err := state.Stacks(); if err != nil { return nil, err }
 	inv := newCharacterInventory(maxStacks)
