@@ -10,27 +10,9 @@ import (
 
 const maxPendingClassMessagesPerSession = 8
 
-var (
-	// ErrFixedClassSelectionRetired is returned by the remaining v27 source-compatibility
-	// selection tombstones. Current gameplay is classless and no Server caller may turn the
-	// historical wire message into mutable character profession truth.
-	ErrFixedClassSelectionRetired = errors.New("worldruntime: fixed class selection is retired")
-
-	// ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
-	// presentation lane. Fixed-class selection and CharacterClassState publication are retired.
-	ErrLegacyClassResourceFeedbackBacklog = errors.New("worldruntime: legacy class resource feedback backlog full")
-)
-
-// EnqueueInitialClassSelection is a v27 source-compatibility tombstone. The production gateway no
-// longer routes this wire message and direct callers cannot mutate profession truth through it.
-func (r *Runtime) EnqueueInitialClassSelection(_ session.ID, _ uint32, _ protocol.ClientInitialClassSelection) error {
-	return ErrFixedClassSelectionRetired
-}
-
-// EnqueueFencedInitialClassSelection is a v27 source-compatibility tombstone. It never queues work.
-func (r *Runtime) EnqueueFencedInitialClassSelection(_ SessionOwnershipFence, _ uint32, _ protocol.ClientInitialClassSelection) error {
-	return ErrFixedClassSelectionRetired
-}
+// ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
+// presentation lane. Fixed-class selection and CharacterClassState publication are retired.
+var ErrLegacyClassResourceFeedbackBacklog = errors.New("worldruntime: legacy class resource feedback backlog full")
 
 func protocolClassResourceState(state character.State) (protocol.CharacterClassResourceState, bool) {
 	if state.EntityID == 0 || state.ClassResourceID == "" || state.MaxClassResource == 0 {
