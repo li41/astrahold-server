@@ -2,7 +2,6 @@ package worldruntime
 
 import (
 	"errors"
-	"log"
 
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/combat"
@@ -28,9 +27,6 @@ func (r *Runtime) rejectClientAction(
 ) {
 	report.ActionRejections = append(report.ActionRejections, ActionRejection{Action: name, SessionID: sourceSessionID, Err: err})
 	reason := actionRejectionReason(err)
-	if r.config.CollectMetrics {
-		log.Printf("worldruntime action rejected: tick=%d action=%s session=%d actor=%d action_id=%s target_kind=%v client_sequence=%d reason=%v err=%v", tick, name, sourceSessionID, actorID, actionID, targetKind, clientActionSequence, reason, err)
-	}
 	if clientActionSequence == 0 || sourceSessionID == 0 {
 		return
 	}
