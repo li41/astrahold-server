@@ -10,9 +10,16 @@ import (
 
 const maxPendingClassMessagesPerSession = 8
 
-// ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
-// presentation lane. Fixed-class selection and CharacterClassState publication are retired.
-var ErrLegacyClassResourceFeedbackBacklog = errors.New("worldruntime: legacy class resource feedback backlog full")
+var (
+	// ErrFixedClassSelectionRetired is returned by the remaining v27 source-compatibility
+	// selection tombstones. Current gameplay is classless and no Server caller may turn the
+	// historical wire message into mutable character profession truth.
+	ErrFixedClassSelectionRetired = errors.New("worldruntime: fixed class selection is retired")
+
+	// ErrLegacyClassResourceFeedbackBacklog protects only the explicit v27 legacy class-resource
+	// presentation lane. Fixed-class selection and CharacterClassState publication are retired.
+	ErrLegacyClassResourceFeedbackBacklog = errors.New("worldruntime: legacy class resource feedback backlog full")
+)
 
 // EnqueueInitialClassSelection is a v27 source-compatibility tombstone. The production gateway no
 // longer routes this wire message and direct callers cannot mutate profession truth through it.
