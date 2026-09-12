@@ -83,9 +83,9 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
 		r.inventories[identity] = inv
 	}
-	// ClassID is durable character identity. Only trusted/durable characters receive a join or
-	// reconnect class bootstrap. Ephemeral development identities cannot persist a profession and
-	// therefore do not receive a misleading durable CharacterClassState.
+	// Current characters have no durable profession identity. Trusted sessions may still carry an
+	// explicit legacy v27 resource fixture, so the compatibility lane queues only a resource state
+	// when one actually exists; it never publishes a current CharacterClassState.
 	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
 		r.queueCurrentClassState(s)
 	}
@@ -95,9 +95,8 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 func (r *Runtime) removeSessionInventoryDelivery(id session.ID) { delete(r.sessionInventoryPending, id) }
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
-	// Class state/result uses its own bounded FIFO so transient Reliable backpressure never
-	// re-runs class persistence or gameplay mutation.
-	r.retryPendingClassMessages(tick, report)
+	// Legacy v27 class-resource feedback is retried once at the beginning of Runtime.Step, before
+	// current commands can append newer states. Do not retry it again here in the same tick.
 	r.pruneItemUseCooldowns(tick)
 	r.retryPendingItemUseResults(tick, report)
 	if len(r.sessionInventoryPending) == 0 { return }
