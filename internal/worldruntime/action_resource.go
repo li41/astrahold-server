@@ -113,20 +113,6 @@ func (r *Runtime) applyAcceptedActionResourceReduction(
 	return true
 }
 
-// Legacy function names remain as temporary source-compatibility wrappers while tests and historical
-// action fixtures migrate. They do not represent profession authority and must not receive new callers.
-func (r *Runtime) validateActionClassResourceCost(name string, sourceSessionID session.ID, clientActionSequence uint32, actorID world.EntityID, prepared combat.PreparedAction, targetKind protocol.ActionTargetKind, tick uint64, report *StepReport) bool {
-	return r.validateActionResourceCost(name, sourceSessionID, clientActionSequence, actorID, prepared, targetKind, tick, report)
-}
-
-func (r *Runtime) consumeActionClassResource(name string, sourceSessionID session.ID, clientActionSequence uint32, actorID world.EntityID, prepared combat.PreparedAction, targetKind protocol.ActionTargetKind, tick uint64, report *StepReport) bool {
-	return r.consumeActionResource(name, sourceSessionID, clientActionSequence, actorID, prepared, targetKind, tick, report)
-}
-
-func (r *Runtime) applyAcceptedActionClassResourceReduction(name string, sourceSessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) bool {
-	return r.applyAcceptedActionResourceReduction(name, sourceSessionID, actorID, actionID, report)
-}
-
 // consumeActionMP is called only after target/range/LOS legality has passed and immediately
 // before an action becomes accepted. A rejection is source-session-only feedback and does not
 // mutate MP, cooldown, target HP, or presentation state.
