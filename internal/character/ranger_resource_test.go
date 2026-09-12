@@ -26,16 +26,13 @@ func TestRegisterStateInitializesRangerHuntMomentum(t *testing.T) {
 	}
 }
 
-func TestAssignInitialRangerClassInitializesAndGainsHuntMomentum(t *testing.T) {
+func TestLegacyRangerResourceGain(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const entityID world.EntityID = 47
-	if err := service.RegisterState(State{EntityID: entityID, HP: 1000, MaxHP: 1000}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.AssignInitialClass(entityID, classid.Ranger); err != nil {
+	if err := service.RegisterState(State{EntityID: entityID, ClassID: classid.Ranger, HP: 1000, MaxHP: 1000}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.GainClassResource(entityID, classresource.HuntMomentum, 8); err != nil {
@@ -43,6 +40,6 @@ func TestAssignInitialRangerClassInitializesAndGainsHuntMomentum(t *testing.T) {
 	}
 	state, ok := service.State(entityID)
 	if !ok || state.ClassID != classid.Ranger || state.ClassResourceID != classresource.HuntMomentum || state.ClassResource != 8 || state.MaxClassResource != 100 {
-		t.Fatalf("state=%+v ok=%v, want ranger hunt_momentum 8/100", state, ok)
+		t.Fatalf("state=%+v ok=%v, want legacy ranger hunt_momentum 8/100", state, ok)
 	}
 }

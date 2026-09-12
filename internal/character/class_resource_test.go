@@ -45,21 +45,21 @@ func TestRegisterStateInitializesBreakerMomentum(t *testing.T) {
 	}
 }
 
-func TestAssignInitialClassInitializesResolveAndGainClamps(t *testing.T) {
+func TestLegacyOathguardResourceGainClamps(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const entityID world.EntityID = 42
-	if err := service.Register(entityID); err != nil {
+	if err := service.RegisterState(State{EntityID: entityID, ClassID: classid.Oathguard, HP: 1000, MaxHP: 1000}); err != nil {
 		t.Fatal(err)
 	}
-	state, err := service.AssignInitialClass(entityID, classid.Oathguard)
-	if err != nil {
-		t.Fatal(err)
+	state, ok := service.State(entityID)
+	if !ok {
+		t.Fatal("state missing")
 	}
 	if state.ClassResourceID != classresource.Resolve || state.MaxClassResource != 100 {
-		t.Fatalf("assigned resource = %q max=%d", state.ClassResourceID, state.MaxClassResource)
+		t.Fatalf("legacy resource = %q max=%d", state.ClassResourceID, state.MaxClassResource)
 	}
 	state, err = service.GainClassResource(entityID, classresource.Resolve, 8)
 	if err != nil {

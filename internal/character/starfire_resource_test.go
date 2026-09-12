@@ -26,16 +26,13 @@ func TestRegisterStateInitializesStarfireStarHeat(t *testing.T) {
 	}
 }
 
-func TestAssignInitialStarfireClassInitializesAndClampsStarHeat(t *testing.T) {
+func TestLegacyStarfireResourceGainClamps(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const entityID world.EntityID = 49
-	if err := service.RegisterState(State{EntityID: entityID, HP: 1000, MaxHP: 1000}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.AssignInitialClass(entityID, classid.StarfireMage); err != nil {
+	if err := service.RegisterState(State{EntityID: entityID, ClassID: classid.StarfireMage, HP: 1000, MaxHP: 1000}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.GainClassResource(entityID, classresource.StarHeat, 8); err != nil {
@@ -46,6 +43,6 @@ func TestAssignInitialStarfireClassInitializesAndClampsStarHeat(t *testing.T) {
 	}
 	state, ok := service.State(entityID)
 	if !ok || state.ClassID != classid.StarfireMage || state.ClassResourceID != classresource.StarHeat || state.ClassResource != 100 || state.MaxClassResource != 100 {
-		t.Fatalf("state=%+v ok=%v, want starfire star_heat 100/100", state, ok)
+		t.Fatalf("state=%+v ok=%v, want legacy starfire star_heat 100/100", state, ok)
 	}
 }
