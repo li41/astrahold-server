@@ -104,7 +104,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			return
 		}
 		if request.Restore.Inventory.Initialized {
-			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.LegacyRuntimeClassID)
+			restoredInventory, err = restoreCharacterInventory(r.config.InventoryMaxStacks, request.Restore.Inventory)
 			if err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 				return
