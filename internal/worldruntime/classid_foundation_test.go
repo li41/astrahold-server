@@ -8,6 +8,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/classid"
+	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/session"
@@ -16,7 +17,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestLegacyRuntimeClassDoesNotEnterDurableLeaveSnapshot(t *testing.T) {
+func TestLegacyRuntimeClassSeedsOnlyCompatibilityResourceAndDoesNotEnterDurableLeaveSnapshot(t *testing.T) {
 	outbox, err := characterstate.NewOutbox(8)
 	if err != nil { t.Fatal(err) }
 	nav := navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100, Layer: 4}
@@ -36,7 +37,9 @@ func TestLegacyRuntimeClassDoesNotEnterDurableLeaveSnapshot(t *testing.T) {
 	if err := rt.EnqueueJoin(JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}); err != nil { t.Fatal(err) }
 	if report := rt.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("join errors=%#v", report.CommandErrors) }
 	state, ok := rt.characters.State(1)
-	if !ok || state.ClassID != classid.Oathguard { t.Fatalf("runtime state=%#v ok=%v", state, ok) }
+	if !ok || state.ClassResourceID != classresource.Resolve || state.ClassResource != 0 || state.MaxClassResource != 100 {
+		t.Fatalf("runtime compatibility resource=%#v ok=%v", state, ok)
+	}
 	if err := rt.EnqueueLeave(sess.ID); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("leave errors=%#v", report.CommandErrors) }
 	pending := outbox.Pending(0)

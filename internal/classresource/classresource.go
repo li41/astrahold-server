@@ -28,20 +28,39 @@ type Definition struct {
 	ProgressThreshold uint32
 }
 
+// DefinitionForID returns the authoritative runtime definition for a stable resource ID.
+// Current classless gameplay uses this lookup directly; it does not imply profession ownership.
+func DefinitionForID(id ID) (Definition, bool) {
+	switch id {
+	case Resolve:
+		return Definition{ID: Resolve, Max: 100}, true
+	case Momentum:
+		return Definition{ID: Momentum, Max: 100}, true
+	case HuntMomentum:
+		return Definition{ID: HuntMomentum, Max: 100}, true
+	case StarHeat:
+		return Definition{ID: StarHeat, Max: 100}, true
+	case OathSeal:
+		return Definition{ID: OathSeal, Max: 3, ProgressThreshold: 100}, true
+	default:
+		return Definition{}, false
+	}
+}
+
 // PrimaryForClass is a fixed-profession compatibility lookup for legacy v27 resource state.
 // It must not be used to decide current classless action, equipment, or skill legality.
 func PrimaryForClass(id classid.ID) (Definition, bool) {
 	switch id {
 	case classid.Oathguard:
-		return Definition{ID: Resolve, Max: 100}, true
+		return DefinitionForID(Resolve)
 	case classid.Breaker:
-		return Definition{ID: Momentum, Max: 100}, true
+		return DefinitionForID(Momentum)
 	case classid.Ranger:
-		return Definition{ID: HuntMomentum, Max: 100}, true
+		return DefinitionForID(HuntMomentum)
 	case classid.StarfireMage:
-		return Definition{ID: StarHeat, Max: 100}, true
+		return DefinitionForID(StarHeat)
 	case classid.Oathhealer:
-		return Definition{ID: OathSeal, Max: 3, ProgressThreshold: 100}, true
+		return DefinitionForID(OathSeal)
 	default:
 		return Definition{}, false
 	}

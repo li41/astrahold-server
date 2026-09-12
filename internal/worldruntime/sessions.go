@@ -2,6 +2,7 @@ package worldruntime
 
 import (
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/session"
@@ -110,14 +111,18 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			}
 		}
 		entity.Transform = request.Restore.Transform
+		resourceID := classresource.Empty
+		if definition, ok := classresource.PrimaryForClass(request.Restore.LegacyRuntimeClassID); ok {
+			resourceID = definition.ID
+		}
 		state := character.State{
-			EntityID: request.Entity.ID,
-			ClassID:  request.Restore.LegacyRuntimeClassID,
-			HP:       request.Restore.HP,
-			MaxHP:    request.Restore.MaxHP,
-			MP:       request.Restore.MP,
-			MaxMP:    request.Restore.MaxMP,
-			Defeated: request.Restore.Defeated,
+			EntityID:        request.Entity.ID,
+			ClassResourceID: resourceID,
+			HP:              request.Restore.HP,
+			MaxHP:           request.Restore.MaxHP,
+			MP:              request.Restore.MP,
+			MaxMP:           request.Restore.MaxMP,
+			Defeated:        request.Restore.Defeated,
 		}
 		restoredState = &state
 		if request.Restore.Defeated {

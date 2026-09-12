@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/targetresource"
 	"github.com/li41/astrahold-server/internal/world"
@@ -26,7 +25,6 @@ var (
 
 type State struct {
 	EntityID              world.EntityID
-	ClassID               classid.ID
 	HP                    uint32
 	MaxHP                 uint32
 	MP                    uint32
@@ -57,31 +55,33 @@ func (s *Service) RegisterState(state State) error {
 	if state.EntityID == 0 { return ErrCharacterNotFound }
 	if _, exists := s.states[state.EntityID]; exists { return ErrCharacterExists }
 	if state.MP == 0 && state.MaxMP == 0 { state.MP = s.defaultMaxMP; state.MaxMP = s.defaultMaxMP }
-	initializeClassResource(&state)
+	if err := normalizeClassResourceState(&state); err != nil { return err }
 	if err := validateState(state); err != nil { return err }
 	s.states[state.EntityID] = state
 	return nil
 }
 
-func initializeClassResource(state *State) {
-	if state == nil { return }
-	definition, ok := classresource.PrimaryForClass(state.ClassID)
-	if !ok {
-		state.ClassResourceID = classresource.Empty; state.ClassResource = 0; state.MaxClassResource = 0; state.ClassResourceProgress = 0
-		return
+func normalizeClassResourceState(state *State) error {
+	if state == nil { return ErrInvalidState }
+	if state.ClassResourceID == classresource.Empty { return nil }
+	definition, ok := classresource.DefinitionForID(state.ClassResourceID)
+	if !ok { return ErrInvalidState }
+	if state.MaxClassResource == 0 {
+		if state.ClassResource != 0 || state.ClassResourceProgress != 0 { return ErrInvalidState }
+		state.MaxClassResource = definition.Max
 	}
-	state.ClassResourceID = definition.ID; state.ClassResource = 0; state.MaxClassResource = definition.Max; state.ClassResourceProgress = 0
+	return nil
 }
 
 func validateState(state State) error {
-	if state.ClassID != "" && !classid.IsCanonical(state.ClassID) { return ErrInvalidState }
 	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP { return ErrInvalidState }
 	if state.ClassResource > state.MaxClassResource { return ErrInvalidState }
-	if state.ClassResourceID == classresource.Empty && (state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0) { return ErrInvalidState }
-	if state.ClassResourceID != classresource.Empty && state.MaxClassResource == 0 { return ErrInvalidState }
-	if state.ClassResourceProgress > 0 {
-		definition, ok := classresource.PrimaryForClass(state.ClassID)
-		if !ok || definition.ID != state.ClassResourceID || definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource { return ErrInvalidState }
+	if state.ClassResourceID == classresource.Empty {
+		if state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0 { return ErrInvalidState }
+	} else {
+		definition, ok := classresource.DefinitionForID(state.ClassResourceID)
+		if !ok || state.MaxClassResource != definition.Max { return ErrInvalidState }
+		if state.ClassResourceProgress > 0 && (definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource) { return ErrInvalidState }
 	}
 	if state.Defeated { if state.HP != 0 { return ErrInvalidState } } else if state.HP == 0 { return ErrInvalidState }
 	return nil
@@ -111,7 +111,7 @@ func (s *Service) SpendClassResource(id world.EntityID, resourceID classresource
 
 func (s *Service) GainClassResourceProgress(id world.EntityID, resourceID classresource.ID, amount uint32) (State, bool, error) {
 	state, ok := s.states[id]; if !ok { return State{}, false, ErrCharacterNotFound }; if state.Defeated { return state, false, ErrCharacterDefeated }
-	definition, defined := classresource.PrimaryForClass(state.ClassID)
+	definition, defined := classresource.DefinitionForID(state.ClassResourceID)
 	if !defined || resourceID == classresource.Empty || state.ClassResourceID != resourceID || definition.ID != resourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 { return state, false, classresource.ErrResourceMismatch }
 	if amount == 0 || state.ClassResource >= state.MaxClassResource { return state, false, nil }
 	totalProgress := uint64(state.ClassResourceProgress) + uint64(amount); threshold := uint64(definition.ProgressThreshold); gained := uint32(totalProgress / threshold); state.ClassResourceProgress = uint32(totalProgress % threshold); visibleChanged := gained > 0
