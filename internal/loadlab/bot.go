@@ -17,7 +17,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const shutdownNetworkErrorCorrelationWindow = 50 * time.Millisecond
+const shutdownNetworkErrorCorrelationWindow = time.Second
 
 type BotConfig struct {
 	TCPAddress     string
@@ -238,15 +238,24 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 	}
 }
 
-// recordUDPFailureUnlessStopping 給 TCP shutdown 一個極短 bounded correlation window。
-// Server 關閉共享 UDP socket與 peer TCP connection 時，Linux loopback 可能先回報 UDP ECONNREFUSED，
-// TCP EOF 才隨後抵達並 cancel botCtx。若 TCP 在 window 內同步結束，該 UDP error屬正常 shutdown；
+// recordUDPFailureUnlessStopping 給 TCP shutdown 一個 bounded correlation window。
+// Server shutdown 會先關共享 UDP socket，再逐一關閉 peer TCP connection；500-client hosted run 下，
+// Linux loopback 的 UDP ECONNREFUSED 可能比該 peer 的 TCP EOF 早超過一個 world tick。
+// 若 TCP 在 window 內同步結束，讓 reliable reader 先 drain 尾端訊息後視為正常 shutdown；
 // 若 TCP 仍存活，仍照常記為真實 network error。send / receive 兩側都使用同一判定。
 func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollector) {
+	recordUDPFailureUnlessStoppingWithin(botCtx, collector, shutdownNetworkErrorCorrelationWindow)
+}
+
+func recordUDPFailureUnlessStoppingWithin(botCtx context.Context, collector *botCollector, window time.Duration) {
 	if botCtx == nil || collector == nil || botCtx.Err() != nil {
 		return
 	}
-	timer := time.NewTimer(shutdownNetworkErrorCorrelationWindow)
+	if window <= 0 {
+		collector.networkErrors.Add(1)
+		return
+	}
+	timer := time.NewTimer(window)
 	defer timer.Stop()
 	select {
 	case <-botCtx.Done():
