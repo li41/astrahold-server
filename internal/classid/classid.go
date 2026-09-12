@@ -1,7 +1,9 @@
-// Package classid owns the stable Server-side vocabulary for character profession identity.
+// Package classid retains the retired fixed-profession vocabulary needed by Protocol v27
+// compatibility, legacy durable-data validation, and explicit compatibility fixtures.
 //
-// Empty ID means the character has not been assigned a class yet. It is deliberately not a
-// seventh class and must never be accepted by class-scoped gameplay policies.
+// ClassID is not current classless gameplay truth and must not be used to gate new actions,
+// equipment, skills, or durable character state. Keep the exact historical spellings stable
+// until the coordinated compatibility removal is safe.
 package classid
 
 type ID string
@@ -24,8 +26,8 @@ var canonical = [...]ID{
 	Shadowblade,
 }
 
-// IsCanonical reports whether id is one of the six locked Astrahold ClassIDs.
-// Empty/unassigned and unknown future values return false.
+// IsCanonical reports whether id is one of the six retired fixed-profession IDs that remain
+// valid compatibility input. Empty and unknown values return false.
 func IsCanonical(id ID) bool {
 	switch id {
 	case Oathguard, Breaker, Ranger, StarfireMage, Oathhealer, Shadowblade:
@@ -35,14 +37,14 @@ func IsCanonical(id ID) bool {
 	}
 }
 
-// Parse accepts only an exact canonical wire/storage spelling. It intentionally does not trim
-// or case-fold IDs so persistence and authored data cannot silently normalize a typo.
+// Parse accepts only an exact historical wire/storage spelling. It intentionally does not trim
+// or case-fold IDs so legacy persistence and compatibility fixtures cannot silently normalize a typo.
 func Parse(raw string) (ID, bool) {
 	id := ID(raw)
 	return id, IsCanonical(id)
 }
 
-// All returns a defensive copy in the stable design order.
+// All returns a defensive copy in the historical stable design order.
 func All() []ID {
 	out := make([]ID, len(canonical))
 	copy(out, canonical[:])
