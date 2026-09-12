@@ -125,6 +125,17 @@ func runTeleportChurnRounds(
 			convergence.Stop()
 			return convergenceMetadata{}, fmt.Errorf("enqueue teleport churn round %d: %w", round, err)
 		}
+		fenceReached, err := worldRuntime.EnqueueStepFence()
+		if err != nil {
+			convergence.Stop()
+			return convergenceMetadata{}, fmt.Errorf("enqueue teleport churn round %d step fence: %w", round, err)
+		}
+		select {
+		case <-ctx.Done():
+			convergence.Stop()
+			return convergenceMetadata{}, fmt.Errorf("wait teleport churn round %d step fence: %w", round, ctx.Err())
+		case <-fenceReached:
+		}
 		if err := enqueueChurnCombatActions(worldRuntime, round, combatPairs); err != nil {
 			convergence.Stop()
 			return convergenceMetadata{}, err
