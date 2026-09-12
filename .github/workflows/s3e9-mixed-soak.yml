@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
           cache: false
@@ -130,7 +130,7 @@ jobs:
           jq '{steady_p99_ms:.tick_duration.p99_ms, steady_heap_alloc_bytes:.memory.heap_alloc_bytes, steady_heap_sys_bytes:.memory.heap_sys_bytes}' artifacts/mixed-server.json
       - name: Upload S3-E.9 mixed gameplay reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: s3e9-long-mixed-gameplay-500
           path: artifacts/
