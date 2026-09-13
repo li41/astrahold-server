@@ -32,7 +32,7 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageAndTiming(t *te
 		}},
 		Items: []equipmentcatalog.Definition{{
 			ItemArchetypeID: "item_militia_battle_axe", Kind: equipmentcatalog.KindWeapon, Slot: equipmentcatalog.SlotMainHand,
-			Weight: 10, Material: "iron_wood",
+			Tier: equipmentcatalog.TierLow, Weight: 10, Material: "iron_wood",
 			Weapon: &equipmentcatalog.Weapon{
 				WeaponType: equipmentcatalog.WeaponTypeOneHandAxe,
 				SmallDamage: equipmentcatalog.DamageRange{Min: 5, Max: 8}, LargeDamage: equipmentcatalog.DamageRange{Min: 8, Max: 12}, AccuracyModifier: -1,
