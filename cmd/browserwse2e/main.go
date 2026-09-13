@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/actionpolicy"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/combat"
@@ -79,7 +79,7 @@ func main() {
 		log.Fatal(err)
 	}
 	combatService, err := combat.NewService([]combat.ActionDefinition{{
-		ID:              classaction.ShadowbladeDualBladeStrike,
+		ID:              actionpolicy.ShadowbladeDualBladeStrike,
 		Effect:          combat.EffectDamage,
 		Targets:         []combat.TargetKind{combat.TargetEntity},
 		Range:           4.5,
@@ -236,7 +236,7 @@ func main() {
 		e2eCharacterID,
 		classid.Shadowblade,
 		e2eTargetID,
-		classaction.ShadowbladeDualBladeStrike,
+		actionpolicy.ShadowbladeDualBladeStrike,
 	)
 
 	select {
