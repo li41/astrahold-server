@@ -38,10 +38,6 @@ func validateActionIntent(action protocol.ClientUseAction) error {
 	}
 }
 
-func (r *Runtime) EnqueueAttackGate(id session.ID, sequence uint32, gateID string) error {
-	return r.EnqueueUseAction(id, sequence, protocol.ClientUseAction{ActionID: legacyGateActionID, TargetKind: protocol.ActionTargetGate, TargetID: gateID})
-}
-
 func finiteActionCoordinate(value float32) bool {
 	f := float64(value)
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
