@@ -122,3 +122,14 @@ func (s ownedCommandSink) EnqueueRespawnRequest(id session.ID, sequence uint32, 
 	}
 	return sink.EnqueueFencedRespawnRequest(s.ownership, sequence, intent)
 }
+
+var (
+	_ gateway.MoveCommandSink      = ownedCommandSink{}
+	_ gateway.ActionCommandSink    = ownedCommandSink{}
+	_ gateway.EquipmentCommandSink = ownedCommandSink{}
+	_ gateway.PickupCommandSink    = ownedCommandSink{}
+	_ gateway.ItemUseCommandSink   = ownedCommandSink{}
+	_ gateway.NPCCommandSink       = ownedCommandSink{}
+	_ gateway.ShopCommandSink      = ownedCommandSink{}
+	_ gateway.RespawnCommandSink   = ownedCommandSink{}
+)
