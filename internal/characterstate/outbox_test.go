@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/learnedskills"
+	"github.com/li41/astrahold-server/internal/skillcatalog"
+	"github.com/li41/astrahold-server/internal/skillloadout"
 )
 
 func TestSaveOutboxPendingIsNonDestructiveAndConfirmOrdered(t *testing.T) {
@@ -68,6 +71,27 @@ func TestSaveOutboxRejectsEphemeralAndInvalidSnapshot(t *testing.T) {
 	invalid := testSnapshot()
 	invalid.HP = 0
 	if _, err := outbox.Enqueue(trusted(t, "character:invalid"), invalid); !errors.Is(err, ErrInvalidSnapshot) {
+		t.Fatalf("snapshot err=%v", err)
+	}
+	if outbox.Depth() != 0 {
+		t.Fatalf("depth=%d", outbox.Depth())
+	}
+}
+
+func TestSaveOutboxRejectsCurrentSchemaLoadoutOutsideLearnedSkills(t *testing.T) {
+	outbox, _ := NewOutbox(1)
+	learned, err := learnedskills.NewSet([]skillcatalog.ID{skillcatalog.HeavyStrike})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadout, err := skillloadout.NewSlots([]skillcatalog.ID{skillcatalog.Flurry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := testSnapshot()
+	snapshot.LearnedSkills = learned
+	snapshot.CombatLoadout = loadout
+	if _, err := outbox.Enqueue(trusted(t, "character:invalid-learned-subset"), snapshot); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("snapshot err=%v", err)
 	}
 	if outbox.Depth() != 0 {
