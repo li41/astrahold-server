@@ -172,23 +172,35 @@ func rollWeaponDamage(definition equipmentcatalog.Definition, size equipmentcata
 	return uint32(total)
 }
 
-// resolveEquippedBasicAttackDamage is called only after authoritative target legality and the
-// Server-owned weapon accuracy roll both succeed. The Client never supplies the roll or damage amount.
+// resolveEquippedBasicAttackDamage retains its historical name because it is already the common
+// entity-damage hook. Basic attacks first replace the authored placeholder amount with authoritative
+// weapon damage. Then all direct entity damage receives the matching equipped unique-instance flat
+// modifier: PhysicalDamage for physical damage and MagicPower for magic damage. Attribute-derived
+// Strength/Dexterity/Intelligence bonuses are intentionally not fabricated here.
 func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourceSessionID session.ID, targetID world.EntityID, prepared combat.PreparedAction) uint32 {
-	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
+	if prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
 	}
-	definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID)
-	if !ok {
-		return prepared.Damage.Amount
+
+	damage := prepared.Damage.Amount
+	if prepared.Definition.ID == basicAttackActionID {
+		if definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID); ok {
+			if weaponDamage := rollWeaponDamage(definition, r.entityWeaponBodySize(targetID), rand.Uint32()); weaponDamage != 0 {
+				damage = weaponDamage
+			}
+		}
 	}
-	damage := rollWeaponDamage(definition, r.entityWeaponBodySize(targetID), rand.Uint32())
-	if damage == 0 {
-		return prepared.Damage.Amount
-	}
+
 	modifiers, err := r.equippedInstanceModifiers(actorID)
 	if err != nil {
 		return damage
 	}
-	return saturatingAddUint32(damage, modifiers.PhysicalDamage)
+	switch prepared.Damage.Type {
+	case combat.DamagePhysical:
+		return saturatingAddUint32(damage, modifiers.PhysicalDamage)
+	case combat.DamageMagic:
+		return saturatingAddUint32(damage, modifiers.MagicPower)
+	default:
+		return damage
+	}
 }
