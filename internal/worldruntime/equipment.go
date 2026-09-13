@@ -31,13 +31,16 @@ func equipmentDefinitionAllowed(definition equipmentcatalog.Definition, kind equ
 	return definition.Kind == kind && definition.Slot == slot
 }
 
+// Protocol v27 equip intent identifies only ItemArchetypeID, so it is intentionally restricted to
+// low-tier archetype-only equipment. Mid/high equipment must be selected by unique instance identity
+// once the presentation contract exposes that identity; otherwise affix-bearing items would collapse.
 func mainHandItemAllowed(itemArchetypeID string) bool {
 	itemArchetypeID = strings.TrimSpace(itemArchetypeID)
 	if itemArchetypeID == trainingBladeArchetypeID {
 		return true
 	}
 	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID)
-	if !ok {
+	if !ok || definition.Tier != equipmentcatalog.TierLow {
 		return false
 	}
 	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand)
@@ -45,7 +48,7 @@ func mainHandItemAllowed(itemArchetypeID string) bool {
 
 func offHandItemAllowed(itemArchetypeID string) bool {
 	definition, ok := defaultEquipmentCatalog.Resolve(strings.TrimSpace(itemArchetypeID))
-	if !ok {
+	if !ok || definition.Tier != equipmentcatalog.TierLow {
 		return false
 	}
 	return equipmentDefinitionAllowed(definition, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand)
@@ -131,7 +134,11 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 				err = inv.EquipMainHand(request.ItemArchetypeID)
 			}
 		case protocol.EquipmentOperationUnequip:
-			_, err = inv.UnequipMainHand()
+			if _, instanceEquipped := inv.MainHandInstance(); instanceEquipped {
+				_, err = inv.UnequipMainHandInstance()
+			} else {
+				_, err = inv.UnequipMainHand()
+			}
 		}
 	case protocol.EquipmentSlotOffHand:
 		switch request.Operation {
@@ -142,7 +149,11 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 				err = inv.EquipOffHand(request.ItemArchetypeID)
 			}
 		case protocol.EquipmentOperationUnequip:
-			_, err = inv.UnequipOffHand()
+			if _, instanceEquipped := inv.OffHandInstance(); instanceEquipped {
+				_, err = inv.UnequipOffHandInstance()
+			} else {
+				_, err = inv.UnequipOffHand()
+			}
 		}
 	default:
 		err = errors.New("worldruntime: invalid equipment slot")
