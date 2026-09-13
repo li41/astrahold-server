@@ -18,7 +18,7 @@ import (
 
 func TestLowTierWeaponMissIsAuthoritativeOutcomeAndCommitsCooldown(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
-	weaponAccuracyRoll = func() uint32 { return 94 } // light guard sword is 94%; boundary is a miss.
+	weaponAccuracyRoll = func() uint32 { return 9100 } // +2 rating => 91.0%; boundary is a miss.
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
 
 	definition := gameplayworld.Definition{
