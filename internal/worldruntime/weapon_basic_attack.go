@@ -10,20 +10,13 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const (
-	basicAttackActionID = "basic-attack"
+const basicAttackActionID = "basic-attack"
 
-	baseWeaponHitChancePercent int64 = 90
-	accuracyModifierStepPercent int64 = 2
-	minWeaponHitChancePercent   int64 = 75
-	maxWeaponHitChancePercent   int64 = 98
-)
+// weaponAccuracyRoll remains package-private so production owns the 0..9999 basis-point roll.
+// Tests in this package may replace it temporarily to make authoritative hit/miss coverage exact.
+var weaponAccuracyRoll = func() uint32 { return rand.Uint32N(10000) }
 
-// weaponAccuracyRoll remains package-private so production always owns the 0..99 roll. Tests in
-// this package may replace it temporarily to make authoritative hit/miss integration coverage exact.
-var weaponAccuracyRoll = func() uint32 { return rand.Uint32N(100) }
-
-func (r *Runtime) equippedLowTierWeapon(actorID world.EntityID, sourceSessionID session.ID) (equipmentcatalog.Definition, bool) {
+func (r *Runtime) equippedCatalogWeapon(actorID world.EntityID, sourceSessionID session.ID) (equipmentcatalog.Definition, bool) {
 	if r == nil || sourceSessionID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
@@ -62,7 +55,7 @@ func (r *Runtime) applyEquippedBasicAttackTiming(prepared *combat.PreparedAction
 	if prepared == nil || prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return
 	}
-	definition, ok := r.equippedLowTierWeapon(prepared.ActorEntityID, sourceSessionID)
+	definition, ok := r.equippedCatalogWeapon(prepared.ActorEntityID, sourceSessionID)
 	if !ok {
 		return
 	}
@@ -73,33 +66,61 @@ func (r *Runtime) applyEquippedBasicAttackTiming(prepared *combat.PreparedAction
 	prepared.Definition.CooldownSeconds = weaponAttackCooldownSeconds(milliseconds)
 }
 
-func weaponBasicAttackHitChancePercent(accuracyModifier int32) uint32 {
-	chance := baseWeaponHitChancePercent + int64(accuracyModifier)*accuracyModifierStepPercent
-	if chance < minWeaponHitChancePercent {
-		chance = minWeaponHitChancePercent
+func ratingWithSignedBase(base int32, bonus uint32) int32 {
+	total := int64(base) + int64(bonus)
+	if total > math.MaxInt32 {
+		return math.MaxInt32
 	}
-	if chance > maxWeaponHitChancePercent {
-		chance = maxWeaponHitChancePercent
+	if total < math.MinInt32 {
+		return math.MinInt32
 	}
-	return uint32(chance)
+	return int32(total)
 }
 
-func weaponBasicAttackHits(accuracyModifier int32, rollPercent uint32) bool {
-	return rollPercent < weaponBasicAttackHitChancePercent(accuracyModifier)
+func uintRatingAsInt32(value uint32) int32 {
+	if value > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(value)
 }
 
-// resolveEquippedBasicAttackHit applies the v1 accuracy formula only to an entity-target
-// basic attack made with an authored low-tier weapon. Legacy/unclassified MainHand content keeps
-// its existing hit behavior until that content receives an explicit accuracy policy.
+func weaponBasicAttackHitChanceBasisPoints(weaponAccuracyModifier int32, physicalHitBonus, targetEvasion uint32) uint32 {
+	return combat.PhysicalHitChanceBasisPoints(
+		ratingWithSignedBase(weaponAccuracyModifier, physicalHitBonus),
+		uintRatingAsInt32(targetEvasion),
+	)
+}
+
+func weaponBasicAttackHits(weaponAccuracyModifier int32, physicalHitBonus, targetEvasion, rollBasisPoints uint32) bool {
+	return rollBasisPoints < weaponBasicAttackHitChanceBasisPoints(weaponAccuracyModifier, physicalHitBonus, targetEvasion)
+}
+
+// resolveEquippedBasicAttackHit applies the formal V1 physical hit/evasion rating formula to an
+// entity-target basic attack made with an authored catalog weapon. Attribute-derived ratings are
+// not fabricated here; this path consumes the weapon modifier plus currently implemented equipment
+// instance affixes, and can accept attribute contributions when the authoritative attribute owner lands.
 func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSessionID session.ID, prepared combat.PreparedAction) bool {
 	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return true
 	}
-	definition, ok := r.equippedLowTierWeapon(actorID, sourceSessionID)
+	definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID)
 	if !ok || definition.Weapon == nil {
 		return true
 	}
-	return weaponBasicAttackHits(definition.Weapon.AccuracyModifier, weaponAccuracyRoll())
+	attackerModifiers, err := r.equippedInstanceModifiers(actorID)
+	if err != nil {
+		return false
+	}
+	targetModifiers, err := r.equippedInstanceModifiers(world.EntityID(prepared.TargetEntityID()))
+	if err != nil {
+		return false
+	}
+	return weaponBasicAttackHits(
+		definition.Weapon.AccuracyModifier,
+		attackerModifiers.PhysicalHit,
+		targetModifiers.Evasion,
+		weaponAccuracyRoll(),
+	)
 }
 
 func (r *Runtime) entityWeaponBodySize(entityID world.EntityID) equipmentcatalog.BodySize {
@@ -141,7 +162,7 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
 	}
-	definition, ok := r.equippedLowTierWeapon(actorID, sourceSessionID)
+	definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID)
 	if !ok {
 		return prepared.Damage.Amount
 	}
@@ -149,5 +170,9 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 	if damage == 0 {
 		return prepared.Damage.Amount
 	}
-	return damage
+	modifiers, err := r.equippedInstanceModifiers(actorID)
+	if err != nil {
+		return damage
+	}
+	return saturatingAddUint32(damage, modifiers.PhysicalDamage)
 }
