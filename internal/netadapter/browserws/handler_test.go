@@ -23,27 +23,31 @@ type moveRecord struct {
 	sessionID session.ID
 	sequence  uint32
 	input     protocol.ClientMoveInput
+	ownership worldruntime.SessionOwnershipFence
 }
 
 type actionRecord struct {
 	sessionID session.ID
 	sequence  uint32
 	action    protocol.ClientUseAction
+	ownership worldruntime.SessionOwnershipFence
 }
 
 type fakeRuntime struct {
-	moves   chan moveRecord
-	actions chan actionRecord
-	leaves  chan session.ID
-	joins   chan worldruntime.JoinRequest
+	moves        chan moveRecord
+	actions      chan actionRecord
+	leaves       chan session.ID
+	fencedLeaves chan worldruntime.SessionOwnershipFence
+	joins        chan worldruntime.JoinRequest
 }
 
 func newFakeRuntime() *fakeRuntime {
 	return &fakeRuntime{
-		moves:   make(chan moveRecord, 4),
-		actions: make(chan actionRecord, 4),
-		leaves:  make(chan session.ID, 4),
-		joins:   make(chan worldruntime.JoinRequest, 4),
+		moves:        make(chan moveRecord, 4),
+		actions:      make(chan actionRecord, 4),
+		leaves:       make(chan session.ID, 4),
+		fencedLeaves: make(chan worldruntime.SessionOwnershipFence, 4),
+		joins:        make(chan worldruntime.JoinRequest, 4),
 	}
 }
 
@@ -52,8 +56,18 @@ func (r *fakeRuntime) EnqueueMove(id session.ID, sequence uint32, input protocol
 	return nil
 }
 
+func (r *fakeRuntime) EnqueueFencedMove(fence worldruntime.SessionOwnershipFence, sequence uint32, input protocol.ClientMoveInput) error {
+	r.moves <- moveRecord{sessionID: fence.SessionID, sequence: sequence, input: input, ownership: fence}
+	return nil
+}
+
 func (r *fakeRuntime) EnqueueUseAction(id session.ID, sequence uint32, action protocol.ClientUseAction) error {
 	r.actions <- actionRecord{sessionID: id, sequence: sequence, action: action}
+	return nil
+}
+
+func (r *fakeRuntime) EnqueueFencedUseAction(fence worldruntime.SessionOwnershipFence, sequence uint32, action protocol.ClientUseAction) error {
+	r.actions <- actionRecord{sessionID: fence.SessionID, sequence: sequence, action: action, ownership: fence}
 	return nil
 }
 
@@ -75,11 +89,24 @@ func (r *fakeRuntime) AwaitJoinOwned(_ context.Context, request worldruntime.Joi
 			ArchetypeID: "test-player",
 		},
 	})
-	return worldruntime.SessionOwnershipFence{}, nil
+	if request.Session.CharacterIdentity.Assurance != characteridentity.AssuranceTrusted {
+		return worldruntime.SessionOwnershipFence{}, nil
+	}
+	return worldruntime.SessionOwnershipFence{
+		SessionID:   request.Session.ID,
+		EntityID:    request.Session.EntityID,
+		CharacterID: request.Session.CharacterIdentity.ID,
+		Epoch:       1,
+	}, nil
 }
 
 func (r *fakeRuntime) EnqueueLeave(id session.ID) error {
 	r.leaves <- id
+	return nil
+}
+
+func (r *fakeRuntime) EnqueueFencedLeave(fence worldruntime.SessionOwnershipFence) error {
+	r.fencedLeaves <- fence
 	return nil
 }
 
@@ -147,6 +174,9 @@ func TestHandlerWelcomeSpawnAndRealtimeIngress(t *testing.T) {
 		if move.sequence != 1 || move.sessionID != session.ID(message.SessionID) || move.input.DirectionX != 0.5 || move.input.DirectionZ != -1 {
 			t.Fatalf("unexpected move ingress: %#v", move)
 		}
+		if move.ownership.Valid() {
+			t.Fatalf("ephemeral BrowserWS move unexpectedly fenced: %#v", move.ownership)
+		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for authoritative move ingress")
 	}
@@ -190,6 +220,11 @@ func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndClasslessRestore(t 
 	}
 	defer conn.CloseNow()
 
+	welcome := readEnvelope(t, ctx, conn, gamev1.Codec{})
+	welcomeMessage, ok := welcome.Message.(protocol.SessionWelcome)
+	if !ok {
+		t.Fatalf("welcome message type = %T", welcome.Message)
+	}
 	_ = readEnvelope(t, ctx, conn, gamev1.Codec{})
 	select {
 	case join := <-runtime.joins:
@@ -201,6 +236,38 @@ func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndClasslessRestore(t 
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for trusted E2E join")
+	}
+
+	clientFrame, err := transport.EncodeEnvelope(protocol.Envelope{
+		Delivery: protocol.DeliveryRealtimeSequenced,
+		Sequence: 2,
+		Message:  protocol.ClientMoveInput{DirectionX: 1},
+	}, gamev1.Codec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, clientFrame); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case move := <-runtime.moves:
+		if !move.ownership.Valid() || move.ownership.CharacterID != identity.ID || move.ownership.SessionID != session.ID(welcomeMessage.SessionID) {
+			t.Fatalf("trusted BrowserWS move missing ownership fence: %#v", move)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for fenced trusted move")
+	}
+
+	if err := conn.Close(websocket.StatusNormalClosure, "done"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case fence := <-runtime.fencedLeaves:
+		if !fence.Valid() || fence.CharacterID != identity.ID {
+			t.Fatalf("trusted BrowserWS leave fence = %#v", fence)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for fenced trusted leave")
 	}
 }
 
