@@ -30,29 +30,6 @@ func protocolClassResourceState(state character.State) (protocol.CharacterClassR
 	}, true
 }
 
-// queueCurrentLegacyClassResourceState intentionally no longer publishes CharacterClassState.
-// Current classless characters have no profession identity. The legacy Type117 wire remains only
-// as a Protocol v27 presentation adapter for the Server-owned generic action resource.
-func (r *Runtime) queueCurrentLegacyClassResourceState(s *session.Session) {
-	if s == nil {
-		return
-	}
-	state, ok := r.characters.State(s.EntityID)
-	if !ok {
-		return
-	}
-	resourceState, ok := protocolClassResourceState(state)
-	if !ok {
-		return
-	}
-	pending := r.pendingResourceMessages[s.ID]
-	if len(pending)+1 > maxPendingResourceMessagesPerSession {
-		_ = s.Connection().Close()
-		return
-	}
-	r.pendingResourceMessages[s.ID] = append(pending, resourceState)
-}
-
 // sendCurrentActionResourceState is the generic gameplay-facing publication path. Protocol v27
 // still encodes this state as legacy CharacterClassResourceState; callers must not infer a class.
 func (r *Runtime) sendCurrentActionResourceState(s *session.Session, report *StepReport) {
