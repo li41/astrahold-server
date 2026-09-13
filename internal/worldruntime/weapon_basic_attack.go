@@ -43,8 +43,8 @@ func (r *Runtime) equippedLowTierWeapon(actorID world.EntityID, sourceSessionID 
 }
 
 // weaponAttackCooldownSeconds converts exact authored milliseconds into the float32 duration used
-// by the existing combat cooldown service. Values such as 0.85 and 1.10 can round slightly upward
-// in float32, which would make math.Ceil add an unintended whole simulation tick at exact tick
+// by the existing combat cooldown service. Decimal millisecond values can round slightly upward in
+// float32, which would make math.Ceil add an unintended whole simulation tick at exact tick
 // boundaries. Moving one float32 ULP toward zero preserves the authored millisecond boundary while
 // still using the same combat cooldown authority and conservative ceil-to-tick policy.
 func weaponAttackCooldownSeconds(milliseconds uint32) float32 {
@@ -55,17 +55,22 @@ func weaponAttackCooldownSeconds(milliseconds uint32) float32 {
 	return math.Nextafter32(seconds, 0)
 }
 
-// applyEquippedBasicAttackTiming reuses the existing combat cooldown authority. It changes only
-// entity-target basic attacks with an authored low-tier weapon; gate/siege timing remains untouched.
+// applyEquippedBasicAttackTiming reuses the existing combat cooldown authority. ItemArchetype data
+// classifies the weapon only; shared base cadence is resolved from WeaponType. If that type has no
+// formally authored interval yet, the prepared action keeps its normal authoritative cooldown.
 func (r *Runtime) applyEquippedBasicAttackTiming(prepared *combat.PreparedAction, sourceSessionID session.ID) {
 	if prepared == nil || prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return
 	}
 	definition, ok := r.equippedLowTierWeapon(prepared.ActorEntityID, sourceSessionID)
-	if !ok || definition.Weapon.BasicAttackIntervalMS == 0 {
+	if !ok {
 		return
 	}
-	prepared.Definition.CooldownSeconds = weaponAttackCooldownSeconds(definition.Weapon.BasicAttackIntervalMS)
+	milliseconds, authored := defaultEquipmentCatalog.BasicAttackIntervalMSForItem(definition.ItemArchetypeID)
+	if !authored {
+		return
+	}
+	prepared.Definition.CooldownSeconds = weaponAttackCooldownSeconds(milliseconds)
 }
 
 func weaponBasicAttackHitChancePercent(accuracyModifier int32) uint32 {

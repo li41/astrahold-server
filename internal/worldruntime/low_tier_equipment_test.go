@@ -29,15 +29,16 @@ func TestLowTierWeaponDamageRangesUseTargetSizeAndExtraDamage(t *testing.T) {
 	if got := rollWeaponDamage(mace, equipmentcatalog.BodySizeSmall, 3); got != 10 { t.Fatalf("mace max + extra = %d", got) }
 }
 
-func TestWeaponAttackIntervalsPreserveAuthoredTicksAt20Hz(t *testing.T) {
+func TestWeaponAttackCooldownConversionPreservesExactTickBoundaries(t *testing.T) {
+	// Synthetic conversion fixtures only; production WeaponType cadence remains unauthored until
+	// product values are approved.
 	cases := []struct {
 		milliseconds uint32
 		wantTicks    uint64
 	}{
-		{850, 17},
-		{1000, 20},
-		{1100, 22},
-		{1150, 23},
+		{500, 10},
+		{750, 15},
+		{1200, 24},
 	}
 	for _, tc := range cases {
 		definition := combat.ActionDefinition{CooldownSeconds: weaponAttackCooldownSeconds(tc.milliseconds)}

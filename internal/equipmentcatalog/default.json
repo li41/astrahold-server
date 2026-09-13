@@ -1,5 +1,10 @@
 {
-  "revision": "low-tier-equipment-v1",
+  "revision": "low-tier-equipment-v2",
+  "weapon_types": [
+    {"weapon_type": "one_hand_sword"},
+    {"weapon_type": "one_hand_axe"},
+    {"weapon_type": "mace"}
+  ],
   "items": [
     {
       "item_archetype_id": "item_militia_iron_sword",
@@ -8,11 +13,11 @@
       "weight": 7,
       "material": "iron",
       "weapon": {
+        "weapon_type": "one_hand_sword",
         "small_damage": {"min": 6, "max": 9},
         "large_damage": {"min": 6, "max": 8},
         "extra_damage": 0,
-        "accuracy_modifier": 0,
-        "basic_attack_interval_ms": 1000
+        "accuracy_modifier": 0
       }
     },
     {
@@ -22,11 +27,11 @@
       "weight": 6,
       "material": "iron",
       "weapon": {
+        "weapon_type": "one_hand_sword",
         "small_damage": {"min": 5, "max": 8},
         "large_damage": {"min": 5, "max": 7},
         "extra_damage": 0,
-        "accuracy_modifier": 2,
-        "basic_attack_interval_ms": 850
+        "accuracy_modifier": 2
       }
     },
     {
@@ -36,11 +41,11 @@
       "weight": 8,
       "material": "iron",
       "weapon": {
+        "weapon_type": "one_hand_sword",
         "small_damage": {"min": 7, "max": 10},
         "large_damage": {"min": 6, "max": 9},
         "extra_damage": 0,
-        "accuracy_modifier": 0,
-        "basic_attack_interval_ms": 1100
+        "accuracy_modifier": 0
       }
     },
     {
@@ -50,11 +55,11 @@
       "weight": 10,
       "material": "iron_wood",
       "weapon": {
+        "weapon_type": "one_hand_axe",
         "small_damage": {"min": 5, "max": 8},
         "large_damage": {"min": 8, "max": 12},
         "extra_damage": 0,
-        "accuracy_modifier": -1,
-        "basic_attack_interval_ms": 1150
+        "accuracy_modifier": -1
       }
     },
     {
@@ -64,11 +69,11 @@
       "weight": 9,
       "material": "iron_wood",
       "weapon": {
+        "weapon_type": "mace",
         "small_damage": {"min": 6, "max": 9},
         "large_damage": {"min": 6, "max": 9},
         "extra_damage": 1,
-        "accuracy_modifier": 1,
-        "basic_attack_interval_ms": 1150
+        "accuracy_modifier": 1
       }
     },
     {

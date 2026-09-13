@@ -17,6 +17,7 @@ var ErrInvalidCatalog = errors.New("equipmentcatalog: invalid catalog")
 type Kind string
 type Slot string
 type BodySize string
+type WeaponType string
 
 const (
 	KindWeapon Kind = "weapon"
@@ -28,6 +29,10 @@ const (
 	BodySizeSmall BodySize = "small"
 	BodySizeLarge BodySize = "large"
 	BodySizeGiant BodySize = "giant"
+
+	WeaponTypeOneHandSword WeaponType = "one_hand_sword"
+	WeaponTypeOneHandAxe   WeaponType = "one_hand_axe"
+	WeaponTypeMace         WeaponType = "mace"
 )
 
 type DamageRange struct {
@@ -35,12 +40,20 @@ type DamageRange struct {
 	Max uint32 `json:"max"`
 }
 
+// WeaponTypeDefinition owns shared base cadence for a gameplay weapon type. A nil interval means
+// the type is classified but its formal cadence is not authored yet; callers must keep the normal
+// action-definition cadence rather than inventing one from item data or presentation assets.
+type WeaponTypeDefinition struct {
+	WeaponType            WeaponType `json:"weapon_type"`
+	BasicAttackIntervalMS *uint32    `json:"basic_attack_interval_ms,omitempty"`
+}
+
 type Weapon struct {
-	SmallDamage           DamageRange `json:"small_damage"`
-	LargeDamage           DamageRange `json:"large_damage"`
-	ExtraDamage           uint32      `json:"extra_damage"`
-	AccuracyModifier      int32       `json:"accuracy_modifier"`
-	BasicAttackIntervalMS uint32      `json:"basic_attack_interval_ms"`
+	WeaponType       WeaponType  `json:"weapon_type"`
+	SmallDamage      DamageRange `json:"small_damage"`
+	LargeDamage      DamageRange `json:"large_damage"`
+	ExtraDamage      uint32      `json:"extra_damage"`
+	AccuracyModifier int32       `json:"accuracy_modifier"`
 }
 
 type Shield struct {
@@ -61,13 +74,15 @@ type Definition struct {
 }
 
 type CatalogDefinition struct {
-	Revision string       `json:"revision"`
-	Items    []Definition `json:"items"`
+	Revision    string                 `json:"revision"`
+	WeaponTypes []WeaponTypeDefinition `json:"weapon_types,omitempty"`
+	Items       []Definition           `json:"items"`
 }
 
 type Catalog struct {
-	revision string
-	byItem   map[string]Definition
+	revision    string
+	byItem      map[string]Definition
+	weaponTypes map[WeaponType]WeaponTypeDefinition
 }
 
 func Default() (*Catalog, error) { return Load(defaultCatalogJSON) }
@@ -87,7 +102,28 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	if def.Revision == "" || len(def.Items) == 0 {
 		return nil, ErrInvalidCatalog
 	}
-	catalog := &Catalog{revision: def.Revision, byItem: make(map[string]Definition, len(def.Items))}
+	catalog := &Catalog{
+		revision:    def.Revision,
+		byItem:      make(map[string]Definition, len(def.Items)),
+		weaponTypes: make(map[WeaponType]WeaponTypeDefinition, len(def.WeaponTypes)),
+	}
+	for _, authored := range def.WeaponTypes {
+		authored.WeaponType = WeaponType(strings.TrimSpace(string(authored.WeaponType)))
+		if authored.WeaponType == "" {
+			return nil, ErrInvalidCatalog
+		}
+		if _, exists := catalog.weaponTypes[authored.WeaponType]; exists {
+			return nil, ErrInvalidCatalog
+		}
+		if authored.BasicAttackIntervalMS != nil {
+			if *authored.BasicAttackIntervalMS == 0 {
+				return nil, ErrInvalidCatalog
+			}
+			interval := *authored.BasicAttackIntervalMS
+			authored.BasicAttackIntervalMS = &interval
+		}
+		catalog.weaponTypes[authored.WeaponType] = authored
+	}
 	for _, item := range def.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
 		item.Material = strings.TrimSpace(item.Material)
@@ -99,10 +135,17 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		}
 		switch item.Kind {
 		case KindWeapon:
-			if item.Slot != SlotMainHand || item.Weapon == nil || item.Shield != nil || !validWeapon(*item.Weapon) {
+			if item.Slot != SlotMainHand || item.Weapon == nil || item.Shield != nil {
 				return nil, ErrInvalidCatalog
 			}
 			weapon := *item.Weapon
+			weapon.WeaponType = WeaponType(strings.TrimSpace(string(weapon.WeaponType)))
+			if !validWeapon(weapon) {
+				return nil, ErrInvalidCatalog
+			}
+			if _, ok := catalog.weaponTypes[weapon.WeaponType]; !ok {
+				return nil, ErrInvalidCatalog
+			}
 			item.Weapon = &weapon
 		case KindShield:
 			if item.Slot != SlotOffHand || item.Shield == nil || item.Weapon != nil || !validShield(*item.Shield) {
@@ -119,7 +162,7 @@ func New(def CatalogDefinition) (*Catalog, error) {
 }
 
 func validWeapon(w Weapon) bool {
-	return validRange(w.SmallDamage) && validRange(w.LargeDamage) && w.BasicAttackIntervalMS > 0
+	return w.WeaponType != "" && validRange(w.SmallDamage) && validRange(w.LargeDamage)
 }
 
 func validRange(r DamageRange) bool { return r.Min > 0 && r.Max >= r.Min }
@@ -155,6 +198,23 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 		item.Shield = &copy
 	}
 	return item, true
+}
+
+// BasicAttackIntervalMSForItem resolves shared WeaponType cadence. False means either the item is
+// not a catalog weapon or that WeaponType has no formally authored cadence yet.
+func (c *Catalog) BasicAttackIntervalMSForItem(itemArchetypeID string) (uint32, bool) {
+	if c == nil {
+		return 0, false
+	}
+	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	if !ok || item.Weapon == nil {
+		return 0, false
+	}
+	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]
+	if !ok || typeDefinition.BasicAttackIntervalMS == nil {
+		return 0, false
+	}
+	return *typeDefinition.BasicAttackIntervalMS, true
 }
 
 // UnitWeights returns a defensive copy of the authored carry weight for every catalog item.

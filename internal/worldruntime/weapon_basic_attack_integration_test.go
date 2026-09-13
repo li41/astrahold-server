@@ -17,10 +17,34 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testing.T) {
+func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
 	weaponAccuracyRoll = func() uint32 { return 0 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
+
+	// This interval is a test fixture, not production content. It proves that runtime cadence is
+	// resolved from WeaponType while the item itself carries only classification and damage data.
+	interval := uint32(1200)
+	catalog, err := equipmentcatalog.New(equipmentcatalog.CatalogDefinition{
+		Revision: "test-only-weapon-type-cadence",
+		WeaponTypes: []equipmentcatalog.WeaponTypeDefinition{{
+			WeaponType: equipmentcatalog.WeaponTypeOneHandAxe, BasicAttackIntervalMS: &interval,
+		}},
+		Items: []equipmentcatalog.Definition{{
+			ItemArchetypeID: "item_militia_battle_axe", Kind: equipmentcatalog.KindWeapon, Slot: equipmentcatalog.SlotMainHand,
+			Weight: 10, Material: "iron_wood",
+			Weapon: &equipmentcatalog.Weapon{
+				WeaponType: equipmentcatalog.WeaponTypeOneHandAxe,
+				SmallDamage: equipmentcatalog.DamageRange{Min: 5, Max: 8}, LargeDamage: equipmentcatalog.DamageRange{Min: 8, Max: 12}, AccuracyModifier: -1,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := defaultEquipmentCatalog
+	defaultEquipmentCatalog = catalog
+	t.Cleanup(func() { defaultEquipmentCatalog = oldCatalog })
 
 	definition := gameplayworld.Definition{
 		SchemaVersion: gameplayworld.SchemaVersion,
@@ -117,8 +141,8 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	if firstEvent.Damage < 8 || firstEvent.Damage > 12 {
 		t.Fatalf("large-target axe damage=%d, want 8..12", firstEvent.Damage)
 	}
-	if firstEvent.CooldownReadyTick != 26 {
-		t.Fatalf("axe cooldown ready tick=%d, want 26", firstEvent.CooldownReadyTick)
+	if firstEvent.CooldownReadyTick != 27 {
+		t.Fatalf("type cadence ready tick=%d, want 27", firstEvent.CooldownReadyTick)
 	}
 	monster, ok := rt.combatantState(monsterID)
 	if !ok || monster.HP != 200-firstEvent.Damage {
@@ -126,8 +150,8 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	}
 	firstHP := monster.HP
 
-	// Tick 14 is beyond the catalog's old 0.5-second action cooldown (10 ticks) but still
-	// before the battle axe's authored 1.15-second interval (23 ticks from tick 3).
+	// Tick 14 is beyond the action definition's 0.5-second fallback but before this test-only
+	// WeaponType cadence (24 ticks from tick 3), proving the shared type value owns legality.
 	if err := rt.EnqueueUseAction(s.ID, 3, attack); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +167,7 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	if err := rt.EnqueueUseAction(s.ID, 4, attack); err != nil {
 		t.Fatal(err)
 	}
-	report = rt.Step(26, 50*time.Millisecond)
+	report = rt.Step(27, 50*time.Millisecond)
 	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
 		t.Fatalf("ready attack report=%#v", report)
 	}
