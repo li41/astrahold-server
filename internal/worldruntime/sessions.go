@@ -2,7 +2,6 @@ package worldruntime
 
 import (
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/session"
@@ -111,18 +110,13 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			}
 		}
 		entity.Transform = request.Restore.Transform
-		resourceID := classresource.Empty
-		if definition, ok := classresource.PrimaryForClass(request.Restore.LegacyRuntimeClassID); ok {
-			resourceID = definition.ID
-		}
 		state := character.State{
-			EntityID:         request.Entity.ID,
-			ActionResourceID: resourceID,
-			HP:               request.Restore.HP,
-			MaxHP:            request.Restore.MaxHP,
-			MP:               request.Restore.MP,
-			MaxMP:            request.Restore.MaxMP,
-			Defeated:         request.Restore.Defeated,
+			EntityID: request.Entity.ID,
+			HP:       request.Restore.HP,
+			MaxHP:    request.Restore.MaxHP,
+			MP:       request.Restore.MP,
+			MaxMP:    request.Restore.MaxMP,
+			Defeated: request.Restore.Defeated,
 		}
 		restoredState = &state
 		if request.Restore.Defeated {
@@ -260,18 +254,9 @@ func (r *Runtime) applyMove(name string, c moveInputCommand, report *StepReport)
 		s.MarkProcessedInput(c.sequence)
 		return
 	}
-	if err := r.world.SetMoveInput(s.EntityID, movement.Input{Direction: world.Vec3{X: c.input.DirectionX, Z: c.input.DirectionZ}}); err != nil {
+	if err := r.world.SetMoveInput(s.EntityID, c.input); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: c.sessionID, Err: err})
 		return
 	}
 	s.MarkProcessedInput(c.sequence)
-}
-
-func (r *Runtime) applyTeleport(name string, c teleportCommand, report *StepReport) {
-	if err := r.world.Teleport(c.entityID, c.position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
-}
-func (r *Runtime) applyTeleportBatch(name string, c teleportBatchCommand, report *StepReport) {
-	for _, request := range c.requests {
-		if err := r.world.Teleport(request.EntityID, request.Position); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}) }
-	}
 }
