@@ -28,6 +28,8 @@ type DamageRequest struct {
 	Blockable                    bool
 	PhysicalDefenseIgnorePercent uint8
 	SelfDamageReductionPercent   uint8
+	AdditionalPhysicalDefense    uint32
+	MagicDefense                 uint32
 }
 
 // DamageResult is the single authoritative outcome used by HP mutation, combat events and
@@ -47,6 +49,14 @@ func physicalMitigationRateWithIgnore(physicalDefense uint32, ignorePercent uint
 	}
 	effectiveDefense := float64(physicalDefense) * (1 - float64(ignorePercent)/100)
 	return effectiveDefense / (effectiveDefense + physicalDefenseScale)
+}
+
+func magicMitigationRate(magicDefense uint32) float64 {
+	if magicDefense == 0 {
+		return 0
+	}
+	defense := float64(magicDefense)
+	return defense / (defense + physicalDefenseScale)
 }
 
 func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatalog.Definition, bool) {
@@ -75,6 +85,12 @@ func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (Dam
 	if definition, ok := r.equippedLowTierShield(request.TargetEntityID); ok {
 		shield = definition.Shield
 	}
+	modifiers, err := r.equippedInstanceModifiers(request.TargetEntityID)
+	if err != nil {
+		return DamageResult{}, err
+	}
+	request.AdditionalPhysicalDefense = saturatingAddUint32(request.AdditionalPhysicalDefense, modifiers.PhysicalDefense)
+	request.MagicDefense = saturatingAddUint32(request.MagicDefense, modifiers.MagicDefense)
 	if request.SelfDamageReductionPercent == 0 && r.combat != nil {
 		request.SelfDamageReductionPercent = r.combat.SelfDamageReductionPercent(request.TargetEntityID, tick)
 	}
@@ -83,6 +99,14 @@ func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (Dam
 		roll = rand.Uint32()
 	}
 	return resolveDamageMitigation(request, shield, roll)
+}
+
+func saturatingAddUint32(a, b uint32) uint32 {
+	total := uint64(a) + uint64(b)
+	if total > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(total)
 }
 
 // resolveDamageMitigation is pure so formula and probability boundaries are deterministic in tests.
@@ -105,8 +129,12 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 
 	switch request.DamageType {
 	case combat.DamagePhysical:
-		if shield != nil && shield.PhysicalDefense > 0 {
-			damage *= 1 - physicalMitigationRateWithIgnore(shield.PhysicalDefense, request.PhysicalDefenseIgnorePercent)
+		physicalDefense := request.AdditionalPhysicalDefense
+		if shield != nil {
+			physicalDefense = saturatingAddUint32(physicalDefense, shield.PhysicalDefense)
+		}
+		if physicalDefense > 0 {
+			damage *= 1 - physicalMitigationRateWithIgnore(physicalDefense, request.PhysicalDefenseIgnorePercent)
 		}
 		if shield != nil && request.Blockable && shield.BlockChancePercent > 0 && blockRoll%100 < uint32(shield.BlockChancePercent) {
 			blocked = true
@@ -115,6 +143,9 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 	case combat.DamageMagic:
 		if request.PhysicalDefenseIgnorePercent != 0 {
 			return DamageResult{}, ErrInvalidPhysicalDefenseIgnore
+		}
+		if request.MagicDefense > 0 {
+			damage *= 1 - magicMitigationRate(request.MagicDefense)
 		}
 		if shield != nil && shield.MagicDamageReductionPercent > 0 {
 			damage *= 1 - float64(shield.MagicDamageReductionPercent)/100
