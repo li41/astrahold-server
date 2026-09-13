@@ -17,7 +17,10 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const shutdownNetworkErrorCorrelationWindow = time.Second
+const (
+	shutdownNetworkErrorCorrelationWindow = time.Second
+	maxNetworkErrorSamples                = 8
+)
 
 type BotConfig struct {
 	TCPAddress     string
@@ -28,30 +31,37 @@ type BotConfig struct {
 	ConnectTimeout time.Duration
 }
 
+type BotNetworkErrorSample struct {
+	BotIndex int    `json:"bot_index"`
+	Stage    string `json:"stage"`
+	Error    string `json:"error"`
+}
+
 type BotReport struct {
-	SchemaVersion            int             `json:"schema_version"`
-	Scenario                 Scenario        `json:"scenario"`
-	RequestedClients         int             `json:"requested_clients"`
-	ConnectedClients         uint64          `json:"connected_clients"`
-	ReadyClients             uint64          `json:"ready_clients"`
-	FailedConnections        uint64          `json:"failed_connections"`
-	DurationSeconds          float64         `json:"duration_seconds"`
-	ConnectionLatency        DurationSummary `json:"connection_latency"`
-	MovesSent                uint64          `json:"moves_sent"`
-	UDPBytesSent             uint64          `json:"udp_bytes_sent"`
-	UDPBytesReceived         uint64          `json:"udp_bytes_received"`
-	TCPBytesReceived         uint64          `json:"tcp_bytes_received"`
-	ReliableMessages         uint64          `json:"reliable_messages"`
-	RealtimeMessages         uint64          `json:"realtime_messages"`
-	Snapshots                uint64          `json:"snapshots"`
-	CompletedSnapshots       uint64          `json:"completed_snapshots"`
-	IncompleteSnapshotResets uint64          `json:"incomplete_snapshot_resets"`
-	Corrections              uint64          `json:"corrections"`
-	Spawns                   uint64          `json:"spawns"`
-	Despawns                 uint64          `json:"despawns"`
-	DynamicStates            uint64          `json:"dynamic_states"`
-	DecodeErrors             uint64          `json:"decode_errors"`
-	NetworkErrors            uint64          `json:"network_errors"`
+	SchemaVersion            int                     `json:"schema_version"`
+	Scenario                 Scenario                `json:"scenario"`
+	RequestedClients         int                     `json:"requested_clients"`
+	ConnectedClients         uint64                  `json:"connected_clients"`
+	ReadyClients             uint64                  `json:"ready_clients"`
+	FailedConnections        uint64                  `json:"failed_connections"`
+	DurationSeconds          float64                 `json:"duration_seconds"`
+	ConnectionLatency        DurationSummary         `json:"connection_latency"`
+	MovesSent                uint64                  `json:"moves_sent"`
+	UDPBytesSent             uint64                  `json:"udp_bytes_sent"`
+	UDPBytesReceived         uint64                  `json:"udp_bytes_received"`
+	TCPBytesReceived         uint64                  `json:"tcp_bytes_received"`
+	ReliableMessages         uint64                  `json:"reliable_messages"`
+	RealtimeMessages         uint64                  `json:"realtime_messages"`
+	Snapshots                uint64                  `json:"snapshots"`
+	CompletedSnapshots       uint64                  `json:"completed_snapshots"`
+	IncompleteSnapshotResets uint64                  `json:"incomplete_snapshot_resets"`
+	Corrections              uint64                  `json:"corrections"`
+	Spawns                   uint64                  `json:"spawns"`
+	Despawns                 uint64                  `json:"despawns"`
+	DynamicStates            uint64                  `json:"dynamic_states"`
+	DecodeErrors             uint64                  `json:"decode_errors"`
+	NetworkErrors            uint64                  `json:"network_errors"`
+	NetworkErrorSamples      []BotNetworkErrorSample `json:"network_error_samples,omitempty"`
 }
 
 type botCollector struct {
@@ -76,6 +86,38 @@ type botCollector struct {
 
 	latencyMu sync.Mutex
 	latencies []time.Duration
+
+	networkErrorMu      sync.Mutex
+	networkErrorSamples []BotNetworkErrorSample
+}
+
+func (c *botCollector) recordNetworkError(botIndex int, stage string, err error) {
+	if c == nil {
+		return
+	}
+	c.networkErrors.Add(1)
+	if err == nil {
+		return
+	}
+	c.networkErrorMu.Lock()
+	defer c.networkErrorMu.Unlock()
+	if len(c.networkErrorSamples) >= maxNetworkErrorSamples {
+		return
+	}
+	c.networkErrorSamples = append(c.networkErrorSamples, BotNetworkErrorSample{
+		BotIndex: botIndex,
+		Stage:    stage,
+		Error:    err.Error(),
+	})
+}
+
+func (c *botCollector) networkErrorSamplesSnapshot() []BotNetworkErrorSample {
+	if c == nil {
+		return nil
+	}
+	c.networkErrorMu.Lock()
+	defer c.networkErrorMu.Unlock()
+	return append([]BotNetworkErrorSample(nil), c.networkErrorSamples...)
 }
 
 func RunBots(ctx context.Context, config BotConfig) (BotReport, error) {
@@ -106,8 +148,8 @@ func RunBots(ctx context.Context, config BotConfig) (BotReport, error) {
 				case <-timer.C:
 				}
 			}
-			if err := runBot(ctx, config, collector); err != nil {
-				collector.networkErrors.Add(1)
+			if err := runBot(ctx, config, collector, index); err != nil {
+				collector.recordNetworkError(index, "bot_run", err)
 			}
 		}(i)
 	}
@@ -116,6 +158,7 @@ func RunBots(ctx context.Context, config BotConfig) (BotReport, error) {
 	collector.latencyMu.Lock()
 	latencies := append([]time.Duration(nil), collector.latencies...)
 	collector.latencyMu.Unlock()
+	networkErrorSamples := collector.networkErrorSamplesSnapshot()
 
 	return BotReport{
 		SchemaVersion:            ReportSchemaVersion,
@@ -141,10 +184,11 @@ func RunBots(ctx context.Context, config BotConfig) (BotReport, error) {
 		DynamicStates:            collector.dynamicStates.Load(),
 		DecodeErrors:             collector.decodeErrors.Load(),
 		NetworkErrors:            collector.networkErrors.Load(),
+		NetworkErrorSamples:      networkErrorSamples,
 	}, nil
 }
 
-func runBot(ctx context.Context, config BotConfig, collector *botCollector) error {
+func runBot(ctx context.Context, config BotConfig, collector *botCollector, botIndex int) error {
 	dialStarted := time.Now()
 	dialer := net.Dialer{Timeout: config.ConnectTimeout}
 	raw, err := dialer.DialContext(ctx, "tcp", config.TCPAddress)
@@ -199,11 +243,11 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 	readers.Add(2)
 	go func() {
 		defer readers.Done()
-		reliableReadLoop(botCtx, cancel, counted, codec, collector)
+		reliableReadLoop(botCtx, cancel, counted, codec, collector, botIndex)
 	}()
 	go func() {
 		defer readers.Done()
-		udpReadLoop(botCtx, udp, token, codec, collector)
+		udpReadLoop(botCtx, udp, token, codec, collector, botIndex)
 	}()
 	defer func() {
 		cancel()
@@ -217,7 +261,6 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 	defer ticker.Stop()
 	started := time.Now()
 	var sequence uint32
-
 	// 第一包立刻送出，讓 Server 綁定 realtime endpoint，不等待第一個 ticker。
 	sequence++
 	if err := sendMove(udp, token, codec, config.Scenario, welcome.EntityID, sequence, time.Since(started), collector); err != nil {
@@ -231,7 +274,7 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 		case <-ticker.C:
 			sequence++
 			if err := sendMove(udp, token, codec, config.Scenario, welcome.EntityID, sequence, time.Since(started), collector); err != nil {
-				recordUDPFailureUnlessStopping(botCtx, collector)
+				recordUDPFailureUnlessStopping(botCtx, collector, botIndex, "udp_send", err)
 				return nil
 			}
 		}
@@ -243,16 +286,16 @@ func runBot(ctx context.Context, config BotConfig, collector *botCollector) erro
 // Linux loopback 的 UDP ECONNREFUSED 可能比該 peer 的 TCP EOF 早超過一個 world tick。
 // 若 TCP 在 window 內同步結束，讓 reliable reader 先 drain 尾端訊息後視為正常 shutdown；
 // 若 TCP 仍存活，仍照常記為真實 network error。send / receive 兩側都使用同一判定。
-func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollector) {
-	recordUDPFailureUnlessStoppingWithin(botCtx, collector, shutdownNetworkErrorCorrelationWindow)
+func recordUDPFailureUnlessStopping(botCtx context.Context, collector *botCollector, botIndex int, stage string, err error) {
+	recordUDPFailureUnlessStoppingWithin(botCtx, collector, botIndex, stage, err, shutdownNetworkErrorCorrelationWindow)
 }
 
-func recordUDPFailureUnlessStoppingWithin(botCtx context.Context, collector *botCollector, window time.Duration) {
+func recordUDPFailureUnlessStoppingWithin(botCtx context.Context, collector *botCollector, botIndex int, stage string, err error, window time.Duration) {
 	if botCtx == nil || collector == nil || botCtx.Err() != nil {
 		return
 	}
 	if window <= 0 {
-		collector.networkErrors.Add(1)
+		collector.recordNetworkError(botIndex, stage, err)
 		return
 	}
 	timer := time.NewTimer(window)
@@ -261,7 +304,7 @@ func recordUDPFailureUnlessStoppingWithin(botCtx context.Context, collector *bot
 	case <-botCtx.Done():
 		return
 	case <-timer.C:
-		collector.networkErrors.Add(1)
+		collector.recordNetworkError(botIndex, stage, err)
 	}
 }
 
@@ -291,12 +334,12 @@ func sendMove(udp *net.UDPConn, token tcpudp.Token, codec transport.PayloadCodec
 	return nil
 }
 
-func reliableReadLoop(ctx context.Context, cancel context.CancelFunc, conn net.Conn, codec transport.PayloadCodec, collector *botCollector) {
+func reliableReadLoop(ctx context.Context, cancel context.CancelFunc, conn net.Conn, codec transport.PayloadCodec, collector *botCollector, botIndex int) {
 	for {
 		envelope, err := transport.ReadEnvelope(conn, codec)
 		if err != nil {
 			if ctx.Err() == nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-				collector.networkErrors.Add(1)
+				collector.recordNetworkError(botIndex, "tcp_read", err)
 			}
 			cancel()
 			return
@@ -306,14 +349,14 @@ func reliableReadLoop(ctx context.Context, cancel context.CancelFunc, conn net.C
 	}
 }
 
-func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Token, codec transport.PayloadCodec, collector *botCollector) {
+func udpReadLoop(ctx context.Context, udp *net.UDPConn, expectedToken tcpudp.Token, codec transport.PayloadCodec, collector *botCollector, botIndex int) {
 	buffer := make([]byte, tcpudp.MaxDatagramSize)
 	assembler := snapshotAssembly{}
 	for {
 		n, err := udp.Read(buffer)
 		if err != nil {
 			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
-				recordUDPFailureUnlessStopping(ctx, collector)
+				recordUDPFailureUnlessStopping(ctx, collector, botIndex, "udp_read", err)
 			}
 			return
 		}
