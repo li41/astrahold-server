@@ -11,16 +11,16 @@ import (
 	"github.com/li41/astrahold-server/internal/classid"
 )
 
-func TestStoreV9SnapshotIsClassless(t *testing.T) {
+func TestStoreV10SnapshotIsClassless(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
-	identity := trusted(t, "character:classless-v9")
+	identity := trusted(t, "character:classless-v10")
 	snapshot := testSnapshot()
 	record, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if record.SchemaVersion != ClasslessSchemaVersion || record.Snapshot != snapshot { t.Fatalf("record=%#v", record) }
+	if record.SchemaVersion != SchemaVersion || record.Snapshot != snapshot { t.Fatalf("record=%#v", record) }
 	data, err := os.ReadFile(store.recordPath(identity.ID)); if err != nil { t.Fatal(err) }
-	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("v9 durable record still contains class_id: %s", data) }
+	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("v10 durable record still contains class_id: %s", data) }
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
 	if loaded.Snapshot != snapshot { t.Fatalf("loaded snapshot=%#v want=%#v", loaded.Snapshot, snapshot) }

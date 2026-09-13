@@ -22,6 +22,7 @@ func TestWeaponBasicAttackHitChanceUsesFormalRatingScale(t *testing.T) {
 			if got := weaponBasicAttackHitChanceBasisPoints(tc.modifier, 0, 0); got != tc.want {
 				t.Fatalf("hit chance = %d basis points, want %d", got, tc.want)
 			}
+		})
 	}
 }
 
