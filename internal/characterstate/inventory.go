@@ -17,11 +17,11 @@ type InventoryStack struct {
 // JSON strings are canonical Server-internal persistence encodings. Initialized=false remains the
 // migration fence for records predating durable inventory.
 type InventoryState struct {
-	Initialized         bool   `json:"initialized"`
-	StacksJSON          string `json:"stacks_json,omitempty"`
-	InstancesJSON       string `json:"instances_json,omitempty"`
-	MainHand            string `json:"main_hand,omitempty"`
-	OffHand             string `json:"off_hand,omitempty"`
+	Initialized          bool   `json:"initialized"`
+	StacksJSON           string `json:"stacks_json,omitempty"`
+	InstancesJSON        string `json:"instances_json,omitempty"`
+	MainHand             string `json:"main_hand,omitempty"`
+	OffHand              string `json:"off_hand,omitempty"`
 	MainHandInstanceJSON string `json:"main_hand_instance_json,omitempty"`
 	OffHandInstanceJSON  string `json:"off_hand_instance_json,omitempty"`
 }
@@ -51,17 +51,8 @@ func NewInventoryStateWithInstances(
 
 	canonicalInstances, err := canonicalInstanceList(instances)
 	if err != nil { return InventoryState{}, err }
-	if len(canonicalInstances) > 0 {
-		raw := make([]json.RawMessage, 0, len(canonicalInstances))
-		for _, instance := range canonicalInstances {
-			data, err := iteminstance.CanonicalShapeJSON(instance)
-			if err != nil { return InventoryState{}, ErrInvalidSnapshot }
-			raw = append(raw, json.RawMessage(data))
-		}
-		data, err := json.Marshal(raw)
-		if err != nil { return InventoryState{}, err }
-		state.InstancesJSON = string(data)
-	}
+	state.InstancesJSON, err = encodeCanonicalInstances(canonicalInstances)
+	if err != nil { return InventoryState{}, err }
 
 	if mainHandInstance != nil {
 		data, err := iteminstance.CanonicalShapeJSON(*mainHandInstance)
@@ -127,6 +118,19 @@ func canonicalInstanceList(instances []iteminstance.Instance) ([]iteminstance.In
 	return canonical, nil
 }
 
+func encodeCanonicalInstances(instances []iteminstance.Instance) (string, error) {
+	if len(instances) == 0 { return "", nil }
+	raw := make([]json.RawMessage, 0, len(instances))
+	for _, instance := range instances {
+		data, err := iteminstance.CanonicalShapeJSON(instance)
+		if err != nil { return "", ErrInvalidSnapshot }
+		raw = append(raw, json.RawMessage(data))
+	}
+	data, err := json.Marshal(raw)
+	if err != nil { return "", err }
+	return string(data), nil
+}
+
 func validateInventoryState(state InventoryState) error {
 	if !state.Initialized {
 		if state.StacksJSON != "" || state.InstancesJSON != "" || strings.TrimSpace(state.MainHand) != "" || strings.TrimSpace(state.OffHand) != "" || state.MainHandInstanceJSON != "" || state.OffHandInstanceJSON != "" {
@@ -165,8 +169,8 @@ func validateInventoryState(state InventoryState) error {
 	}
 	if len(instances) == 0 && state.InstancesJSON != "" { return ErrInvalidSnapshot }
 	if len(instances) > 0 {
-		canonical, err := NewInventoryStateWithInstances(nil, instances, "", "", nil, nil)
-		if err != nil || canonical.InstancesJSON != state.InstancesJSON { return ErrInvalidSnapshot }
+		encoded, err := encodeCanonicalInstances(instances)
+		if err != nil || encoded != state.InstancesJSON { return ErrInvalidSnapshot }
 	}
 
 	mainInstance, hasMainInstance, err := state.MainHandInstance()
