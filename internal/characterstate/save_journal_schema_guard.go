@@ -39,6 +39,9 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	if decoded.SchemaVersion < LearnedSkillsSaveJournalSchemaVersion && len(decoded.Snapshot.LearnedSkills) != 0 {
 		return fmt.Errorf("learned skills require save journal schema %d", LearnedSkillsSaveJournalSchemaVersion)
 	}
+	if decoded.SchemaVersion < ItemInstanceSaveJournalSchemaVersion && decoded.Snapshot.Inventory.HasItemInstances() {
+		return fmt.Errorf("item instances require save journal schema %d", ItemInstanceSaveJournalSchemaVersion)
+	}
 
 	if decoded.SchemaVersion == LoadoutSaveJournalSchemaVersion {
 		decoded.Snapshot.LearnedSkills = append([]string(nil), decoded.Snapshot.CombatLoadout...)
