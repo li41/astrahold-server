@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-func TestDefaultCatalogLocksLowTierEquipmentV2(t *testing.T) {
+func TestDefaultCatalogLocksLowTierEquipmentV3(t *testing.T) {
 	catalog, err := Default()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := catalog.Revision(); got != "low-tier-equipment-v2" {
+	if got := catalog.Revision(); got != "low-tier-equipment-v3" {
 		t.Fatalf("revision = %q", got)
 	}
 
@@ -22,12 +22,13 @@ func TestDefaultCatalogLocksLowTierEquipmentV2(t *testing.T) {
 		extra      uint32
 		accuracy   int32
 		weight     uint32
+		intervalMS uint32
 	}{
-		{"item_militia_iron_sword", WeaponTypeOneHandSword, DamageRange{6, 9}, DamageRange{6, 8}, 0, 0, 7},
-		{"item_light_guard_sword", WeaponTypeOneHandSword, DamageRange{5, 8}, DamageRange{5, 7}, 0, 2, 6},
-		{"item_gladiator_iron_sword", WeaponTypeOneHandSword, DamageRange{7, 10}, DamageRange{6, 9}, 0, 0, 8},
-		{"item_militia_battle_axe", WeaponTypeOneHandAxe, DamageRange{5, 8}, DamageRange{8, 12}, 0, -1, 10},
-		{"item_iron_war_mace", WeaponTypeMace, DamageRange{6, 9}, DamageRange{6, 9}, 1, 1, 9},
+		{"item_militia_iron_sword", WeaponTypeOneHandSword, DamageRange{6, 9}, DamageRange{6, 8}, 0, 0, 7, 900},
+		{"item_light_guard_sword", WeaponTypeOneHandSword, DamageRange{5, 8}, DamageRange{5, 7}, 0, 2, 6, 900},
+		{"item_gladiator_iron_sword", WeaponTypeOneHandSword, DamageRange{7, 10}, DamageRange{6, 9}, 0, 0, 8, 900},
+		{"item_militia_battle_axe", WeaponTypeOneHandAxe, DamageRange{5, 8}, DamageRange{8, 12}, 0, -1, 10, 1050},
+		{"item_iron_war_mace", WeaponTypeMace, DamageRange{6, 9}, DamageRange{6, 9}, 1, 1, 9, 1050},
 	}
 	for _, tc := range cases {
 		item, ok := catalog.Resolve(tc.id)
@@ -40,8 +41,9 @@ func TestDefaultCatalogLocksLowTierEquipmentV2(t *testing.T) {
 		if item.Weapon.WeaponType != tc.weaponType || item.Weapon.SmallDamage != tc.small || item.Weapon.LargeDamage != tc.large || item.Weapon.ExtraDamage != tc.extra || item.Weapon.AccuracyModifier != tc.accuracy || item.Weight != tc.weight {
 			t.Fatalf("%s unexpected values: %#v", tc.id, item)
 		}
-		if interval, authored := catalog.BasicAttackIntervalMSForItem(tc.id); authored || interval != 0 {
-			t.Fatalf("%s unexpectedly has formal cadence %dms", tc.id, interval)
+		interval, authored := catalog.BasicAttackIntervalMSForItem(tc.id)
+		if !authored || interval != tc.intervalMS {
+			t.Fatalf("%s cadence = %d authored=%v, want %d", tc.id, interval, authored, tc.intervalMS)
 		}
 	}
 
@@ -65,6 +67,41 @@ func TestDefaultCatalogLocksLowTierEquipmentV2(t *testing.T) {
 		}
 		if item.Shield.PhysicalDefense != tc.physical || item.Shield.BlockChancePercent != tc.block || item.Shield.BlockDamageReductionPercent != tc.blockReduction || item.Shield.MagicDamageReductionPercent != tc.magicReduction || item.Weight != tc.weight {
 			t.Fatalf("%s unexpected values: %#v", tc.id, item)
+		}
+	}
+}
+
+func TestDefaultCatalogLocksFormalWeaponTypeCadence(t *testing.T) {
+	catalog, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[WeaponType]uint32{
+		"one_hand_sword": 900,
+		"dagger": 650,
+		"one_hand_axe": 1050,
+		"one_hand_spear": 1000,
+		"warhammer": 1150,
+		"morning_star": 1200,
+		"mace": 1050,
+		"two_hand_sword": 1350,
+		"two_hand_axe": 1500,
+		"two_hand_spear": 1300,
+		"knuckles": 600,
+		"claw": 700,
+		"dual_blades": 700,
+		"bow": 1200,
+		"crossbow": 1550,
+		"sling": 1100,
+		"staff": 1250,
+	}
+	if len(catalog.weaponTypes) != len(want) {
+		t.Fatalf("weapon type count = %d, want %d", len(catalog.weaponTypes), len(want))
+	}
+	for weaponType, intervalMS := range want {
+		definition, ok := catalog.weaponTypes[weaponType]
+		if !ok || definition.BasicAttackIntervalMS == nil || *definition.BasicAttackIntervalMS != intervalMS {
+			t.Fatalf("%s cadence = %#v, want %dms", weaponType, definition.BasicAttackIntervalMS, intervalMS)
 		}
 	}
 }
