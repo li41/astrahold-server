@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/actionresource"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/classid"
-	"github.com/li41/astrahold-server/internal/classresource"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/session"
@@ -37,8 +37,9 @@ func TestLegacyRuntimeClassSeedsOnlyCompatibilityResourceAndDoesNotEnterDurableL
 	if err := rt.EnqueueJoin(JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}); err != nil { t.Fatal(err) }
 	if report := rt.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("join errors=%#v", report.CommandErrors) }
 	state, ok := rt.characters.State(1)
-	if !ok || state.ClassResourceID != classresource.Resolve || state.ClassResource != 0 || state.MaxClassResource != 100 {
-		t.Fatalf("runtime compatibility resource=%#v ok=%v", state, ok)
+	resource := state.ActionResource()
+	if !ok || resource.ID != actionresource.Resolve || resource.Current != 0 || resource.Max != 100 {
+		t.Fatalf("runtime compatibility resource=%#v ok=%v", resource, ok)
 	}
 	if err := rt.EnqueueLeave(sess.ID); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("leave errors=%#v", report.CommandErrors) }
