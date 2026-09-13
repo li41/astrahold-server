@@ -59,7 +59,15 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 		t.Fatalf("initial gate=%#v", state1.Gates)
 	}
 
-	if err := rt.EnqueueAttackGate(1, 1, "main-gate"); err != nil { t.Fatal(err) }
+	gateAttack := func(sequence uint32) error {
+		return rt.EnqueueUseAction(1, sequence, protocol.ClientUseAction{
+			ActionID:   legacyGateActionID,
+			TargetKind: protocol.ActionTargetGate,
+			TargetID:   "main-gate",
+		})
+	}
+
+	if err := gateAttack(1); err != nil { t.Fatal(err) }
 	first := rt.Step(2, 50*time.Millisecond)
 	if len(first.CommandErrors) != 0 || len(first.ActionRejections) != 0 { t.Fatalf("first report=%#v", first) }
 	started1 := nextActionStarted(t, conn)
@@ -69,7 +77,7 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 		t.Fatalf("after first attack=%#v", state2)
 	}
 
-	if err := rt.EnqueueAttackGate(1, 2, "main-gate"); err != nil { t.Fatal(err) }
+	if err := gateAttack(2); err != nil { t.Fatal(err) }
 	cooldown := rt.Step(3, 50*time.Millisecond)
 	if len(cooldown.CommandErrors) != 0 || len(cooldown.ActionRejections) != 1 || !errors.Is(cooldown.ActionRejections[0].Err, siege.ErrGateAttackCooldown) {
 		t.Fatalf("cooldown report=%#v", cooldown)
@@ -79,7 +87,7 @@ func TestGateAttackUpdatesHPAndOpensBlocker(t *testing.T) {
 		t.Fatalf("cooldown rejection=%#v", rejected)
 	}
 
-	if err := rt.EnqueueAttackGate(1, 3, "main-gate"); err != nil { t.Fatal(err) }
+	if err := gateAttack(3); err != nil { t.Fatal(err) }
 	destroy := rt.Step(12, 50*time.Millisecond)
 	if len(destroy.CommandErrors) != 0 || len(destroy.ActionRejections) != 0 { t.Fatalf("destroy report=%#v", destroy) }
 	started2 := nextActionStarted(t, conn)
