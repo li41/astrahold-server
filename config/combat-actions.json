@@ -10,7 +10,7 @@
       "base_damage": 100,
       "damage_type": "physical",
       "blockable": true,
-      "cooldown_seconds": 0.5
+      "cooldown_seconds": 0.6
     },
     {
       "id": "shatter-strike",
