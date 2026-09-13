@@ -59,7 +59,7 @@ func TestStepRetriesPendingLegacyClassResourceFeedback(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if err := rt.sessions.Add(s); err != nil { t.Fatal(err) }
 	rt.replication.Register(s.ID)
-	if err := rt.characters.RegisterState(character.State{EntityID: 1, ClassResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := rt.characters.RegisterState(character.State{EntityID: 1, ActionResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	if _, err := rt.characters.GainActionResource(1, actionresource.Resolve, 8); err != nil { t.Fatal(err) }
 
 	first := StepReport{Tick: 1}
@@ -99,7 +99,7 @@ func TestStepAttemptsPendingLegacyClassResourceFeedbackOncePerTick(t *testing.T)
 	if err != nil { t.Fatal(err) }
 	if err := rt.sessions.Add(s); err != nil { t.Fatal(err) }
 	rt.replication.Register(s.ID)
-	if err := rt.characters.RegisterState(character.State{EntityID: 1, ClassResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := rt.characters.RegisterState(character.State{EntityID: 1, ActionResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	if _, err := rt.characters.GainActionResource(1, actionresource.Resolve, 8); err != nil { t.Fatal(err) }
 
 	first := StepReport{Tick: 1}
