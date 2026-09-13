@@ -1,6 +1,6 @@
 {
-  "schema_version": 3,
-  "revision": "classless-baseline-001",
+  "schema_version": 4,
+  "revision": "classless-baseline-002",
   "actions": [
     {
       "id": "basic-attack",
@@ -9,6 +9,7 @@
       "range": 4.5,
       "base_damage": 100,
       "damage_type": "physical",
+      "critical_eligible": true,
       "blockable": true,
       "cooldown_seconds": 0.6
     },
@@ -19,6 +20,7 @@
       "range": 4.5,
       "base_damage": 150,
       "damage_type": "physical",
+      "critical_eligible": true,
       "mp_cost": 60,
       "cooldown_seconds": 2.5
     },
@@ -31,6 +33,7 @@
       "point_resolution": "line_first",
       "base_damage": 150,
       "damage_type": "magic",
+      "critical_eligible": true,
       "mp_cost": 60,
       "cooldown_seconds": 2.0
     },
@@ -43,6 +46,7 @@
       "point_resolution": "endpoint_nearest",
       "base_damage": 220,
       "damage_type": "magic",
+      "critical_eligible": true,
       "cooldown_seconds": 4.5
     },
     {
@@ -60,6 +64,7 @@
       "range": 2.0,
       "base_damage": 90,
       "damage_type": "physical",
+      "critical_eligible": true,
       "blockable": true,
       "cooldown_seconds": 1.35
     }
