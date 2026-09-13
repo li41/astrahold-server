@@ -1,6 +1,6 @@
 // Command browserwse2e is a loopback-only BrowserWS integration harness for Protocol v27.
 // It composes the real BrowserWS adapter, game codec and authoritative worldruntime while
-// keeping deterministic trusted identity/class bootstrap out of normal cmd/worldd behavior.
+// keeping deterministic trusted identity bootstrap out of normal cmd/worldd behavior.
 package main
 
 import (
@@ -20,7 +20,6 @@ import (
 	"github.com/li41/astrahold-server/internal/actionpolicy"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/codec/gamev1"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
@@ -172,23 +171,22 @@ func main() {
 		if sessionID != 1 {
 			return browserws.TrustedE2EBootstrap{}, fmt.Errorf("browserwse2e supports exactly one session: %d", sessionID)
 		}
-		// This harness intentionally exercises the still-supported v27 class/resource Protocol.
-		// Use an explicit v8 compatibility fixture; schema v9 remains classless and normal
-		// durable Store restores never synthesize LegacyRuntimeClassID.
+		// This harness exercises the current target-resource contract through a classless restore.
+		// Protocol v27 legacy resource messages remain available at the adapter boundary, but the
+		// gameplay restore payload no longer carries retired profession identity.
 		return browserws.TrustedE2EBootstrap{
 			Identity: trustedIdentity,
 			Restore: worldruntime.CharacterRestore{
-				SchemaVersion:        characterstate.LearnedSkillsSchemaVersion,
-				CharacterID:          trustedIdentity.ID,
-				Revision:             1,
-				World:                worldIdentity,
-				LegacyRuntimeClassID: classid.Shadowblade,
-				HP:                   1000,
-				MaxHP:                1000,
-				MP:                   100,
-				MaxMP:                100,
-				Transform:            world.Transform{Position: world.Position{Layer: 0}},
-				Inventory:            characterstate.InventoryState{Initialized: true},
+				SchemaVersion: characterstate.CurrentSchemaVersion,
+				CharacterID:   trustedIdentity.ID,
+				Revision:      1,
+				World:         worldIdentity,
+				HP:            1000,
+				MaxHP:         1000,
+				MP:            100,
+				MaxMP:         100,
+				Transform:     world.Transform{Position: world.Position{Layer: 0}},
+				Inventory:     characterstate.InventoryState{Initialized: true},
 			},
 		}, nil
 	}
@@ -230,11 +228,10 @@ func main() {
 	}()
 
 	log.Printf(
-		"ASTRAHOLD_BROWSERWS_E2E_READY protocol=%d ws=ws://%s/ws character=%s class=%s target=%d action=%s contract=first-hit-flaw-current-positive-second-hit-defeat-then-despawn-clear",
+		"ASTRAHOLD_BROWSERWS_E2E_READY protocol=%d ws=ws://%s/ws character=%s target=%d action=%s contract=first-hit-flaw-current-positive-second-hit-defeat-then-despawn-clear",
 		protocol.Version,
 		listener.Addr().String(),
 		e2eCharacterID,
-		classid.Shadowblade,
 		e2eTargetID,
 		actionpolicy.ShadowbladeDualBladeStrike,
 	)
