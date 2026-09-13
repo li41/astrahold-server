@@ -63,7 +63,7 @@ func TestStepRetriesPendingLegacyClassResourceFeedback(t *testing.T) {
 	if _, err := rt.characters.GainActionResource(1, actionresource.Resolve, 8); err != nil { t.Fatal(err) }
 
 	first := StepReport{Tick: 1}
-	rt.sendCurrentClassResourceState(s, &first)
+	rt.sendCurrentActionResourceState(s, &first)
 	if len(first.DeliveryErrors) != 0 { t.Fatalf("backpressure should defer, errors=%#v", first.DeliveryErrors) }
 	if got := len(rt.pendingResourceMessages[s.ID]); got != 1 { t.Fatalf("pending class resource messages=%d want=1", got) }
 	if len(connection.sent) != 0 { t.Fatalf("backpressured resource state was sent: %d envelopes", len(connection.sent)) }
@@ -103,7 +103,7 @@ func TestStepAttemptsPendingLegacyClassResourceFeedbackOncePerTick(t *testing.T)
 	if _, err := rt.characters.GainActionResource(1, actionresource.Resolve, 8); err != nil { t.Fatal(err) }
 
 	first := StepReport{Tick: 1}
-	rt.sendCurrentClassResourceState(s, &first)
+	rt.sendCurrentActionResourceState(s, &first)
 	if connection.resourceAttempts != 1 { t.Fatalf("initial attempts=%d want=1", connection.resourceAttempts) }
 	if got := len(rt.pendingResourceMessages[s.ID]); got != 1 { t.Fatalf("pending class resource messages=%d want=1", got) }
 
