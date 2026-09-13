@@ -85,12 +85,23 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		rawDamage := r.resolveEquippedBasicAttackDamage(actor.ID, sessionID, targetID, prepared)
 		if hasTargetSpend {
 			rawDamage = spendPlan.Damage
+			rawDamage, err = r.applyEquippedFlatDamage(actor.ID, prepared.Damage.Type, rawDamage)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+				return false
+			}
+		}
+		critical, err := r.resolveCritical(actor.ID, prepared)
+		if err != nil {
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
+			return false
 		}
 		damageResult, err := r.resolveIncomingDamage(DamageRequest{
 			SourceEntityID:               actor.ID,
 			TargetEntityID:               targetID,
 			RawDamage:                    rawDamage,
 			DamageType:                   prepared.Damage.Type,
+			Critical:                     critical,
 			Blockable:                    prepared.Damage.Blockable,
 			PhysicalDefenseIgnorePercent: prepared.Damage.PhysicalDefenseIgnorePercent,
 		}, tick)
@@ -126,9 +137,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		r.markEntityVitalsDirty(targetID)
 		r.applyAcceptedActionResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 		r.applyHitActionResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
-		if !state.Defeated {
-			r.applyHitTargetResource(name, sessionID, actor, target, prepared.Definition.ID, tick, delta, report)
-		}
+		if !state.Defeated { r.applyHitTargetResource(name, sessionID, actor, target, prepared.Definition.ID, tick, delta, report) }
 		report.Metrics.EntityActionsApplied++
 		r.emitCombatEvent(protocol.CombatEvent{ActionInstanceID: prepared.ActionInstanceID, ActorEntityID: actor.ID, ActionID: prepared.Definition.ID, Result: protocol.CombatEventHit, TargetEntityID: targetID, Damage: damageResult.FinalDamage, Blocked: damageResult.Blocked, CooldownReadyTick: cooldownReadyTick}, tick, report)
 		return true
