@@ -7,6 +7,7 @@ import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
+	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
@@ -74,7 +75,11 @@ func TestAuthoritativeGateBreachAdvancesSiegeMatchToThrone(t *testing.T) {
 		t.Fatalf("initial match=%+v ok=%v", initial, ok)
 	}
 
-	if err := rt.EnqueueAttackGate(1, 1, "main-gate"); err != nil {
+	if err := rt.EnqueueUseAction(1, 1, protocol.ClientUseAction{
+		ActionID:   legacyGateActionID,
+		TargetKind: protocol.ActionTargetGate,
+		TargetID:   "main-gate",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	report := rt.Step(2, 50*time.Millisecond)
