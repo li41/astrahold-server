@@ -12,7 +12,7 @@ func TestRegisterStateInitializesResolveDefinition(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 41
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	state, ok := service.State(entityID)
 	if !ok { t.Fatal("state missing") }
 	resource := state.ActionResource()
@@ -25,7 +25,7 @@ func TestRegisterStateInitializesMomentumDefinition(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 45
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.Momentum, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.Momentum, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	state, ok := service.State(entityID)
 	if !ok { t.Fatal("state missing") }
 	resource := state.ActionResource()
@@ -38,7 +38,7 @@ func TestActionResourceGainClamps(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 42
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	state, err := service.GainActionResource(entityID, actionresource.Resolve, 8)
 	if err != nil { t.Fatal(err) }
 	if got := state.ActionResource().Current; got != 8 { t.Fatalf("resolve = %d, want 8", got) }
@@ -51,7 +51,7 @@ func TestActionResourceRejectsMismatchWithoutMutation(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 43
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.Resolve, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	_, err = service.GainActionResource(entityID, actionresource.ID("focus"), 8)
 	if !errors.Is(err, actionresource.ErrResourceMismatch) { t.Fatalf("error = %v, want ErrResourceMismatch", err) }
 	state, _ := service.State(entityID)

@@ -11,7 +11,7 @@ func TestRegisterStateInitializesStarHeat(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 48
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.StarHeat, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.StarHeat, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	state, ok := service.State(entityID)
 	if !ok { t.Fatal("state missing") }
 	resource := state.ActionResource()
@@ -24,7 +24,7 @@ func TestStarHeatResourceGainClamps(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 49
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.StarHeat, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.StarHeat, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	if _, err := service.GainActionResource(entityID, actionresource.StarHeat, 8); err != nil { t.Fatal(err) }
 	if _, err := service.GainActionResource(entityID, actionresource.StarHeat, 200); err != nil { t.Fatal(err) }
 	state, ok := service.State(entityID)

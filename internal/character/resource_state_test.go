@@ -23,7 +23,7 @@ func TestRegisterStateAcceptsEmptyAndKnownResourceIDs(t *testing.T) {
 		service, err := NewServiceWithResources(1000, 100)
 		if err != nil { t.Fatal(err) }
 		entityID := world.EntityID(index + 1)
-		state := State{EntityID: entityID, HP: 1000, MaxHP: 1000, MP: 100, MaxMP: 100, ClassResourceID: tc.id}
+		state := State{EntityID: entityID, HP: 1000, MaxHP: 1000, MP: 100, MaxMP: 100, ActionResourceID: tc.id}
 		if err := service.RegisterState(state); err != nil { t.Fatalf("resource %q rejected: %v", tc.id, err) }
 		got, ok := service.State(entityID)
 		resource := got.ActionResource()
@@ -35,11 +35,11 @@ func TestRegisterStateAcceptsEmptyAndKnownResourceIDs(t *testing.T) {
 
 func TestRegisterStateRejectsUnknownOrInconsistentResourceState(t *testing.T) {
 	invalid := []State{
-		{EntityID: 1, HP: 1000, MaxHP: 1000, ClassResourceID: actionresource.ID("focus")},
-		{EntityID: 2, HP: 1000, MaxHP: 1000, ClassResourceID: actionresource.Resolve, MaxClassResource: 50},
-		{EntityID: 3, HP: 1000, MaxHP: 1000, ClassResourceID: actionresource.Resolve, MaxClassResource: 100, ClassResourceProgress: 1},
-		{EntityID: 4, HP: 1000, MaxHP: 1000, ClassResourceID: actionresource.OathSeal, MaxClassResource: 3, ClassResourceProgress: 100},
-		{EntityID: 5, HP: 1000, MaxHP: 1000, ClassResourceID: actionresource.OathSeal, ClassResource: 3, MaxClassResource: 3, ClassResourceProgress: 1},
+		{EntityID: 1, HP: 1000, MaxHP: 1000, ActionResourceID: actionresource.ID("focus")},
+		{EntityID: 2, HP: 1000, MaxHP: 1000, ActionResourceID: actionresource.Resolve, MaxActionResource: 50},
+		{EntityID: 3, HP: 1000, MaxHP: 1000, ActionResourceID: actionresource.Resolve, MaxActionResource: 100, ActionResourceProgress: 1},
+		{EntityID: 4, HP: 1000, MaxHP: 1000, ActionResourceID: actionresource.OathSeal, MaxActionResource: 3, ActionResourceProgress: 100},
+		{EntityID: 5, HP: 1000, MaxHP: 1000, ActionResourceID: actionresource.OathSeal, ActionResourceCurrent: 3, MaxActionResource: 3, ActionResourceProgress: 1},
 	}
 	for _, state := range invalid {
 		service, err := NewServiceWithResources(1000, 100)

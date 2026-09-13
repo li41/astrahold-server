@@ -8,10 +8,10 @@ import (
 
 func TestStateActionResourceReturnsGenericSnapshot(t *testing.T) {
 	state := State{
-		ClassResourceID:       actionresource.Resolve,
-		ClassResource:         3,
-		MaxClassResource:      5,
-		ClassResourceProgress: 40,
+		ActionResourceID:       actionresource.Resolve,
+		ActionResourceCurrent:  3,
+		MaxActionResource:      5,
+		ActionResourceProgress: 40,
 	}
 
 	got := state.ActionResource()
@@ -20,7 +20,7 @@ func TestStateActionResourceReturnsGenericSnapshot(t *testing.T) {
 	}
 
 	got.Current = 1
-	if state.ClassResource != 3 {
-		t.Fatalf("ActionResource() exposed mutable state: current=%d", state.ClassResource)
+	if state.ActionResourceCurrent != 3 {
+		t.Fatalf("ActionResource() exposed mutable state: current=%d", state.ActionResourceCurrent)
 	}
 }

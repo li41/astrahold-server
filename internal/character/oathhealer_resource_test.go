@@ -12,7 +12,7 @@ func TestOathSealProgressConvertsEveryHundred(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 51
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.OathSeal, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.OathSeal, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	state, ok := service.State(entityID)
 	if !ok { t.Fatal("state missing") }
 	resource := state.ActionResource()
@@ -39,7 +39,7 @@ func TestOathSealProgressClampsAtThreeWithoutBankingOverflow(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 52
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.OathSeal, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.OathSeal, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	state, visibleChanged, err := service.GainActionResourceProgress(entityID, actionresource.OathSeal, 360)
 	if err != nil { t.Fatal(err) }
 	resource := state.ActionResource()
@@ -58,7 +58,7 @@ func TestOathSealProgressRejectsWrongResourceWithoutMutation(t *testing.T) {
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 53
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.OathSeal, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.OathSeal, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	_, _, err = service.GainActionResourceProgress(entityID, actionresource.Resolve, 20)
 	if !errors.Is(err, actionresource.ErrResourceMismatch) { t.Fatalf("error=%v, want ErrResourceMismatch", err) }
 	state, _ := service.State(entityID)

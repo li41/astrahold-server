@@ -30,13 +30,11 @@ type State struct {
 	MP       uint32
 	MaxMP    uint32
 
-	// ClassResource* names are retained as Protocol v27 compatibility surface. The runtime
-	// definitions themselves are classless and owned by internal/actionresource.
-	ClassResourceID       actionresource.ID
-	ClassResource         uint32
-	MaxClassResource      uint32
-	ClassResourceProgress uint32
-	Defeated              bool
+	ActionResourceID       actionresource.ID
+	ActionResourceCurrent  uint32
+	MaxActionResource      uint32
+	ActionResourceProgress uint32
+	Defeated               bool
 }
 
 type Service struct {
@@ -100,18 +98,18 @@ func normalizeActionResourceState(state *State) error {
 	if state == nil {
 		return ErrInvalidState
 	}
-	if state.ClassResourceID == actionresource.Empty {
+	if state.ActionResourceID == actionresource.Empty {
 		return nil
 	}
-	definition, ok := actionresource.DefinitionForID(state.ClassResourceID)
+	definition, ok := actionresource.DefinitionForID(state.ActionResourceID)
 	if !ok {
 		return ErrInvalidState
 	}
-	if state.MaxClassResource == 0 {
-		if state.ClassResource != 0 || state.ClassResourceProgress != 0 {
+	if state.MaxActionResource == 0 {
+		if state.ActionResourceCurrent != 0 || state.ActionResourceProgress != 0 {
 			return ErrInvalidState
 		}
-		state.MaxClassResource = definition.Max
+		state.MaxActionResource = definition.Max
 	}
 	return nil
 }
@@ -120,19 +118,19 @@ func validateState(state State) error {
 	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP {
 		return ErrInvalidState
 	}
-	if state.ClassResource > state.MaxClassResource {
+	if state.ActionResourceCurrent > state.MaxActionResource {
 		return ErrInvalidState
 	}
-	if state.ClassResourceID == actionresource.Empty {
-		if state.ClassResource != 0 || state.MaxClassResource != 0 || state.ClassResourceProgress != 0 {
+	if state.ActionResourceID == actionresource.Empty {
+		if state.ActionResourceCurrent != 0 || state.MaxActionResource != 0 || state.ActionResourceProgress != 0 {
 			return ErrInvalidState
 		}
 	} else {
-		definition, ok := actionresource.DefinitionForID(state.ClassResourceID)
-		if !ok || state.MaxClassResource != definition.Max {
+		definition, ok := actionresource.DefinitionForID(state.ActionResourceID)
+		if !ok || state.MaxActionResource != definition.Max {
 			return ErrInvalidState
 		}
-		if state.ClassResourceProgress > 0 && (definition.ProgressThreshold == 0 || state.ClassResourceProgress >= definition.ProgressThreshold || state.ClassResource >= state.MaxClassResource) {
+		if state.ActionResourceProgress > 0 && (definition.ProgressThreshold == 0 || state.ActionResourceProgress >= definition.ProgressThreshold || state.ActionResourceCurrent >= state.MaxActionResource) {
 			return ErrInvalidState
 		}
 	}
@@ -173,17 +171,17 @@ func (s *Service) GainActionResource(id world.EntityID, resourceID actionresourc
 	if state.Defeated {
 		return state, ErrCharacterDefeated
 	}
-	if resourceID == actionresource.Empty || state.ClassResourceID != resourceID || state.MaxClassResource == 0 {
+	if resourceID == actionresource.Empty || state.ActionResourceID != resourceID || state.MaxActionResource == 0 {
 		return state, actionresource.ErrResourceMismatch
 	}
-	if amount == 0 || state.ClassResource >= state.MaxClassResource {
+	if amount == 0 || state.ActionResourceCurrent >= state.MaxActionResource {
 		return state, nil
 	}
-	missing := state.MaxClassResource - state.ClassResource
+	missing := state.MaxActionResource - state.ActionResourceCurrent
 	if amount > missing {
 		amount = missing
 	}
-	state.ClassResource += amount
+	state.ActionResourceCurrent += amount
 	s.states[id] = state
 	return state, nil
 }
@@ -196,16 +194,16 @@ func (s *Service) SpendActionResource(id world.EntityID, resourceID actionresour
 	if state.Defeated {
 		return state, ErrCharacterDefeated
 	}
-	if resourceID == actionresource.Empty || state.ClassResourceID != resourceID || state.MaxClassResource == 0 {
+	if resourceID == actionresource.Empty || state.ActionResourceID != resourceID || state.MaxActionResource == 0 {
 		return state, actionresource.ErrResourceMismatch
 	}
 	if amount == 0 {
 		return state, nil
 	}
-	if state.ClassResource < amount {
+	if state.ActionResourceCurrent < amount {
 		return state, ErrInsufficientResource
 	}
-	state.ClassResource -= amount
+	state.ActionResourceCurrent -= amount
 	s.states[id] = state
 	return state, nil
 }
@@ -218,25 +216,25 @@ func (s *Service) GainActionResourceProgress(id world.EntityID, resourceID actio
 	if state.Defeated {
 		return state, false, ErrCharacterDefeated
 	}
-	definition, defined := actionresource.DefinitionForID(state.ClassResourceID)
-	if !defined || resourceID == actionresource.Empty || state.ClassResourceID != resourceID || definition.ID != resourceID || definition.Max != state.MaxClassResource || definition.ProgressThreshold == 0 {
+	definition, defined := actionresource.DefinitionForID(state.ActionResourceID)
+	if !defined || resourceID == actionresource.Empty || state.ActionResourceID != resourceID || definition.ID != resourceID || definition.Max != state.MaxActionResource || definition.ProgressThreshold == 0 {
 		return state, false, actionresource.ErrResourceMismatch
 	}
-	if amount == 0 || state.ClassResource >= state.MaxClassResource {
+	if amount == 0 || state.ActionResourceCurrent >= state.MaxActionResource {
 		return state, false, nil
 	}
-	totalProgress := uint64(state.ClassResourceProgress) + uint64(amount)
+	totalProgress := uint64(state.ActionResourceProgress) + uint64(amount)
 	threshold := uint64(definition.ProgressThreshold)
 	gained := uint32(totalProgress / threshold)
-	state.ClassResourceProgress = uint32(totalProgress % threshold)
+	state.ActionResourceProgress = uint32(totalProgress % threshold)
 	visibleChanged := gained > 0
 	if gained > 0 {
-		missing := state.MaxClassResource - state.ClassResource
+		missing := state.MaxActionResource - state.ActionResourceCurrent
 		if gained >= missing {
-			state.ClassResource = state.MaxClassResource
-			state.ClassResourceProgress = 0
+			state.ActionResourceCurrent = state.MaxActionResource
+			state.ActionResourceProgress = 0
 		} else {
-			state.ClassResource += gained
+			state.ActionResourceCurrent += gained
 		}
 	}
 	s.states[id] = state

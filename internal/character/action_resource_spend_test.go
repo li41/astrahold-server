@@ -12,7 +12,7 @@ func TestSpendActionResourceConsumesExactAmountAndRejectsInsufficientWithoutMuta
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 51
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.Momentum, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.Momentum, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	if _, err := service.GainActionResource(entityID, actionresource.Momentum, 30); err != nil { t.Fatal(err) }
 
 	state, err := service.SpendActionResource(entityID, actionresource.Momentum, 20)
@@ -30,7 +30,7 @@ func TestSpendActionResourceRejectsResourceMismatchWithoutMutation(t *testing.T)
 	service, err := NewService(1000)
 	if err != nil { t.Fatal(err) }
 	const entityID world.EntityID = 52
-	if err := service.RegisterState(State{EntityID: entityID, ClassResourceID: actionresource.Momentum, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
+	if err := service.RegisterState(State{EntityID: entityID, ActionResourceID: actionresource.Momentum, HP: 1000, MaxHP: 1000}); err != nil { t.Fatal(err) }
 	if _, err := service.GainActionResource(entityID, actionresource.Momentum, 30); err != nil { t.Fatal(err) }
 
 	state, err := service.SpendActionResource(entityID, actionresource.Resolve, 20)
