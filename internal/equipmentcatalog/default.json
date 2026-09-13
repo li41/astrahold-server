@@ -1,5 +1,5 @@
 {
-  "revision": "low-tier-equipment-v4",
+  "revision": "low-tier-equipment-v3",
   "weapon_types": [
     {"weapon_type": "one_hand_sword", "basic_attack_interval_ms": 900},
     {"weapon_type": "dagger", "basic_attack_interval_ms": 650},
