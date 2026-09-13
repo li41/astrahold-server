@@ -243,24 +243,6 @@ func (s *Service) GainActionResourceProgress(id world.EntityID, resourceID actio
 	return state, visibleChanged, nil
 }
 
-// GainClassResource is retained while Protocol v27 compatibility call sites migrate to the
-// classless action-resource naming. New production gameplay should use GainActionResource.
-func (s *Service) GainClassResource(id world.EntityID, resourceID actionresource.ID, amount uint32) (State, error) {
-	return s.GainActionResource(id, resourceID, amount)
-}
-
-// SpendClassResource is retained while Protocol v27 compatibility call sites migrate to the
-// classless action-resource naming. New production gameplay should use SpendActionResource.
-func (s *Service) SpendClassResource(id world.EntityID, resourceID actionresource.ID, amount uint32) (State, error) {
-	return s.SpendActionResource(id, resourceID, amount)
-}
-
-// GainClassResourceProgress is retained while Protocol v27 compatibility call sites migrate to the
-// classless action-resource naming. New production gameplay should use GainActionResourceProgress.
-func (s *Service) GainClassResourceProgress(id world.EntityID, resourceID actionresource.ID, amount uint32) (State, bool, error) {
-	return s.GainActionResourceProgress(id, resourceID, amount)
-}
-
 func (s *Service) GainTargetResource(sourceID, targetID world.EntityID, resourceID targetresource.ID, amount, max uint32, tick, nextReadyTick uint64) (targetresource.State, bool, error) {
 	source, ok := s.states[sourceID]
 	if !ok {
