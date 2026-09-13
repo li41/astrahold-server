@@ -25,6 +25,7 @@ type DamageRequest struct {
 	TargetEntityID               world.EntityID
 	RawDamage                    uint32
 	DamageType                   combat.DamageType
+	Critical                     bool
 	Blockable                    bool
 	PhysicalDefenseIgnorePercent uint8
 	SelfDamageReductionPercent   uint8
@@ -63,8 +64,6 @@ func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatal
 	if r == nil || targetID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
-	// Damage mitigation applies player equipment only while that entity has an active Session.
-	// Registry maintains this relation directly, avoiding the previous per-hit full List/sort/scan.
 	s, ok := r.sessions.GetByEntity(targetID)
 	if !ok || !s.CharacterIdentity.Valid() {
 		return equipmentcatalog.Definition{}, false
@@ -110,9 +109,9 @@ func saturatingAddUint32(a, b uint32) uint32 {
 }
 
 // resolveDamageMitigation is pure so formula and probability boundaries are deterministic in tests.
-// Intermediate math stays float64; positive damage is rounded once at the end and has a minimum of 1.
-// Physical-defense ignore changes only the defense term for this damage instance. Self mitigation is
-// a separate Server-owned multiplier and never mutates block, defense, equipment or later damage.
+// Critical is multiplied in float64 before every mitigation layer, so odd integer raw damage keeps
+// its half-point until the existing single final math.Round. Physical-defense ignore changes only
+// the defense term for this damage instance. Self mitigation is a separate Server-owned multiplier.
 func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shield, blockRoll uint32) (DamageResult, error) {
 	if request.RawDamage == 0 {
 		return DamageResult{}, nil
@@ -125,6 +124,9 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 	}
 
 	damage := float64(request.RawDamage)
+	if request.Critical {
+		damage *= float64(combat.CriticalMultiplierV1Numerator) / float64(combat.CriticalMultiplierV1Denominator)
+	}
 	blocked := false
 
 	switch request.DamageType {
