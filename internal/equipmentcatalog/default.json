@@ -1,5 +1,5 @@
 {
-  "revision": "low-tier-equipment-v3",
+  "revision": "low-tier-equipment-v4",
   "weapon_types": [
     {"weapon_type": "one_hand_sword", "basic_attack_interval_ms": 900},
     {"weapon_type": "dagger", "basic_attack_interval_ms": 650},
@@ -24,6 +24,7 @@
       "item_archetype_id": "item_militia_iron_sword",
       "kind": "weapon",
       "slot": "main_hand",
+      "tier": "low",
       "weight": 7,
       "material": "iron",
       "weapon": {
@@ -38,6 +39,7 @@
       "item_archetype_id": "item_light_guard_sword",
       "kind": "weapon",
       "slot": "main_hand",
+      "tier": "low",
       "weight": 6,
       "material": "iron",
       "weapon": {
@@ -52,6 +54,7 @@
       "item_archetype_id": "item_gladiator_iron_sword",
       "kind": "weapon",
       "slot": "main_hand",
+      "tier": "low",
       "weight": 8,
       "material": "iron",
       "weapon": {
@@ -66,6 +69,7 @@
       "item_archetype_id": "item_militia_battle_axe",
       "kind": "weapon",
       "slot": "main_hand",
+      "tier": "low",
       "weight": 10,
       "material": "iron_wood",
       "weapon": {
@@ -80,6 +84,7 @@
       "item_archetype_id": "item_iron_war_mace",
       "kind": "weapon",
       "slot": "main_hand",
+      "tier": "low",
       "weight": 9,
       "material": "iron_wood",
       "weapon": {
@@ -94,6 +99,7 @@
       "item_archetype_id": "item_iron_rim_round_shield",
       "kind": "shield",
       "slot": "off_hand",
+      "tier": "low",
       "weight": 6,
       "material": "wood_iron",
       "shield": {
@@ -107,6 +113,7 @@
       "item_archetype_id": "item_guard_shield",
       "kind": "shield",
       "slot": "off_hand",
+      "tier": "low",
       "weight": 8,
       "material": "wood_iron",
       "shield": {
@@ -120,6 +127,7 @@
       "item_archetype_id": "item_runed_square_shield",
       "kind": "shield",
       "slot": "off_hand",
+      "tier": "low",
       "weight": 6,
       "material": "wood_iron_low_enchantment",
       "shield": {
