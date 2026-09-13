@@ -93,17 +93,21 @@ func (spawnEntityCommand) name() string { return "spawn_entity" }
 // item-use and respawn keep their own typed protocol payloads and are routed before combat
 // preparation; none is a skill/action alias.
 type useActionCommand struct {
-	sessionID session.ID
-	sequence  uint32
-	action    protocol.ClientUseAction
-	equipment *protocol.ClientEquipmentCommand
-	pickup    *protocol.ClientPickupItem
-	useItem   *protocol.ClientUseItem
-	respawn   *protocol.ClientRespawnRequest
-	ownership SessionOwnershipFence
+	sessionID         session.ID
+	sequence          uint32
+	action            protocol.ClientUseAction
+	equipment         *protocol.ClientEquipmentCommand
+	equipmentInstance *protocol.ClientEquipmentInstanceCommand
+	pickup            *protocol.ClientPickupItem
+	useItem           *protocol.ClientUseItem
+	respawn           *protocol.ClientRespawnRequest
+	ownership         SessionOwnershipFence
 }
 
 func (c useActionCommand) name() string {
+	if c.equipmentInstance != nil {
+		return "equipment_instance_command"
+	}
 	if c.equipment != nil {
 		return "equipment_command"
 	}
