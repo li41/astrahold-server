@@ -9,22 +9,13 @@ package classid
 type ID string
 
 const (
-	Oathguard     ID = "class_oathguard"
-	Breaker       ID = "class_breaker"
-	Ranger        ID = "class_ranger"
-	StarfireMage  ID = "class_starfire_mage"
-	Oathhealer    ID = "class_oathhealer"
-	Shadowblade   ID = "class_shadowblade"
+	Oathguard    ID = "class_oathguard"
+	Breaker      ID = "class_breaker"
+	Ranger       ID = "class_ranger"
+	StarfireMage ID = "class_starfire_mage"
+	Oathhealer   ID = "class_oathhealer"
+	Shadowblade  ID = "class_shadowblade"
 )
-
-var canonical = [...]ID{
-	Oathguard,
-	Breaker,
-	Ranger,
-	StarfireMage,
-	Oathhealer,
-	Shadowblade,
-}
 
 // IsCanonical reports whether id is one of the six retired fixed-profession IDs that remain
 // valid compatibility input. Empty and unknown values return false.
@@ -42,11 +33,4 @@ func IsCanonical(id ID) bool {
 func Parse(raw string) (ID, bool) {
 	id := ID(raw)
 	return id, IsCanonical(id)
-}
-
-// All returns a defensive copy in the historical stable design order.
-func All() []ID {
-	out := make([]ID, len(canonical))
-	copy(out, canonical[:])
-	return out
 }
