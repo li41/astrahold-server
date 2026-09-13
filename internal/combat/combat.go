@@ -15,7 +15,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 3
+const SchemaVersion uint16 = 4
 
 const statusSelfDamageReduction status.ID = "self_damage_reduction"
 
@@ -66,6 +66,7 @@ type ActionDefinition struct {
 	PointResolution              PointResolution `json:"point_resolution,omitempty"`
 	BaseDamage                   uint32          `json:"base_damage,omitempty"`
 	DamageType                   DamageType      `json:"damage_type,omitempty"`
+	CriticalEligible             bool            `json:"critical_eligible,omitempty"`
 	Blockable                    bool            `json:"blockable,omitempty"`
 	PhysicalDefenseIgnorePercent uint8           `json:"physical_defense_ignore_percent,omitempty"`
 	SelfDamageReductionPercent   uint8           `json:"self_damage_reduction_percent,omitempty"`
@@ -81,64 +82,42 @@ type Definition struct {
 	Actions       []ActionDefinition `json:"actions"`
 }
 
-type Loaded struct {
-	Definition Definition
-}
+type Loaded struct { Definition Definition }
 
-type DamageSource struct {
-	ActorEntityID world.EntityID
-	ActionID      string
-}
+type DamageSource struct { ActorEntityID world.EntityID; ActionID string }
 
 type Damage struct {
-	Source                       DamageSource
-	Type                         DamageType
-	Amount                       uint32
-	Blockable                    bool
+	Source DamageSource
+	Type DamageType
+	Amount uint32
+	Blockable bool
 	PhysicalDefenseIgnorePercent uint8
 }
 
-type Target struct {
-	Kind     TargetKind
-	ID       string
-	PointX   float32
-	PointZ   float32
-	HasPoint bool
-}
+type Target struct { Kind TargetKind; ID string; PointX float32; PointZ float32; HasPoint bool }
 
-// Intent is the transport-neutral combat request consumed after ingress/session/AI validation.
-// It deliberately contains ActorEntityID rather than a network SessionID.
-type Intent struct {
-	ActorEntityID world.EntityID
-	ActionID      string
-	Target        Target
-}
+type Intent struct { ActorEntityID world.EntityID; ActionID string; Target Target }
 
 type PreparedAction struct {
 	ActionInstanceID uint64
-	ActorEntityID    world.EntityID
-	Definition       ActionDefinition
-	Target           Target
-	Damage           Damage
+	ActorEntityID world.EntityID
+	Definition ActionDefinition
+	Target Target
+	Damage Damage
 }
 
-type cooldownKey struct {
-	entityID world.EntityID
-	actionID string
-}
+type cooldownKey struct { entityID world.EntityID; actionID string }
 
 type Service struct {
-	actions        map[string]ActionDefinition
-	nextUseTick    map[cooldownKey]uint64
-	statuses       *status.Store
+	actions map[string]ActionDefinition
+	nextUseTick map[cooldownKey]uint64
+	statuses *status.Store
 	nextInstanceID uint64
 }
 
 func LoadFile(path string) (Loaded, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return Loaded{}, err
-	}
+	if err != nil { return Loaded{}, err }
 	return Load(bytes.NewReader(data))
 }
 
@@ -146,40 +125,24 @@ func Load(r io.Reader) (Loaded, error) {
 	decoder := json.NewDecoder(r)
 	decoder.DisallowUnknownFields()
 	var definition Definition
-	if err := decoder.Decode(&definition); err != nil {
-		return Loaded{}, fmt.Errorf("%w: decode: %v", ErrInvalidDefinition, err)
-	}
+	if err := decoder.Decode(&definition); err != nil { return Loaded{}, fmt.Errorf("%w: decode: %v", ErrInvalidDefinition, err) }
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return Loaded{}, fmt.Errorf("%w: trailing JSON value", ErrInvalidDefinition)
-		}
+		if err == nil { return Loaded{}, fmt.Errorf("%w: trailing JSON value", ErrInvalidDefinition) }
 		return Loaded{}, fmt.Errorf("%w: trailing data: %v", ErrInvalidDefinition, err)
 	}
-	if err := Validate(definition); err != nil {
-		return Loaded{}, err
-	}
-	for i := range definition.Actions {
-		definition.Actions[i] = normalizeAction(definition.Actions[i])
-	}
+	if err := Validate(definition); err != nil { return Loaded{}, err }
+	for i := range definition.Actions { definition.Actions[i] = normalizeAction(definition.Actions[i]) }
 	return Loaded{Definition: definition}, nil
 }
 
 func Validate(definition Definition) error {
-	if definition.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("%w: got=%d want=%d", ErrUnsupportedSchema, definition.SchemaVersion, SchemaVersion)
-	}
-	if definition.Revision == "" || len(definition.Actions) == 0 {
-		return fmt.Errorf("%w: revision/actions", ErrInvalidDefinition)
-	}
+	if definition.SchemaVersion != SchemaVersion { return fmt.Errorf("%w: got=%d want=%d", ErrUnsupportedSchema, definition.SchemaVersion, SchemaVersion) }
+	if definition.Revision == "" || len(definition.Actions) == 0 { return fmt.Errorf("%w: revision/actions", ErrInvalidDefinition) }
 	ids := make(map[string]struct{}, len(definition.Actions))
 	for i, action := range definition.Actions {
-		if action.ID == "" || !positiveFinite(action.Range) || !positiveFinite(action.CooldownSeconds) || len(action.Targets) == 0 {
-			return fmt.Errorf("%w: action[%d]", ErrInvalidDefinition, i)
-		}
-		if _, exists := ids[action.ID]; exists {
-			return fmt.Errorf("%w: duplicate action id %q", ErrInvalidDefinition, action.ID)
-		}
+		if action.ID == "" || !positiveFinite(action.Range) || !positiveFinite(action.CooldownSeconds) || len(action.Targets) == 0 { return fmt.Errorf("%w: action[%d]", ErrInvalidDefinition, i) }
+		if _, exists := ids[action.ID]; exists { return fmt.Errorf("%w: duplicate action id %q", ErrInvalidDefinition, action.ID) }
 		ids[action.ID] = struct{}{}
 
 		targets := make(map[TargetKind]struct{}, len(action.Targets))
@@ -187,70 +150,28 @@ func Validate(definition Definition) error {
 		hasGateTarget := false
 		hasEntityTarget := false
 		for _, target := range action.Targets {
-			if !validTargetKind(target) {
-				return fmt.Errorf("%w: action %q target %q", ErrInvalidDefinition, action.ID, target)
-			}
-			if _, exists := targets[target]; exists {
-				return fmt.Errorf("%w: action %q duplicate target %q", ErrInvalidDefinition, action.ID, target)
-			}
+			if !validTargetKind(target) { return fmt.Errorf("%w: action %q target %q", ErrInvalidDefinition, action.ID, target) }
+			if _, exists := targets[target]; exists { return fmt.Errorf("%w: action %q duplicate target %q", ErrInvalidDefinition, action.ID, target) }
 			targets[target] = struct{}{}
-			switch target {
-			case TargetPoint:
-				hasPointTarget = true
-			case TargetGate:
-				hasGateTarget = true
-			case TargetEntity:
-				hasEntityTarget = true
-			}
+			switch target { case TargetPoint: hasPointTarget = true; case TargetGate: hasGateTarget = true; case TargetEntity: hasEntityTarget = true }
 		}
-		// The current siege gate path validates and mutates in one operation. Until that path has a
-		// separate validation phase, resource-cost actions stay on entity/point targets so rejected
-		// gate intents can never consume MP.
-		if action.MPCost > 0 && hasGateTarget {
-			return fmt.Errorf("%w: resource-cost action %q cannot target gate", ErrInvalidDefinition, action.ID)
-		}
+		if action.MPCost > 0 && hasGateTarget { return fmt.Errorf("%w: resource-cost action %q cannot target gate", ErrInvalidDefinition, action.ID) }
 		if hasPointTarget {
-			if action.PointResolution != "" && !validPointResolution(action.PointResolution) {
-				return fmt.Errorf("%w: action %q point_resolution %q", ErrInvalidDefinition, action.ID, action.PointResolution)
-			}
-		} else if action.PointResolution != "" {
-			return fmt.Errorf("%w: non-point action %q has point_resolution", ErrInvalidDefinition, action.ID)
-		}
+			if action.PointResolution != "" && !validPointResolution(action.PointResolution) { return fmt.Errorf("%w: action %q point_resolution %q", ErrInvalidDefinition, action.ID, action.PointResolution) }
+		} else if action.PointResolution != "" { return fmt.Errorf("%w: non-point action %q has point_resolution", ErrInvalidDefinition, action.ID) }
 
 		switch effectiveEffect(action.Effect) {
 		case EffectDamage:
-			if action.BaseDamage == 0 || !validDamageType(action.DamageType) || action.ReviveHPPercent != 0 || action.SelfDamageReductionPercent != 0 || action.DurationSeconds != 0 {
-				return fmt.Errorf("%w: damage action %q", ErrInvalidDefinition, action.ID)
-			}
-			if hasPointTarget && !positiveFinite(action.HitRadius) {
-				return fmt.Errorf("%w: point damage action %q requires hit_radius", ErrInvalidDefinition, action.ID)
-			}
-			// Blockability is authored independently from damage type. v1 shields only block
-			// explicitly blockable physical entity-target actions; magic/point/AoE damage never
-			// becomes blockable merely because it resolves to an entity later.
-			if action.Blockable && (action.DamageType != DamagePhysical || !hasEntityTarget || hasPointTarget) {
-				return fmt.Errorf("%w: blockable action %q", ErrInvalidDefinition, action.ID)
-			}
-			// Physical-defense ignore is an attack-local mitigation input, not a target debuff. The
-			// current implementation intentionally scopes it to physical entity-only actions so gate
-			// and point paths cannot silently claim an armor-ignore behavior they do not consume.
-			if action.PhysicalDefenseIgnorePercent > 0 && (action.PhysicalDefenseIgnorePercent > 100 || action.DamageType != DamagePhysical || !hasEntityTarget || hasGateTarget || hasPointTarget) {
-				return fmt.Errorf("%w: physical-defense-ignore action %q", ErrInvalidDefinition, action.ID)
-			}
+			if action.BaseDamage == 0 || !validDamageType(action.DamageType) || action.ReviveHPPercent != 0 || action.SelfDamageReductionPercent != 0 || action.DurationSeconds != 0 { return fmt.Errorf("%w: damage action %q", ErrInvalidDefinition, action.ID) }
+			if hasPointTarget && !positiveFinite(action.HitRadius) { return fmt.Errorf("%w: point damage action %q requires hit_radius", ErrInvalidDefinition, action.ID) }
+			if action.Blockable && (action.DamageType != DamagePhysical || !hasEntityTarget || hasPointTarget) { return fmt.Errorf("%w: blockable action %q", ErrInvalidDefinition, action.ID) }
+			if action.PhysicalDefenseIgnorePercent > 0 && (action.PhysicalDefenseIgnorePercent > 100 || action.DamageType != DamagePhysical || !hasEntityTarget || hasGateTarget || hasPointTarget) { return fmt.Errorf("%w: physical-defense-ignore action %q", ErrInvalidDefinition, action.ID) }
 		case EffectResurrect:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.SelfDamageReductionPercent != 0 || action.DurationSeconds != 0 || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" {
-				return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID)
-			}
-			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
-				return fmt.Errorf("%w: resurrect action %q must target entity only", ErrInvalidDefinition, action.ID)
-			}
+			if action.BaseDamage != 0 || action.DamageType != "" || action.CriticalEligible || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.SelfDamageReductionPercent != 0 || action.DurationSeconds != 0 || action.ReviveHPPercent == 0 || action.ReviveHPPercent > 100 || action.HitRadius != 0 || action.PointResolution != "" { return fmt.Errorf("%w: resurrect action %q", ErrInvalidDefinition, action.ID) }
+			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity { return fmt.Errorf("%w: resurrect action %q must target entity only", ErrInvalidDefinition, action.ID) }
 		case EffectSelfMitigation:
-			if action.BaseDamage != 0 || action.DamageType != "" || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.ReviveHPPercent != 0 || action.HitRadius != 0 || action.PointResolution != "" || action.SelfDamageReductionPercent == 0 || action.SelfDamageReductionPercent >= 100 || !positiveFinite(action.DurationSeconds) {
-				return fmt.Errorf("%w: self-mitigation action %q", ErrInvalidDefinition, action.ID)
-			}
-			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity {
-				return fmt.Errorf("%w: self-mitigation action %q must target entity only", ErrInvalidDefinition, action.ID)
-			}
+			if action.BaseDamage != 0 || action.DamageType != "" || action.CriticalEligible || action.Blockable || action.PhysicalDefenseIgnorePercent != 0 || action.ReviveHPPercent != 0 || action.HitRadius != 0 || action.PointResolution != "" || action.SelfDamageReductionPercent == 0 || action.SelfDamageReductionPercent >= 100 || !positiveFinite(action.DurationSeconds) { return fmt.Errorf("%w: self-mitigation action %q", ErrInvalidDefinition, action.ID) }
+			if len(action.Targets) != 1 || action.Targets[0] != TargetEntity { return fmt.Errorf("%w: self-mitigation action %q must target entity only", ErrInvalidDefinition, action.ID) }
 		default:
 			return fmt.Errorf("%w: action %q effect %q", ErrInvalidDefinition, action.ID, action.Effect)
 		}
@@ -260,70 +181,28 @@ func Validate(definition Definition) error {
 
 func NewService(definitions []ActionDefinition) (*Service, error) {
 	normalized := make([]ActionDefinition, len(definitions))
-	for i, action := range definitions {
-		normalized[i] = normalizeAction(action)
-	}
+	for i, action := range definitions { normalized[i] = normalizeAction(action) }
 	definition := Definition{SchemaVersion: SchemaVersion, Revision: "runtime", Actions: normalized}
-	if err := Validate(definition); err != nil {
-		return nil, err
-	}
+	if err := Validate(definition); err != nil { return nil, err }
 	actions := make(map[string]ActionDefinition, len(normalized))
-	for _, action := range normalized {
-		copy := action
-		copy.Targets = append([]TargetKind(nil), action.Targets...)
-		actions[action.ID] = copy
-	}
-	return &Service{
-		actions:     actions,
-		nextUseTick: make(map[cooldownKey]uint64),
-		statuses:    status.NewStore(),
-	}, nil
+	for _, action := range normalized { copy := action; copy.Targets = append([]TargetKind(nil), action.Targets...); actions[action.ID] = copy }
+	return &Service{actions: actions, nextUseTick: make(map[cooldownKey]uint64), statuses: status.NewStore()}, nil
 }
 
-func (s *Service) PrepareIntent(intent Intent, tick uint64) (PreparedAction, error) {
-	return s.Prepare(intent.ActorEntityID, intent.ActionID, intent.Target, tick)
-}
+func (s *Service) PrepareIntent(intent Intent, tick uint64) (PreparedAction, error) { return s.Prepare(intent.ActorEntityID, intent.ActionID, intent.Target, tick) }
 
 func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target Target, tick uint64) (PreparedAction, error) {
 	action, ok := s.actions[actionID]
-	if !ok {
-		return PreparedAction{}, ErrUnknownAction
-	}
-	if !containsTarget(action.Targets, target.Kind) {
-		return PreparedAction{}, ErrTargetNotAllowed
-	}
-	switch target.Kind {
-	case TargetPoint:
-		if !target.HasPoint || !finite(target.PointX) || !finite(target.PointZ) {
-			return PreparedAction{}, ErrTargetNotAllowed
-		}
-	default:
-		if target.ID == "" {
-			return PreparedAction{}, ErrTargetNotAllowed
-		}
-	}
+	if !ok { return PreparedAction{}, ErrUnknownAction }
+	if !containsTarget(action.Targets, target.Kind) { return PreparedAction{}, ErrTargetNotAllowed }
+	switch target.Kind { case TargetPoint: if !target.HasPoint || !finite(target.PointX) || !finite(target.PointZ) { return PreparedAction{}, ErrTargetNotAllowed }; default: if target.ID == "" { return PreparedAction{}, ErrTargetNotAllowed } }
 	key := cooldownKey{entityID: actorEntityID, actionID: actionID}
-	if next := s.nextUseTick[key]; next != 0 && tick < next {
-		return PreparedAction{}, ErrActionCooldown
-	}
+	if next := s.nextUseTick[key]; next != 0 && tick < next { return PreparedAction{}, ErrActionCooldown }
 	s.nextInstanceID++
-	if s.nextInstanceID == 0 {
-		s.nextInstanceID++
-	}
-	prepared := PreparedAction{
-		ActionInstanceID: s.nextInstanceID,
-		ActorEntityID:    actorEntityID,
-		Definition:       action,
-		Target:           target,
-	}
+	if s.nextInstanceID == 0 { s.nextInstanceID++ }
+	prepared := PreparedAction{ActionInstanceID: s.nextInstanceID, ActorEntityID: actorEntityID, Definition: action, Target: target}
 	if action.Effect == EffectDamage {
-		prepared.Damage = Damage{
-			Source:                       DamageSource{ActorEntityID: actorEntityID, ActionID: actionID},
-			Type:                         action.DamageType,
-			Amount:                       action.BaseDamage,
-			Blockable:                    action.Blockable,
-			PhysicalDefenseIgnorePercent: action.PhysicalDefenseIgnorePercent,
-		}
+		prepared.Damage = Damage{Source: DamageSource{ActorEntityID: actorEntityID, ActionID: actionID}, Type: action.DamageType, Amount: action.BaseDamage, Blockable: action.Blockable, PhysicalDefenseIgnorePercent: action.PhysicalDefenseIgnorePercent}
 	}
 	return prepared, nil
 }
@@ -331,111 +210,44 @@ func (s *Service) Prepare(actorEntityID world.EntityID, actionID string, target 
 func (s *Service) Commit(action PreparedAction, tick uint64, delta time.Duration) {
 	key := cooldownKey{entityID: action.ActorEntityID, actionID: action.Definition.ID}
 	s.nextUseTick[key] = tick + cooldownTicks(action.Definition.CooldownSeconds, delta)
-	if action.Definition.Effect != EffectSelfMitigation {
-		return
-	}
+	if action.Definition.Effect != EffectSelfMitigation { return }
 	until := status.Deadline(tick, cooldownTicks(action.Definition.DurationSeconds, delta))
 	s.statuses.Apply(action.ActorEntityID, statusSelfDamageReduction, action.Definition.SelfDamageReductionPercent, until)
 }
 
-// SelfDamageReductionPercent returns the current Server-owned transient mitigation for one entity.
-// Expiry is half-open [commit tick, until tick) and lazily cleared on first read at/after UntilTick.
 func (s *Service) SelfDamageReductionPercent(entityID world.EntityID, tick uint64) uint8 {
-	if s == nil || entityID == 0 {
-		return 0
-	}
+	if s == nil || entityID == 0 { return 0 }
 	value, ok := s.statuses.Value(entityID, statusSelfDamageReduction, tick)
-	if !ok {
-		return 0
-	}
+	if !ok { return 0 }
 	return value
 }
 
 func (s *Service) ClearSelfMitigation(entityID world.EntityID) {
-	if s == nil || entityID == 0 {
-		return
-	}
+	if s == nil || entityID == 0 { return }
 	s.statuses.Remove(entityID, statusSelfDamageReduction)
 }
 
 func normalizeAction(action ActionDefinition) ActionDefinition {
 	action.Effect = effectiveEffect(action.Effect)
-	if containsTarget(action.Targets, TargetPoint) && action.PointResolution == "" {
-		action.PointResolution = PointResolutionLineFirst
-	}
+	if containsTarget(action.Targets, TargetPoint) && action.PointResolution == "" { action.PointResolution = PointResolutionLineFirst }
 	return action
 }
 
-func effectiveEffect(effect ActionEffect) ActionEffect {
-	if effect == "" {
-		return EffectDamage
-	}
-	return effect
-}
-
-func containsTarget(targets []TargetKind, target TargetKind) bool {
-	for _, candidate := range targets {
-		if candidate == target {
-			return true
-		}
-	}
-	return false
-}
-
-func validTargetKind(kind TargetKind) bool {
-	switch kind {
-	case TargetGate, TargetEntity, TargetPoint:
-		return true
-	default:
-		return false
-	}
-}
-
-func validPointResolution(resolution PointResolution) bool {
-	switch resolution {
-	case PointResolutionLineFirst, PointResolutionEndpointNearest:
-		return true
-	default:
-		return false
-	}
-}
-
-func validDamageType(kind DamageType) bool {
-	switch kind {
-	case DamagePhysical, DamageMagic:
-		return true
-	default:
-		return false
-	}
-}
+func effectiveEffect(effect ActionEffect) ActionEffect { if effect == "" { return EffectDamage }; return effect }
+func containsTarget(targets []TargetKind, target TargetKind) bool { for _, candidate := range targets { if candidate == target { return true } }; return false }
+func validTargetKind(kind TargetKind) bool { switch kind { case TargetGate, TargetEntity, TargetPoint: return true; default: return false } }
+func validPointResolution(resolution PointResolution) bool { switch resolution { case PointResolutionLineFirst, PointResolutionEndpointNearest: return true; default: return false } }
+func validDamageType(kind DamageType) bool { switch kind { case DamagePhysical, DamageMagic: return true; default: return false } }
 
 func cooldownTicks(seconds float32, delta time.Duration) uint64 {
-	if seconds <= 0 || delta <= 0 {
-		return 1
-	}
-	// Action timing is authored at float32 precision. Keep the tick duration at the same
-	// precision while forming the ratio; promoting only seconds to float64 can turn exact
-	// authored boundaries such as 0.05s / 50ms into 1.0000000149 and ceil them to two ticks.
+	if seconds <= 0 || delta <= 0 { return 1 }
 	tickSeconds := float32(delta.Seconds())
-	if tickSeconds <= 0 {
-		return 1
-	}
+	if tickSeconds <= 0 { return 1 }
 	ticks := uint64(math.Ceil(float64(seconds / tickSeconds)))
-	if ticks == 0 {
-		return 1
-	}
+	if ticks == 0 { return 1 }
 	return ticks
 }
 
-func CooldownReadyTick(action ActionDefinition, tick uint64, delta time.Duration) uint64 {
-	return tick + cooldownTicks(action.CooldownSeconds, delta)
-}
-
-func positiveFinite(value float32) bool {
-	return value > 0 && finite(value)
-}
-
-func finite(value float32) bool {
-	f := float64(value)
-	return !math.IsNaN(f) && !math.IsInf(f, 0)
-}
+func CooldownReadyTick(action ActionDefinition, tick uint64, delta time.Duration) uint64 { return tick + cooldownTicks(action.CooldownSeconds, delta) }
+func positiveFinite(value float32) bool { return value > 0 && finite(value) }
+func finite(value float32) bool { f := float64(value); return !math.IsNaN(f) && !math.IsInf(f, 0) }
