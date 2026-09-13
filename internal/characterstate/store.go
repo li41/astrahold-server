@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -34,7 +35,8 @@ const (
 	LearnedSkillsSchemaVersion uint16 = 8
 	ClasslessSchemaVersion     uint16 = 9
 	ItemInstanceSchemaVersion  uint16 = 10
-	SchemaVersion              uint16 = ItemInstanceSchemaVersion
+	PrimaryStatsSchemaVersion  uint16 = 11
+	SchemaVersion              uint16 = PrimaryStatsSchemaVersion
 	LegacyDefaultMaxMP         uint32 = 100
 )
 
@@ -64,7 +66,8 @@ type DefeatedRespawn struct {
 
 // Snapshot is the current durable character-state contract. Profession/ClassID is deliberately
 // absent. Historical class fields are accepted only by legacy wire decoders and are validated then
-// discarded before a Snapshot is constructed. Schema v10 adds unique equipment instance state.
+// discarded before a Snapshot is constructed. Schema v10 adds unique equipment instance state;
+// schema v11 adds the classless primary-stat base values without inventing allocation semantics.
 type Snapshot struct {
 	World         WorldRef
 	HP            uint32
@@ -78,6 +81,7 @@ type Snapshot struct {
 	Inventory     InventoryState
 	CombatLoadout skillloadout.Slots
 	LearnedSkills learnedskills.Set
+	PrimaryStats  characterstats.Primary
 }
 
 type Record struct {
@@ -104,6 +108,11 @@ type wireDefeatedRespawn struct {
 	CheckpointID   string                     `json:"checkpoint_id,omitempty"`
 }
 
+type wirePrimaryStats struct {
+	Strength uint32 `json:"strength"`
+	Agility  uint32 `json:"agility"`
+}
+
 type wireRecord struct {
 	SchemaVersion   uint16               `json:"schema_version"`
 	CharacterID     string               `json:"character_id"`
@@ -126,6 +135,7 @@ type wireRecord struct {
 	Inventory       InventoryState       `json:"inventory,omitempty"`
 	CombatLoadout   []string             `json:"combat_loadout,omitempty"`
 	LearnedSkills   []string             `json:"learned_skills,omitempty"`
+	PrimaryStats    *wirePrimaryStats    `json:"primary_stats,omitempty"`
 }
 
 func Open(root string) (*Store, error) {
@@ -137,12 +147,13 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v10 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v11 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
 // v6-v8 may contain the retired durable ClassID; it is validated during migration and discarded.
 // v7 adds the classless six-slot combat loadout. v8 adds learned skills. v9 retires durable ClassID.
-// v10 adds unique equipment instances and rolled affixes. Older schemas must not carry v10 fields.
-// When loading v7, only configured combat skills are inferred as learned; no other skills are granted.
+// v10 adds unique equipment instances and rolled affixes. v11 adds classless primary-stat base values.
+// Older schemas must not carry fields introduced by a later schema. When loading v7, only configured
+// combat skills are inferred as learned; no other skills or stat values are granted.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -154,7 +165,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV10(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV11(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -194,6 +205,8 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion >= ClasslessSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LoadoutSchemaVersion && len(wire.CombatLoadout) != 0 { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LearnedSkillsSchemaVersion && len(wire.LearnedSkills) != 0 { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < PrimaryStatsSchemaVersion && wire.PrimaryStats != nil { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion >= PrimaryStatsSchemaVersion && wire.PrimaryStats == nil { return Record{}, false, ErrCorruptRecord }
 
 	// Historical ClassID is migration-only input. Validate it so corrupt legacy state does not
 	// become silently acceptable, then discard it instead of restoring profession truth.
@@ -226,6 +239,10 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		learnedSkills, err = learnedSkillsFromCombatLoadout(combatLoadout)
 		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
+	primaryStats := characterstats.Primary{}
+	if wire.PrimaryStats != nil {
+		primaryStats = characterstats.Primary{Strength: wire.PrimaryStats.Strength, Agility: wire.PrimaryStats.Agility}
+	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
 		CharacterID:   characteridentity.ID(wire.CharacterID),
@@ -242,6 +259,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 			Inventory:     inventoryState,
 			CombatLoadout: combatLoadout,
 			LearnedSkills: learnedSkills,
+			PrimaryStats:  primaryStats,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
@@ -297,6 +315,10 @@ func (s *Store) writeLocked(record Record) error {
 		Inventory:      inventoryState,
 		CombatLoadout:  combatLoadoutToWire(record.Snapshot.CombatLoadout),
 		LearnedSkills:  learnedSkillsToWire(record.Snapshot.LearnedSkills),
+		PrimaryStats: &wirePrimaryStats{
+			Strength: record.Snapshot.PrimaryStats.Strength,
+			Agility:  record.Snapshot.PrimaryStats.Agility,
+		},
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
@@ -328,6 +350,10 @@ func (s *Store) recordPath(id characteridentity.ID) string {
 func validateTrustedIdentity(identity characteridentity.Binding) error {
 	if !identity.Valid() || identity.Assurance != characteridentity.AssuranceTrusted { return ErrIdentityNotDurable }
 	return nil
+}
+
+func validateSnapshotV11(snapshot Snapshot) error {
+	return validateSnapshotV10(snapshot)
 }
 
 func validateSnapshotV10(snapshot Snapshot) error {
