@@ -3,9 +3,9 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/actionpolicy"
 	"github.com/li41/astrahold-server/internal/actionresource"
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -24,7 +24,7 @@ func (r *Runtime) validateActionResourceCost(
 	tick uint64,
 	report *StepReport,
 ) bool {
-	policy, ok := classaction.ForAction(prepared.Definition.ID)
+	policy, ok := actionpolicy.ForAction(prepared.Definition.ID)
 	if !ok || policy.CostResource == actionresource.Empty || policy.CostAmount == 0 {
 		return true
 	}
@@ -58,7 +58,7 @@ func (r *Runtime) consumeActionResource(
 	tick uint64,
 	report *StepReport,
 ) bool {
-	policy, ok := classaction.ForAction(prepared.Definition.ID)
+	policy, ok := actionpolicy.ForAction(prepared.Definition.ID)
 	if !ok || policy.CostResource == actionresource.Empty || policy.CostAmount == 0 {
 		return true
 	}
@@ -85,7 +85,7 @@ func (r *Runtime) applyAcceptedActionResourceReduction(
 	actionID string,
 	report *StepReport,
 ) bool {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok || policy.AcceptedReductionResource == actionresource.Empty || policy.AcceptedReductionAmount == 0 {
 		return true
 	}

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/actionpolicy"
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -139,7 +139,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 }
 
 func (r *Runtime) applyAcceptedActionResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok || policy.AcceptedResource == "" || policy.AcceptedGain == 0 { return }
 	if _, err := r.characters.GainActionResource(actorID, policy.AcceptedResource, policy.AcceptedGain); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
@@ -149,7 +149,7 @@ func (r *Runtime) applyAcceptedActionResource(name string, sessionID session.ID,
 }
 
 func (r *Runtime) applyHitActionResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok { return }
 	if policy.HitResource != "" && policy.HitGain > 0 {
 		if _, err := r.characters.GainActionResource(actorID, policy.HitResource, policy.HitGain); err != nil {

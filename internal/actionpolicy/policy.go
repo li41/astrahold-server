@@ -1,7 +1,6 @@
-// Package classaction defines shipped legacy action IDs and their resource/effect policy fixtures.
-// It does not authorize fixed professions; current classless legality is decided by the authoritative
-// action, learned-skill and equipment paths.
-package classaction
+// Package actionpolicy defines shipped action IDs and their authoritative resource/effect policy fixtures.
+// Legacy class-named ActionIDs remain stable content identities; they do not authorize fixed professions.
+package actionpolicy
 
 import (
 	"github.com/li41/astrahold-server/internal/actionresource"

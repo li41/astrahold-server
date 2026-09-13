@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/actionpolicy"
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/targetresource"
@@ -38,7 +38,7 @@ func isSideOrBackAttackPosition(actor, target world.EntityState) bool {
 }
 
 func (r *Runtime) prepareTargetResourceSpend(sourceID, targetID world.EntityID, actionID string) (targetResourceSpendPlan, bool, error) {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok || policy.TargetSpend.ResourceID == "" {
 		return targetResourceSpendPlan{}, false, nil
 	}
@@ -63,7 +63,7 @@ func (r *Runtime) commitTargetResourceSpend(sourceSessionID session.ID, sourceID
 }
 
 func (r *Runtime) applyHitTargetResource(name string, sourceSessionID session.ID, actor, target world.EntityState, actionID string, tick uint64, delta time.Duration, report *StepReport) {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok || policy.HitTargetResource == "" || policy.HitTargetGain == 0 || policy.HitTargetMax == 0 {
 		return
 	}
