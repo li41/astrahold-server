@@ -1,4 +1,4 @@
-// Package equipmentcatalog owns Server-authoritative low-tier equipment gameplay data.
+// Package equipmentcatalog owns Server-authoritative equipment gameplay data.
 // Client names, meshes, icons, materials and animation mappings stay outside the Server.
 package equipmentcatalog
 
@@ -16,6 +16,7 @@ var ErrInvalidCatalog = errors.New("equipmentcatalog: invalid catalog")
 
 type Kind string
 type Slot string
+type Tier string
 type BodySize string
 type WeaponType string
 
@@ -25,6 +26,10 @@ const (
 
 	SlotMainHand Slot = "main_hand"
 	SlotOffHand  Slot = "off_hand"
+
+	TierLow  Tier = "low"
+	TierMid  Tier = "mid"
+	TierHigh Tier = "high"
 
 	BodySizeSmall BodySize = "small"
 	BodySizeLarge BodySize = "large"
@@ -67,6 +72,7 @@ type Definition struct {
 	ItemArchetypeID string  `json:"item_archetype_id"`
 	Kind            Kind    `json:"kind"`
 	Slot            Slot    `json:"slot"`
+	Tier            Tier    `json:"tier"`
 	Weight          uint32  `json:"weight"`
 	Material        string  `json:"material"`
 	Weapon          *Weapon `json:"weapon,omitempty"`
@@ -127,7 +133,7 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	for _, item := range def.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
 		item.Material = strings.TrimSpace(item.Material)
-		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 {
+		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) {
 			return nil, ErrInvalidCatalog
 		}
 		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {
@@ -159,6 +165,15 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		catalog.byItem[item.ItemArchetypeID] = item
 	}
 	return catalog, nil
+}
+
+func validTier(tier Tier) bool {
+	switch tier {
+	case TierLow, TierMid, TierHigh:
+		return true
+	default:
+		return false
+	}
 }
 
 func validWeapon(w Weapon) bool {
