@@ -66,12 +66,12 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 			}
 			return false
 		}
-		if !r.validateActionClassResourceCost(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
+		if !r.validateActionResourceCost(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 		if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
-		if !r.consumeActionClassResource(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
+		if !r.consumeActionResource(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) { return false }
 
 		if !r.resolveEquippedBasicAttackHit(actor.ID, sessionID, prepared) {
-			r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
+			r.applyAcceptedActionResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 			r.emitActionStarted(actor.ID, startPrepared, tick, report)
 			r.emitCombatEvent(protocol.CombatEvent{ActionInstanceID: prepared.ActionInstanceID, ActorEntityID: actor.ID, ActionID: prepared.Definition.ID, Result: protocol.CombatEventMiss, TargetEntityID: targetID, CooldownReadyTick: cooldownReadyTick}, tick, report)
 			return true
@@ -120,12 +120,12 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		if state.Defeated {
 			if err := r.world.SetMoveInput(targetID, movement.Input{}); err != nil { report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err}) }
 			if target.Kind == world.EntityPlayer { r.recordPlayerDefeat(targetID, tick, classifyDeathContext(actor, target), report) }
-			if r.combat != nil { r.combat.ClearSelfMitigation(targetID) }
+			if r.combat != nil { r.combat.ClearTransientStatuses(targetID) }
 			r.clearTargetResourcesForEntity(targetID, report)
 		}
 		r.markEntityVitalsDirty(targetID)
-		r.applyAcceptedActionClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
-		r.applyHitClassResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
+		r.applyAcceptedActionResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
+		r.applyHitActionResource(name, sessionID, actor.ID, prepared.Definition.ID, report)
 		if !state.Defeated {
 			r.applyHitTargetResource(name, sessionID, actor, target, prepared.Definition.ID, tick, delta, report)
 		}
@@ -138,26 +138,26 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 	}
 }
 
-func (r *Runtime) applyAcceptedActionClassResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
+func (r *Runtime) applyAcceptedActionResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
 	policy, ok := classaction.ForAction(actionID)
 	if !ok || policy.AcceptedResource == "" || policy.AcceptedGain == 0 { return }
-	if _, err := r.characters.GainClassResource(actorID, policy.AcceptedResource, policy.AcceptedGain); err != nil {
+	if _, err := r.characters.GainActionResource(actorID, policy.AcceptedResource, policy.AcceptedGain); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		return
 	}
 	if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentClassResourceState(sourceSession, report) }
 }
 
-func (r *Runtime) applyHitClassResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
+func (r *Runtime) applyHitActionResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
 	policy, ok := classaction.ForAction(actionID)
 	if !ok { return }
 	if policy.HitResource != "" && policy.HitGain > 0 {
-		if _, err := r.characters.GainClassResource(actorID, policy.HitResource, policy.HitGain); err != nil {
+		if _, err := r.characters.GainActionResource(actorID, policy.HitResource, policy.HitGain); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentClassResourceState(sourceSession, report) }
 	}
 	if policy.HitProgressResource != "" && policy.HitProgressGain > 0 {
-		_, visibleChanged, err := r.characters.GainClassResourceProgress(actorID, policy.HitProgressResource, policy.HitProgressGain)
+		_, visibleChanged, err := r.characters.GainActionResourceProgress(actorID, policy.HitProgressResource, policy.HitProgressGain)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else if visibleChanged {

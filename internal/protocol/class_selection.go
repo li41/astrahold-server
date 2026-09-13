@@ -1,21 +1,22 @@
 package protocol
 
 const (
-	MessageClientInitialClassSelection   MessageType = 9
-	MessageCharacterClassState           MessageType = 115
-	MessageInitialClassSelectionResult   MessageType = 116
+	MessageClientInitialClassSelection MessageType = 9
+	MessageCharacterClassState         MessageType = 115
+	MessageInitialClassSelectionResult MessageType = 116
 )
 
-// ClientInitialClassSelection is an intent only. The Server validates the canonical ClassID,
-// ownership, equipment legality and durability before changing gameplay truth.
+// ClientInitialClassSelection is retained only as a Protocol v27 compatibility wire type.
+// Production ingress no longer accepts fixed-class selection as a gameplay command; decoding
+// this message must not be interpreted as permission to mutate authoritative character truth.
 type ClientInitialClassSelection struct {
 	ClassID string
 }
 
 func (ClientInitialClassSelection) Type() MessageType { return MessageClientInitialClassSelection }
 
-// CharacterClassState is the authoritative profession identity for the connected character.
-// Empty ClassID means the character is still unassigned; it is not a seventh profession.
+// CharacterClassState is retained only as a Protocol v27 compatibility wire type.
+// Current classless runtime does not publish this message as authoritative profession state.
 type CharacterClassState struct {
 	ClassID string
 }
@@ -41,9 +42,10 @@ const (
 	InitialClassSelectionServerRejected          InitialClassSelectionRejectionReason = "server_rejected"
 )
 
-// InitialClassSelectionResult correlates one client intent with the authoritative decision.
-// ClassID is the authoritative live ClassID after that decision; it is empty while unassigned.
-// A committed result is emitted only after durable checkpoint advancement and world-owner commit.
+// InitialClassSelectionResult is retained only as a Protocol v27 compatibility wire type.
+// Current production runtime does not commit fixed-class selection or emit a new durable
+// profession decision through this message. Outcome/reason constants remain source-compatible
+// until the coordinated breaking Protocol cleanup after consumer audit.
 type InitialClassSelectionResult struct {
 	ClientActionSequence uint32
 	ClassID              string

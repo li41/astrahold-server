@@ -53,21 +53,21 @@ func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatal
 	if r == nil || targetID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
-	for _, s := range r.sessions.List() {
-		if s.EntityID != targetID || !s.CharacterIdentity.Valid() {
-			continue
-		}
-		inv := r.inventories[s.CharacterIdentity.ID]
-		if inv == nil {
-			return equipmentcatalog.Definition{}, false
-		}
-		definition, ok := defaultEquipmentCatalog.Resolve(inv.OffHand())
-		if !ok || definition.Kind != equipmentcatalog.KindShield || definition.Shield == nil {
-			return equipmentcatalog.Definition{}, false
-		}
-		return definition, true
+	// Damage mitigation applies player equipment only while that entity has an active Session.
+	// Registry maintains this relation directly, avoiding the previous per-hit full List/sort/scan.
+	s, ok := r.sessions.GetByEntity(targetID)
+	if !ok || !s.CharacterIdentity.Valid() {
+		return equipmentcatalog.Definition{}, false
 	}
-	return equipmentcatalog.Definition{}, false
+	inv := r.inventories[s.CharacterIdentity.ID]
+	if inv == nil {
+		return equipmentcatalog.Definition{}, false
+	}
+	definition, ok := defaultEquipmentCatalog.Resolve(inv.OffHand())
+	if !ok || definition.Kind != equipmentcatalog.KindShield || definition.Shield == nil {
+		return equipmentcatalog.Definition{}, false
+	}
+	return definition, true
 }
 
 func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (DamageResult, error) {

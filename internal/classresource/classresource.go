@@ -1,45 +1,46 @@
-// Package classresource defines stable Server-side class combat resource identities and caps.
+// Package classresource is the fixed-profession compatibility adapter for Protocol v27 and
+// legacy fixtures. Current classless gameplay definitions live in internal/actionresource.
 package classresource
 
 import (
-	"errors"
-
+	"github.com/li41/astrahold-server/internal/actionresource"
 	"github.com/li41/astrahold-server/internal/classid"
 )
 
-type ID string
+type ID = actionresource.ID
 
 const (
-	Empty        ID = ""
-	Resolve      ID = "resolve"
-	Momentum     ID = "momentum"
-	HuntMomentum ID = "hunt_momentum"
-	StarHeat     ID = "star_heat"
-	OathSeal     ID = "oath_seal"
+	Empty        = actionresource.Empty
+	Resolve      = actionresource.Resolve
+	Momentum     = actionresource.Momentum
+	HuntMomentum = actionresource.HuntMomentum
+	StarHeat     = actionresource.StarHeat
+	OathSeal     = actionresource.OathSeal
 )
 
-var ErrResourceMismatch = errors.New("classresource: resource mismatch")
+var ErrResourceMismatch = actionresource.ErrResourceMismatch
 
-type Definition struct {
-	ID                ID
-	Max               uint32
-	ProgressThreshold uint32
+type Definition = actionresource.Definition
+
+// DefinitionForID is retained for source compatibility while callers migrate to actionresource.
+func DefinitionForID(id ID) (Definition, bool) {
+	return actionresource.DefinitionForID(id)
 }
 
-// PrimaryForClass returns the authored primary combat resource for a class. A missing definition
-// means that class has not yet shipped an authoritative class-resource contract.
+// PrimaryForClass is a fixed-profession compatibility lookup for legacy v27 resource state.
+// It must not be used to decide current classless action, equipment, or skill legality.
 func PrimaryForClass(id classid.ID) (Definition, bool) {
 	switch id {
 	case classid.Oathguard:
-		return Definition{ID: Resolve, Max: 100}, true
+		return actionresource.DefinitionForID(actionresource.Resolve)
 	case classid.Breaker:
-		return Definition{ID: Momentum, Max: 100}, true
+		return actionresource.DefinitionForID(actionresource.Momentum)
 	case classid.Ranger:
-		return Definition{ID: HuntMomentum, Max: 100}, true
+		return actionresource.DefinitionForID(actionresource.HuntMomentum)
 	case classid.StarfireMage:
-		return Definition{ID: StarHeat, Max: 100}, true
+		return actionresource.DefinitionForID(actionresource.StarHeat)
 	case classid.Oathhealer:
-		return Definition{ID: OathSeal, Max: 3, ProgressThreshold: 100}, true
+		return actionresource.DefinitionForID(actionresource.OathSeal)
 	default:
 		return Definition{}, false
 	}

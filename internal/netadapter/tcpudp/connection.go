@@ -147,13 +147,29 @@ func (c *clientConnection) realtimeAddr() *net.UDPAddr {
 }
 
 func (c *clientConnection) runReliableWriter() error {
+	// Reliable delivery is serialized per connection, so one writer-owned frame buffer can be
+	// reused safely across every message. AppendEncodeEnvelope preserves the exact ASTR wire frame
+	// while avoiding the old payload+frame copy/allocation pair on the high-volume reliable path.
+	frameBuffer := make([]byte, 0, 512)
 	for {
 		select {
 		case <-c.done:
 			return nil
 		case envelope := <-c.reliable:
 			c.reliableInFlight.Store(true)
-			err := transport.WriteEnvelope(c.tcp, envelope, c.codec)
+			encoded, err := transport.AppendEncodeEnvelope(frameBuffer[:0], envelope, c.codec)
+			if err == nil {
+				remaining := encoded
+				for len(remaining) > 0 {
+					var n int
+					n, err = c.tcp.Write(remaining)
+					if err != nil {
+						break
+					}
+					remaining = remaining[n:]
+				}
+			}
+			frameBuffer = encoded[:0]
 			c.reliableInFlight.Store(false)
 			if err != nil {
 				return err

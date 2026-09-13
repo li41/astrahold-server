@@ -1,4 +1,4 @@
-// Package loadlab 提供 Astrahold Siege Load Lab 的 headless 壓測工具與量測資料結構。
+// Package loadlab 提供 Astrahold 的 headless 壓測工具與量測資料結構。
 package loadlab
 
 import (
@@ -18,20 +18,21 @@ type Scenario string
 
 const (
 	ScenarioDistributed   Scenario = "distributed"
-	ScenarioGateZerg      Scenario = "gate-zerg"
-	ScenarioVerticalSiege Scenario = "vertical-siege"
+	ScenarioCrowd         Scenario = "crowd"
 	ScenarioTeleportChurn Scenario = "teleport-churn"
+
+	s3e9MixedPulseLeg = 2 * time.Second
 )
 
 var (
-	ErrUnknownScenario              = errors.New("loadlab: unknown scenario")
-	s3e9MixedMovementEnabled        = os.Getenv("ASTRAHOLD_S3E9_MIXED_MOVEMENT") == "1"
+	ErrUnknownScenario       = errors.New("loadlab: unknown scenario")
+	s3e9MixedMovementEnabled = os.Getenv("ASTRAHOLD_S3E9_MIXED_MOVEMENT") == "1"
 )
 
 func ParseScenario(value string) (Scenario, error) {
 	scenario := Scenario(value)
 	switch scenario {
-	case ScenarioDistributed, ScenarioGateZerg, ScenarioVerticalSiege, ScenarioTeleportChurn:
+	case ScenarioDistributed, ScenarioCrowd, ScenarioTeleportChurn:
 		return scenario, nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrUnknownScenario, value)
@@ -40,10 +41,6 @@ func ParseScenario(value string) (Scenario, error) {
 
 type scenarioLayout struct {
 	ground gameplayworld.Surface
-	west   gameplayworld.Surface
-	east   gameplayworld.Surface
-	wall   gameplayworld.Surface
-	gate   gameplayworld.Blocker
 }
 
 // NewPlayerFactory 建立只供 Load Lab 使用的 deterministic spawn factory。
@@ -87,42 +84,13 @@ func buildLayout(def gameplayworld.Definition, scenario Scenario) (scenarioLayou
 	if !ok {
 		return scenarioLayout{}, errors.New("loadlab: ground surface is required")
 	}
-	gate, ok := blockerByID(def, "main-gate")
-	if !ok {
-		return scenarioLayout{}, errors.New("loadlab: main-gate blocker is required")
-	}
-	layout := scenarioLayout{ground: ground, gate: gate}
-	if scenario != ScenarioVerticalSiege {
-		return layout, nil
-	}
-	if layout.west, ok = surfaceByID(def, "west-stair"); !ok {
-		return scenarioLayout{}, errors.New("loadlab: west-stair surface is required for vertical-siege")
-	}
-	if layout.east, ok = surfaceByID(def, "east-stair"); !ok {
-		return scenarioLayout{}, errors.New("loadlab: east-stair surface is required for vertical-siege")
-	}
-	if layout.wall, ok = surfaceByID(def, "front-wall-walk"); !ok {
-		return scenarioLayout{}, errors.New("loadlab: front-wall-walk surface is required for vertical-siege")
-	}
-	return layout, nil
+	return scenarioLayout{ground: ground}, nil
 }
 
 func spawnPosition(layout scenarioLayout, scenario Scenario, index, total int) world.Position {
 	switch scenario {
-	case ScenarioGateZerg:
-		return pointOnSurface(layout.ground, gridPoint(gateApproachBounds(layout), index, total, 0.25))
-	case ScenarioVerticalSiege:
-		role := index % 10
-		switch {
-		case role < 5:
-			return pointOnSurface(layout.ground, gridPoint(gateApproachBounds(layout), index/2, maxInt(1, total/2), 0.25))
-		case role == 5:
-			return pointOnSurface(layout.west, gridPoint(layout.west.Bounds, index/10, maxInt(1, total/10), 0.15))
-		case role == 6:
-			return pointOnSurface(layout.east, gridPoint(layout.east.Bounds, index/10, maxInt(1, total/10), 0.15))
-		default:
-			return pointOnSurface(layout.wall, gridPoint(layout.wall.Bounds, index/3, maxInt(1, total*3/10), 0.15))
-		}
+	case ScenarioCrowd:
+		return pointOnSurface(layout.ground, gridPoint(crowdBounds(layout), index, total, 0.25))
 	case ScenarioTeleportChurn:
 		west, east := teleportChurnBounds(layout)
 		groupSize := total / 2
@@ -137,16 +105,21 @@ func spawnPosition(layout scenarioLayout, scenario Scenario, index, total int) w
 	}
 }
 
-func gateApproachBounds(layout scenarioLayout) gameplayworld.BoundsXZ {
-	centerX := (layout.gate.Bounds.MinX + layout.gate.Bounds.MaxX) * 0.5
-	minZ := layout.gate.Bounds.MinZ - 18
-	if minZ < layout.ground.Bounds.MinZ+1 {
-		minZ = layout.ground.Bounds.MinZ + 1
+// crowdBounds keeps a dense benchmark cohort inside one AOI without depending on
+// any gameplay blocker, gate, building, or presentation layout. It deliberately
+// uses the north-central portion of the authored ground so the benchmark remains
+// stable when starter-village props change.
+func crowdBounds(layout scenarioLayout) gameplayworld.BoundsXZ {
+	ground := layout.ground.Bounds
+	centerX := (ground.MinX + ground.MaxX) * 0.5
+	maxZ := ground.MaxZ - 2
+	minZ := maxZ - 18
+	if minZ < ground.MinZ+2 {
+		minZ = ground.MinZ + 2
 	}
-	maxZ := layout.gate.Bounds.MinZ - 1
 	return gameplayworld.BoundsXZ{
-		MinX: max32(layout.ground.Bounds.MinX+1, centerX-12),
-		MaxX: min32(layout.ground.Bounds.MaxX-1, centerX+12),
+		MinX: max32(ground.MinX+2, centerX-12),
+		MaxX: min32(ground.MaxX-2, centerX+12),
 		MinZ: minZ,
 		MaxZ: maxZ,
 	}
@@ -196,8 +169,8 @@ func validateTeleportChurnLayout(layout scenarioLayout, totalClients int) error 
 
 func teleportChurnBounds(layout scenarioLayout) (gameplayworld.BoundsXZ, gameplayworld.BoundsXZ) {
 	ground := layout.ground.Bounds
-	// 西南群放在城外開放地；東北群放在城內、但避開 x=29.5 side wall 與 z=34.5 rear wall。
-	// castle-sandbox 的兩個 box 最近距離 sqrt(42^2 + 58^2) ~= 71.6m > 64m AOI radius。
+	// Keep the S3-E.8/S3-E.7 baseline topology independent from S3-E.9 movement.
+	// On current ground the nearest box corners remain more than the 64m AOI radius apart.
 	return gameplayworld.BoundsXZ{
 		MinX: ground.MinX + 2,
 		MaxX: ground.MinX + 14,
@@ -265,33 +238,57 @@ func distributedMovementDirection(entityID world.EntityID, phase int) (float32, 
 	return direction[0], direction[1]
 }
 
+func s3e9EntityOnWestAfterTeleport(entityID world.EntityID, totalClients int) (bool, bool) {
+	if totalClients < 4 || totalClients%4 != 0 || entityID == 0 || uint64(entityID) > uint64(totalClients) {
+		return false, false
+	}
+	index := int(uint64(entityID) - 1)
+	groupSize := totalClients / 2
+	localIndex := index % groupSize
+	west := index < groupSize
+	if localIndex < groupSize/2 {
+		west = !west
+	}
+	return west, true
+}
+
+// s3e9MixedPulseDirection drives a bounded center-and-return pulse after the authoritative
+// round-1 teleport. It creates real AOI churn without walking the old edge clusters into
+// ground bounds or starter-village blockers. Hot combat entities remain stationary.
+func s3e9MixedPulseDirection(entityID world.EntityID, totalClients int, activeElapsed time.Duration) (float32, float32) {
+	if S3E9MixedStationaryEntity(entityID) {
+		return 0, 0
+	}
+	west, ok := s3e9EntityOnWestAfterTeleport(entityID, totalClients)
+	if !ok {
+		return 0, 0
+	}
+	const diagonal = float32(0.70710677)
+	dx, dz := diagonal, diagonal
+	if !west {
+		dx, dz = -diagonal, -diagonal
+	}
+	if int(activeElapsed/s3e9MixedPulseLeg)%2 == 1 {
+		dx, dz = -dx, -dz
+	}
+	return dx, dz
+}
+
 // MovementDirection 回傳 deterministic input pattern，避免 Load Lab 本身使用大量 RNG。
 func MovementDirection(scenario Scenario, entityID world.EntityID, elapsed time.Duration) (float32, float32) {
 	phase := int(elapsed / (2 * time.Second))
 	switch scenario {
-	case ScenarioGateZerg:
-		return 0, 1
+	case ScenarioCrowd:
+		return 0, -1
 	case ScenarioTeleportChurn:
 		if !s3e9MixedMovementEnabled || S3E9MixedStationaryEntity(entityID) {
 			return 0, 0
 		}
-		return distributedMovementDirection(entityID, phase)
-	case ScenarioVerticalSiege:
-		role := int((uint64(entityID) - 1) % 10)
-		switch {
-		case role < 5:
-			return 0, 1
-		case role == 5 || role == 6:
-			if phase%2 == 0 {
-				return 0, -1
-			}
-			return 0, 1
-		default:
-			if (phase+role)%2 == 0 {
-				return 1, 0
-			}
-			return -1, 0
+		activeElapsed, clients, ok := s3e9MixedMovementClock()
+		if !ok {
+			return 0, 0
 		}
+		return s3e9MixedPulseDirection(entityID, clients, activeElapsed)
 	default:
 		return distributedMovementDirection(entityID, phase)
 	}
@@ -304,15 +301,6 @@ func surfaceByID(def gameplayworld.Definition, id string) (gameplayworld.Surface
 		}
 	}
 	return gameplayworld.Surface{}, false
-}
-
-func blockerByID(def gameplayworld.Definition, id string) (gameplayworld.Blocker, bool) {
-	for _, blocker := range def.Blockers {
-		if blocker.ID == id {
-			return blocker, true
-		}
-	}
-	return gameplayworld.Blocker{}, false
 }
 
 func min32(a, b float32) float32 {

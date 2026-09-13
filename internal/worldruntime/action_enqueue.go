@@ -15,27 +15,31 @@ func (r *Runtime) EnqueueUseAction(id session.ID, sequence uint32, action protoc
 	if err := validateActionIntent(action); err != nil {
 		return err
 	}
-	return r.queue.tryPush(useActionCommand{sessionID:id,sequence:sequence,action:action})
+	return r.queue.tryPush(useActionCommand{sessionID: id, sequence: sequence, action: action})
 }
 
 func validateActionIntent(action protocol.ClientUseAction) error {
-	if action.ActionID == "" || action.TargetKind == "" {
+	if action.ActionID == "" {
 		return errors.New("worldruntime: invalid action intent")
 	}
-	if action.TargetKind == protocol.ActionTargetPoint {
-		if action.TargetX == nil || action.TargetZ == nil || !finiteActionCoordinate(*action.TargetX) || !finiteActionCoordinate(*action.TargetZ) {
+	switch action.TargetKind {
+	case protocol.ActionTargetPoint:
+		if action.TargetID != "" || action.TargetX == nil || action.TargetZ == nil || !finiteActionCoordinate(*action.TargetX) || !finiteActionCoordinate(*action.TargetZ) {
 			return errors.New("worldruntime: invalid point action intent")
 		}
 		return nil
-	}
-	if action.TargetID == "" {
+	case protocol.ActionTargetEntity, protocol.ActionTargetGate:
+		if action.TargetID == "" || action.TargetX != nil || action.TargetZ != nil {
+			return errors.New("worldruntime: invalid action intent")
+		}
+		return nil
+	default:
 		return errors.New("worldruntime: invalid action intent")
 	}
-	return nil
 }
 
 func (r *Runtime) EnqueueAttackGate(id session.ID, sequence uint32, gateID string) error {
-	return r.EnqueueUseAction(id, sequence, protocol.ClientUseAction{ActionID:legacyGateActionID,TargetKind:protocol.ActionTargetGate,TargetID:gateID})
+	return r.EnqueueUseAction(id, sequence, protocol.ClientUseAction{ActionID: legacyGateActionID, TargetKind: protocol.ActionTargetGate, TargetID: gateID})
 }
 
 func finiteActionCoordinate(value float32) bool {

@@ -84,6 +84,7 @@ func (r *Runtime) stepMonsterLifecycles(tick uint64, report *StepReport) {
 			// Defeat is authoritative immediately. Freeze any stale movement intent even when the
 			// defeat source was not the normal damage dispatcher, then keep the corpse in AOI.
 			_ = r.world.SetMoveInput(entityID, movement.Input{})
+			if r.combat != nil { r.combat.ClearTransientStatuses(entityID) }
 			r.clearAutonomousMeleeTarget(entityID)
 			lifecycle.phase = monsterLifecycleCorpse
 			lifecycle.despawnAtTick = lifecycleTickAfter(tick, lifecycle.config.CorpseHoldTicks)

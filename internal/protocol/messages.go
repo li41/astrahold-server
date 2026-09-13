@@ -10,7 +10,7 @@ import (
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
 // v27: Shadowblade adds authoritative source-target resource state for per-target Flaw.
-// v26: Oathguard class action legality adds wrong_class rejection plus authoritative class-resource state.
+// v26: Oathguard class action legality added wrong_class rejection plus authoritative class-resource state.
 // v25: Reliable initial class selection intent/result plus authoritative CharacterClassState.
 // v24: CombatEvent adds Server-authoritative shield block outcome; damage now reflects final mitigated damage.
 // v23: Equipment semantics add authoritative off_hand so shields are distinct from MainHand weapons.
@@ -131,7 +131,6 @@ type ActionRejectionReason string
 const (
 	ActionRejectionCooldown             ActionRejectionReason = "cooldown"
 	ActionRejectionInsufficientResource ActionRejectionReason = "insufficient_resource"
-	ActionRejectionWrongClass           ActionRejectionReason = "wrong_class"
 	ActionRejectionInvalidTarget        ActionRejectionReason = "invalid_target"
 	ActionRejectionOutOfRange           ActionRejectionReason = "out_of_range"
 	ActionRejectionWrongLayer           ActionRejectionReason = "wrong_layer"

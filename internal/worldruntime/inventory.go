@@ -5,7 +5,6 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -48,23 +47,19 @@ func durableInventoryState(inv *inventory.Inventory) (characterstate.InventorySt
 	return characterstate.NewInventoryStateWithEquipment(durable, inv.MainHand(), inv.OffHand())
 }
 
-// restoreCharacterInventory preserves the unassigned-class compatibility seam for focused tests
-// and legacy internal callers. Production durable restore uses restoreCharacterInventoryForClass.
+// restoreCharacterInventory restores classless durable inventory/equipment truth. Equipment
+// legality depends only on the actual item and slot; retired ClassID never participates.
 func restoreCharacterInventory(maxStacks int, state characterstate.InventoryState) (*inventory.Inventory, error) {
-	return restoreCharacterInventoryForClass(maxStacks, state, "")
-}
-
-func restoreCharacterInventoryForClass(maxStacks int, state characterstate.InventoryState, classID classid.ID) (*inventory.Inventory, error) {
 	if !state.Initialized { return nil, nil }
 	stacks, err := state.Stacks(); if err != nil { return nil, err }
 	inv := newCharacterInventory(maxStacks)
 	if state.MainHand != "" {
-		if !mainHandItemAllowedForClass(state.MainHand, classID) { return nil, ErrEquipmentItemNotAllowed }
+		if !mainHandItemAllowed(state.MainHand) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.MainHand, 1); err != nil { return nil, err }
 		if err := inv.EquipMainHand(state.MainHand); err != nil { return nil, err }
 	}
 	if state.OffHand != "" {
-		if !offHandItemAllowedForClass(state.OffHand, classID) { return nil, ErrEquipmentItemNotAllowed }
+		if !offHandItemAllowed(state.OffHand) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.OffHand, 1); err != nil { return nil, err }
 		if err := inv.EquipOffHand(state.OffHand); err != nil { return nil, err }
 	}
@@ -80,11 +75,11 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
 		r.inventories[identity] = inv
 	}
-	// ClassID is durable character identity. Only trusted/durable characters receive a join or
-	// reconnect class bootstrap. Ephemeral development identities cannot persist a profession and
-	// therefore do not receive a misleading durable CharacterClassState.
+	// Current characters have no durable profession identity. Trusted sessions may still carry an
+	// explicit legacy v27 resource fixture, so the compatibility lane queues only a resource state
+	// when one actually exists; it never publishes a current CharacterClassState.
 	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
-		r.queueCurrentClassState(s)
+		r.queueCurrentLegacyClassResourceState(s)
 	}
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
@@ -92,9 +87,8 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 func (r *Runtime) removeSessionInventoryDelivery(id session.ID) { delete(r.sessionInventoryPending, id) }
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
-	// Class state/result uses its own bounded FIFO so transient Reliable backpressure never
-	// re-runs class persistence or gameplay mutation.
-	r.retryPendingClassMessages(tick, report)
+	// Legacy v27 class-resource feedback is retried once at the beginning of Runtime.Step, before
+	// current commands can append newer states. Do not retry it again here in the same tick.
 	r.pruneItemUseCooldowns(tick)
 	r.retryPendingItemUseResults(tick, report)
 	if len(r.sessionInventoryPending) == 0 { return }

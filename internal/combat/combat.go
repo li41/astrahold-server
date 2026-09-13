@@ -11,10 +11,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/status"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
 const SchemaVersion uint16 = 3
+
+const statusSelfDamageReduction status.ID = "self_damage_reduction"
 
 type TargetKind string
 
@@ -124,16 +127,11 @@ type cooldownKey struct {
 	actionID string
 }
 
-type selfMitigationState struct {
-	DamageReductionPercent uint8
-	UntilTick              uint64
-}
-
 type Service struct {
-	actions              map[string]ActionDefinition
-	nextUseTick          map[cooldownKey]uint64
-	activeSelfMitigation map[world.EntityID]selfMitigationState
-	nextInstanceID       uint64
+	actions        map[string]ActionDefinition
+	nextUseTick    map[cooldownKey]uint64
+	statuses       *status.Store
+	nextInstanceID uint64
 }
 
 func LoadFile(path string) (Loaded, error) {
@@ -276,9 +274,9 @@ func NewService(definitions []ActionDefinition) (*Service, error) {
 		actions[action.ID] = copy
 	}
 	return &Service{
-		actions:              actions,
-		nextUseTick:          make(map[cooldownKey]uint64),
-		activeSelfMitigation: make(map[world.EntityID]selfMitigationState),
+		actions:     actions,
+		nextUseTick: make(map[cooldownKey]uint64),
+		statuses:    status.NewStore(),
 	}, nil
 }
 
@@ -336,14 +334,8 @@ func (s *Service) Commit(action PreparedAction, tick uint64, delta time.Duration
 	if action.Definition.Effect != EffectSelfMitigation {
 		return
 	}
-	until := tick + cooldownTicks(action.Definition.DurationSeconds, delta)
-	if until < tick {
-		until = ^uint64(0)
-	}
-	s.activeSelfMitigation[action.ActorEntityID] = selfMitigationState{
-		DamageReductionPercent: action.Definition.SelfDamageReductionPercent,
-		UntilTick:              until,
-	}
+	until := status.Deadline(tick, cooldownTicks(action.Definition.DurationSeconds, delta))
+	s.statuses.Apply(action.ActorEntityID, statusSelfDamageReduction, action.Definition.SelfDamageReductionPercent, until)
 }
 
 // SelfDamageReductionPercent returns the current Server-owned transient mitigation for one entity.
@@ -352,22 +344,18 @@ func (s *Service) SelfDamageReductionPercent(entityID world.EntityID, tick uint6
 	if s == nil || entityID == 0 {
 		return 0
 	}
-	state, ok := s.activeSelfMitigation[entityID]
+	value, ok := s.statuses.Value(entityID, statusSelfDamageReduction, tick)
 	if !ok {
 		return 0
 	}
-	if tick >= state.UntilTick {
-		delete(s.activeSelfMitigation, entityID)
-		return 0
-	}
-	return state.DamageReductionPercent
+	return value
 }
 
 func (s *Service) ClearSelfMitigation(entityID world.EntityID) {
 	if s == nil || entityID == 0 {
 		return
 	}
-	delete(s.activeSelfMitigation, entityID)
+	s.statuses.Remove(entityID, statusSelfDamageReduction)
 }
 
 func normalizeAction(action ActionDefinition) ActionDefinition {
@@ -425,7 +413,14 @@ func cooldownTicks(seconds float32, delta time.Duration) uint64 {
 	if seconds <= 0 || delta <= 0 {
 		return 1
 	}
-	ticks := uint64(math.Ceil(float64(seconds) / delta.Seconds()))
+	// Action timing is authored at float32 precision. Keep the tick duration at the same
+	// precision while forming the ratio; promoting only seconds to float64 can turn exact
+	// authored boundaries such as 0.05s / 50ms into 1.0000000149 and ceil them to two ticks.
+	tickSeconds := float32(delta.Seconds())
+	if tickSeconds <= 0 {
+		return 1
+	}
+	ticks := uint64(math.Ceil(float64(seconds / tickSeconds)))
 	if ticks == 0 {
 		return 1
 	}

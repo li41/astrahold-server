@@ -18,11 +18,9 @@ func WithCharacterStateOutbox(outbox *characterstate.Outbox, worldRef characters
 	}
 }
 
-// captureCharacterStateSnapshot reads only world-owner gameplay truth and produces immutable
-// persistence input. A completion transaction may project a target ClassID into saves while its
-// live gameplay mutation is waiting for durability acknowledgement. This prevents autosave/leave
-// from erasing an assignment that is already in the durable pipeline without making pending state
-// authoritative for combat/equipment/gameplay.
+// captureCharacterStateSnapshot reads only world-owner durable gameplay truth and produces
+// immutable persistence input. Legacy v27 ClassID is intentionally excluded: profession is no
+// longer character persistence truth in the classless model.
 func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID world.EntityID, report *StepReport) (characteridentity.Binding, characterstate.Snapshot, bool) {
 	binding, ok := r.characterIdentities.binding(entityID)
 	if !ok {
@@ -47,28 +45,26 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 		recordCharacterStateSaveFailure(report, sessionID, err)
 		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
-
-	classForSave := state.ClassID
-	if r.characterStateOutbox != nil {
-		if pending, exists := r.characterStateOutbox.CompletionForCharacter(binding.ID); exists && pending.Snapshot.ClassID != "" {
-			classForSave = pending.Snapshot.ClassID
-		}
+	learnedSkills, combatLoadout, err := r.characterSkills.capture(entityID)
+	if err != nil {
+		recordCharacterStateSaveFailure(report, sessionID, err)
+		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
+
 	snapshot := characterstate.Snapshot{
-		World:     r.characterStateWorld,
-		ClassID:   classForSave,
-		HP:        state.HP,
-		MaxHP:     state.MaxHP,
-		MP:        state.MP,
-		MaxMP:     state.MaxMP,
-		Defeated:  state.Defeated,
-		Position:  entity.Transform.Position,
-		Yaw:       entity.Transform.Yaw,
-		Inventory: inventoryState,
+		World:         r.characterStateWorld,
+		HP:            state.HP,
+		MaxHP:         state.MaxHP,
+		MP:            state.MP,
+		MaxMP:         state.MaxMP,
+		Defeated:      state.Defeated,
+		Position:      entity.Transform.Position,
+		Yaw:           entity.Transform.Yaw,
+		Inventory:     inventoryState,
+		CombatLoadout: combatLoadout,
+		LearnedSkills: learnedSkills,
 	}
 	if state.Defeated {
-		// Defeated records are written only when the already-established death-time binding exists.
-		// Never invent a context/destination during persistence.
 		if r.respawnPolicy == nil {
 			recordCharacterStateSaveFailure(report, sessionID, ErrCharacterStateDefeatedRespawnMissing)
 			return characteridentity.Binding{}, characterstate.Snapshot{}, false
@@ -79,40 +75,25 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 			return characteridentity.Binding{}, characterstate.Snapshot{}, false
 		}
 		remaining := uint64(0)
-		if report != nil && scheduled.DueTick > report.Tick {
-			remaining = scheduled.DueTick - report.Tick
-		}
+		if report != nil && scheduled.DueTick > report.Tick { remaining = scheduled.DueTick - report.Tick }
 		checkpointID, _ := r.respawnPolicy.Checkpoint(entityID)
 		snapshot.Respawn = characterstate.DefeatedRespawn{
-			Context:        scheduled.Context,
-			SpawnPointID:   scheduled.SpawnPointID,
-			SpawnClass:     scheduled.SpawnClass,
-			Position:       scheduled.Position,
-			RemainingTicks: remaining,
-			CheckpointID:   checkpointID,
+			Context: scheduled.Context, SpawnPointID: scheduled.SpawnPointID, SpawnClass: scheduled.SpawnClass,
+			Position: scheduled.Position, RemainingTicks: remaining, CheckpointID: checkpointID,
 		}
 	}
 	return binding, snapshot, true
 }
 
-// enqueueCharacterStateSave captures authoritative state while the world owner still
-// owns the entity, then hands only immutable data to the process-local save outbox.
-// Disk I/O is deliberately performed by the worldd persistence worker, never here.
 func (r *Runtime) enqueueCharacterStateSave(sessionID session.ID, entityID world.EntityID, report *StepReport) bool {
-	if r.characterStateOutbox == nil {
-		return false
-	}
+	if r.characterStateOutbox == nil { return false }
 	binding, snapshot, ok := r.captureCharacterStateSnapshot(sessionID, entityID, report)
-	if !ok {
-		return false
-	}
+	if !ok { return false }
 	if _, err := r.characterStateOutbox.Enqueue(binding, snapshot); err != nil {
 		recordCharacterStateSaveFailure(report, sessionID, err)
 		return false
 	}
-	if report != nil {
-		report.Metrics.CharacterStateSaveIntentsEnqueued++
-	}
+	if report != nil { report.Metrics.CharacterStateSaveIntentsEnqueued++ }
 	return true
 }
 
@@ -149,54 +130,32 @@ func (r *Runtime) autosaveCharacterStates(tick uint64, report *StepReport) {
 	if report != nil { report.Metrics.CharacterStateAutosaveBudget = budget }
 
 	sessions := r.sessions.List()
-	if len(sessions) == 0 {
-		r.characterStateAutosaveCursor = 0
-		r.characterStateAutosaveNextTick = 0
-		return
-	}
+	if len(sessions) == 0 { r.characterStateAutosaveCursor = 0; r.characterStateAutosaveNextTick = 0; return }
 	start := r.characterStateAutosaveCursor % len(sessions)
 	if start < 0 { start = 0 }
-	attempts := 0
-	lastAttemptedIndex := -1
-	nextSweep := uint64(0)
-	trustedSeen := false
+	attempts := 0; lastAttemptedIndex := -1; nextSweep := uint64(0); trustedSeen := false
 	for checked := 0; checked < len(sessions); checked++ {
-		index := (start + checked) % len(sessions)
-		s := sessions[index]
+		index := (start + checked) % len(sessions); s := sessions[index]
 		if s.CharacterIdentity.Assurance != characteridentity.AssuranceTrusted { continue }
 		trustedSeen = true
 		lastTick, ok := r.characterStateAutosaveLastTick[s.EntityID]
-		if !ok || tick < lastTick {
-			lastTick = tick
-			r.characterStateAutosaveLastTick[s.EntityID] = tick
-		}
+		if !ok || tick < lastTick { lastTick = tick; r.characterStateAutosaveLastTick[s.EntityID] = tick }
 		dueTick := characterStateAutosaveDueTick(lastTick, interval)
-		if tick < dueTick {
-			nextSweep = earlierAutosaveTick(nextSweep, dueTick)
-			continue
-		}
+		if tick < dueTick { nextSweep = earlierAutosaveTick(nextSweep, dueTick); continue }
 		if attempts >= budget {
 			if report != nil { report.Metrics.CharacterStateAutosaveBudgetExhausted = true }
-			r.characterStateAutosaveCursor = index
-			r.characterStateAutosaveNextTick = characterStateAutosaveRetryTick(tick)
-			return
+			r.characterStateAutosaveCursor = index; r.characterStateAutosaveNextTick = characterStateAutosaveRetryTick(tick); return
 		}
-		attempts++
-		lastAttemptedIndex = index
+		attempts++; lastAttemptedIndex = index
 		if report != nil { report.Metrics.CharacterStateAutosaveAttempts++ }
 		if r.enqueueCharacterStateSave(s.ID, s.EntityID, report) {
 			r.characterStateAutosaveLastTick[s.EntityID] = tick
 			nextSweep = earlierAutosaveTick(nextSweep, characterStateAutosaveDueTick(tick, interval))
 			if report != nil { report.Metrics.CharacterStateAutosaveEnqueued++ }
-		} else {
-			nextSweep = earlierAutosaveTick(nextSweep, characterStateAutosaveRetryTick(tick))
-		}
+		} else { nextSweep = earlierAutosaveTick(nextSweep, characterStateAutosaveRetryTick(tick)) }
 	}
 	if !trustedSeen { r.characterStateAutosaveNextTick = 0 } else { r.characterStateAutosaveNextTick = nextSweep }
-	if lastAttemptedIndex >= 0 {
-		r.characterStateAutosaveCursor = (lastAttemptedIndex + 1) % len(sessions)
-		return
-	}
+	if lastAttemptedIndex >= 0 { r.characterStateAutosaveCursor = (lastAttemptedIndex + 1) % len(sessions); return }
 	r.characterStateAutosaveCursor = (start + 1) % len(sessions)
 }
 

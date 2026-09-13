@@ -1,11 +1,10 @@
-// Package classaction defines canonical profession requirements and class-resource outcomes for actions.
+// Package classaction defines shipped legacy action IDs and their resource/effect policy fixtures.
+// It does not authorize fixed professions; current classless legality is decided by the authoritative
+// action, learned-skill and equipment paths.
 package classaction
 
 import (
-	"errors"
-
-	"github.com/li41/astrahold-server/internal/classid"
-	"github.com/li41/astrahold-server/internal/classresource"
+	"github.com/li41/astrahold-server/internal/actionresource"
 	"github.com/li41/astrahold-server/internal/targetresource"
 )
 
@@ -23,8 +22,6 @@ const (
 	ShadowbladeRiftStab        = "shadowblade-rift-stab"
 	ShadowbladeFlawExecute     = "shadowblade-flaw-execute"
 )
-
-var ErrWrongClass = errors.New("classaction: action unavailable for class")
 
 type TargetResourceSpendTier struct {
 	Amount uint32
@@ -51,53 +48,51 @@ func (p TargetResourceSpendPolicy) Resolve(current uint32) (amount, damage uint3
 }
 
 type Policy struct {
-	RequiredClass               classid.ID
-	CostResource                classresource.ID
-	CostAmount                  uint32
-	AcceptedResource            classresource.ID
-	AcceptedGain                uint32
-	AcceptedReductionResource   classresource.ID
-	AcceptedReductionAmount     uint32
-	HitResource                 classresource.ID
-	HitGain                     uint32
-	HitProgressResource         classresource.ID
-	HitProgressGain             uint32
-	HitTargetResource           targetresource.ID
-	HitTargetGain               uint32
-	HitTargetMax                uint32
-	HitTargetICDSeconds         float64
-	HitTargetPreserveReadyTick  bool
-	RequireSideOrBack           bool
-	TargetSpend                 TargetResourceSpendPolicy
+	CostResource               actionresource.ID
+	CostAmount                 uint32
+	AcceptedResource           actionresource.ID
+	AcceptedGain               uint32
+	AcceptedReductionResource  actionresource.ID
+	AcceptedReductionAmount    uint32
+	HitResource                actionresource.ID
+	HitGain                    uint32
+	HitProgressResource        actionresource.ID
+	HitProgressGain            uint32
+	HitTargetResource          targetresource.ID
+	HitTargetGain              uint32
+	HitTargetMax               uint32
+	HitTargetICDSeconds        float64
+	HitTargetPreserveReadyTick bool
+	RequireSideOrBack          bool
+	TargetSpend                TargetResourceSpendPolicy
 }
 
 func ForAction(actionID string) (Policy, bool) {
 	switch actionID {
 	case OathguardSwordStrike:
-		return Policy{RequiredClass: classid.Oathguard, HitResource: classresource.Resolve, HitGain: 8}, true
+		return Policy{HitResource: actionresource.Resolve, HitGain: 8}, true
 	case OathguardFortify:
-		return Policy{RequiredClass: classid.Oathguard, CostResource: classresource.Resolve, CostAmount: 30}, true
+		return Policy{CostResource: actionresource.Resolve, CostAmount: 30}, true
 	case BreakerHeavySlash:
-		return Policy{RequiredClass: classid.Breaker, HitResource: classresource.Momentum, HitGain: 10}, true
+		return Policy{HitResource: actionresource.Momentum, HitGain: 10}, true
 	case BreakerStaggerStrike:
-		return Policy{RequiredClass: classid.Breaker, CostResource: classresource.Momentum, CostAmount: 20}, true
+		return Policy{CostResource: actionresource.Momentum, CostAmount: 20}, true
 	case RangerHuntingShot:
-		return Policy{RequiredClass: classid.Ranger, HitResource: classresource.HuntMomentum, HitGain: 8}, true
+		return Policy{HitResource: actionresource.HuntMomentum, HitGain: 8}, true
 	case RangerArmorPiercingArrow:
-		return Policy{RequiredClass: classid.Ranger, CostResource: classresource.HuntMomentum, CostAmount: 30}, true
+		return Policy{CostResource: actionresource.HuntMomentum, CostAmount: 30}, true
 	case StarfireFireBolt:
-		return Policy{RequiredClass: classid.StarfireMage, AcceptedResource: classresource.StarHeat, AcceptedGain: 8}, true
+		return Policy{AcceptedResource: actionresource.StarHeat, AcceptedGain: 8}, true
 	case StarfireColdStarChannel:
-		return Policy{RequiredClass: classid.StarfireMage, AcceptedReductionResource: classresource.StarHeat, AcceptedReductionAmount: 45}, true
+		return Policy{AcceptedReductionResource: actionresource.StarHeat, AcceptedReductionAmount: 45}, true
 	case OathhealerOathlightStrike:
-		return Policy{RequiredClass: classid.Oathhealer, HitProgressResource: classresource.OathSeal, HitProgressGain: 20}, true
+		return Policy{HitProgressResource: actionresource.OathSeal, HitProgressGain: 20}, true
 	case ShadowbladeDualBladeStrike:
-		return Policy{RequiredClass: classid.Shadowblade, HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetICDSeconds: 2.5, RequireSideOrBack: true}, true
+		return Policy{HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetICDSeconds: 2.5, RequireSideOrBack: true}, true
 	case ShadowbladeRiftStab:
-		return Policy{RequiredClass: classid.Shadowblade, HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetPreserveReadyTick: true, RequireSideOrBack: true}, true
+		return Policy{HitTargetResource: targetresource.Flaw, HitTargetGain: 1, HitTargetMax: 3, HitTargetPreserveReadyTick: true, RequireSideOrBack: true}, true
 	case ShadowbladeFlawExecute:
 		return Policy{
-			RequiredClass: classid.Shadowblade,
 			TargetSpend: TargetResourceSpendPolicy{
 				ResourceID: targetresource.Flaw,
 				Tiers: []TargetResourceSpendTier{
@@ -110,15 +105,4 @@ func ForAction(actionID string) (Policy, bool) {
 	default:
 		return Policy{}, false
 	}
-}
-
-func ValidateClass(actionID string, actual classid.ID) error {
-	policy, ok := ForAction(actionID)
-	if !ok || policy.RequiredClass == "" {
-		return nil
-	}
-	if actual != policy.RequiredClass {
-		return ErrWrongClass
-	}
-	return nil
 }

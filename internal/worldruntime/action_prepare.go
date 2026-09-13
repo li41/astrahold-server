@@ -63,8 +63,8 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		return
 	}
 
-	// Network/session authority ends here. Combat execution consumes an ActorEntityID intent so
-	// future Server-owned AI can reuse the same legality/damage path without inventing fake Sessions.
+	// Class/profession identity no longer participates in production action authorization.
+	// Action legality is owned by the authoritative combat/skill/equipment systems below.
 	intent := combatIntentFromClientAction(s.EntityID, command.action)
 	r.prepareAndDispatchAction(name, command.sessionID, command.sequence, intent, tick, delta, report)
 }

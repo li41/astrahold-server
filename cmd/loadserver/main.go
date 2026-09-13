@@ -33,7 +33,7 @@ func main() {
 		worldPath          = flag.String("world", "worlds/castle-sandbox/gameplay.json", "Gameplay World JSON path")
 		combatPath         = flag.String("combat-actions", "config/combat-actions.json", "Combat Action Catalog JSON path")
 		clients            = flag.Int("clients", 500, "Expected ready clients before convergence starts")
-		scenarioText       = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege | teleport-churn")
+		scenarioText       = flag.String("scenario", string(loadlab.ScenarioCrowd), "distributed | crowd | teleport-churn")
 		duration           = flag.Duration("duration", 60*time.Second, "Steady-state measurement window after semantic convergence / optional churn")
 		readyTimeout       = flag.Duration("ready-timeout", 45*time.Second, "Maximum time to wait for all clients")
 		convergenceTimeout = flag.Duration("convergence-timeout", 30*time.Second, "Maximum time from all-ready to lifecycle/reliable convergence")
@@ -46,6 +46,7 @@ func main() {
 		allocProfilePrefix = flag.String("alloc-profile-prefix", "", "Optional steady-state allocation profile path prefix; writes <prefix>-before.pprof and <prefix>-after.pprof")
 		allocProfileRate   = flag.Int("alloc-profile-rate", 64*1024, "Allocation profiler sampling rate in bytes")
 	)
+	bindChurnCombatFlags(flag.CommandLine)
 	flag.Parse()
 
 	if err := validateRates(*tickRate, *snapshotRate); err != nil {
@@ -72,6 +73,9 @@ func main() {
 	loadedWorld, err := gameplayworld.LoadFile(*worldPath)
 	if err != nil {
 		log.Fatalf("load gameplay world %q: %v", *worldPath, err)
+	}
+	if err := configureS3E9DynamicStress(loadedWorld.Definition); err != nil {
+		log.Fatal(err)
 	}
 	loadedCombat, err := combat.LoadFile(*combatPath)
 	if err != nil {
@@ -166,7 +170,7 @@ func main() {
 	}()
 	go collectNetworkErrors(ctx, server.Errors(), collector)
 
-	log.Printf("Siege Load Server ready: protocol=%d codec=gamev1 combat_revision=%s scenario=%s clients=%d churn_rounds=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, loadedCombat.Definition.Revision, scenario, *clients, *churnRounds, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
+	log.Printf("Load Server ready: protocol=%d codec=gamev1 combat_revision=%s scenario=%s clients=%d churn_rounds=%d tcp=%s udp=%s tick=%dHz snapshot=%dHz gates=%d", protocol.Version, loadedCombat.Definition.Revision, scenario, *clients, *churnRounds, server.TCPAddr(), server.UDPAddr(), *tickRate, *snapshotRate, len(loadedWorld.Definition.Gates))
 	if err := waitForClients(ctx, server, *clients, *readyTimeout); err != nil {
 		stop()
 		<-serveDone
