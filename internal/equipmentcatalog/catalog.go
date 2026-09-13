@@ -100,14 +100,6 @@ func Load(data []byte) (*Catalog, error) {
 	if err := decoder.Decode(&def); err != nil {
 		return nil, err
 	}
-	// Authored catalog JSON must explicitly declare tier. Programmatic New callers may omit tier
-	// only for historical low-tier test fixtures; this keeps production content fail-closed while
-	// avoiding unrelated fixture churn.
-	for _, item := range def.Items {
-		if item.Tier == "" {
-			return nil, ErrInvalidCatalog
-		}
-	}
 	return New(def)
 }
 
@@ -141,9 +133,6 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	for _, item := range def.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
 		item.Material = strings.TrimSpace(item.Material)
-		if item.Tier == "" {
-			item.Tier = TierLow
-		}
 		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) {
 			return nil, ErrInvalidCatalog
 		}
