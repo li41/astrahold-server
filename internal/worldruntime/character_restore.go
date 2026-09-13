@@ -3,7 +3,6 @@ package worldruntime
 import (
 	"errors"
 	"math"
-	"strings"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
@@ -87,20 +86,13 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
 	}
+	if restore.SchemaVersion < characterstate.ItemInstanceSchemaVersion && restore.Inventory.HasItemInstances() {
+		return ErrCharacterRestoreInvalid
+	}
 	if restore.Inventory.Initialized {
-		if restore.Inventory.MainHand != strings.TrimSpace(restore.Inventory.MainHand) {
+		canonical, err := characterstate.CanonicalInventoryState(restore.Inventory)
+		if err != nil || canonical != restore.Inventory {
 			return ErrCharacterRestoreInvalid
-		}
-		stacks, err := restore.Inventory.Stacks()
-		if err != nil {
-			return ErrCharacterRestoreInvalid
-		}
-		last := ""
-		for _, stack := range stacks {
-			if stack.ItemArchetypeID == "" || stack.ItemArchetypeID != strings.TrimSpace(stack.ItemArchetypeID) || stack.Quantity == 0 || (last != "" && stack.ItemArchetypeID <= last) {
-				return ErrCharacterRestoreInvalid
-			}
-			last = stack.ItemArchetypeID
 		}
 	} else if restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
