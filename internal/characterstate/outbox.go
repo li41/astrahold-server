@@ -48,7 +48,7 @@ func (o *Outbox) Enqueue(identity characteridentity.Binding, snapshot Snapshot) 
 	if err := validateTrustedIdentity(identity); err != nil {
 		return SaveIntent{}, err
 	}
-	if err := validateSnapshot(snapshot); err != nil {
+	if err := validateSnapshotV9(snapshot); err != nil {
 		return SaveIntent{}, err
 	}
 	o.mu.Lock()
