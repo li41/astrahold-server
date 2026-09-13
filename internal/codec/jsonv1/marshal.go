@@ -6,6 +6,16 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
+func toItemAffixState(in protocol.ItemAffixState) itemAffixState {
+	return itemAffixState{AffixID: in.AffixID, Strength: in.Strength, Value: in.Value}
+}
+
+func toItemInstanceState(in protocol.ItemInstanceState) itemInstanceState {
+	out := itemInstanceState{ItemInstanceID: in.ItemInstanceID, ItemArchetypeID: in.ItemArchetypeID, Affixes: make([]itemAffixState, len(in.Affixes))}
+	for i := range in.Affixes { out.Affixes[i] = toItemAffixState(in.Affixes[i]) }
+	return out
+}
+
 func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	switch m := message.(type) {
 	case protocol.ClientMoveInput:
@@ -23,6 +33,11 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case *protocol.ClientEquipmentCommand:
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientEquipmentCommand{Operation: string(m.Operation), Slot: string(m.Slot), ItemArchetypeID: m.ItemArchetypeID})
+	case protocol.ClientEquipmentInstanceCommand:
+		return json.Marshal(clientEquipmentInstanceCommand{Operation: string(m.Operation), Slot: string(m.Slot), ItemInstanceID: m.ItemInstanceID})
+	case *protocol.ClientEquipmentInstanceCommand:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientEquipmentInstanceCommand{Operation: string(m.Operation), Slot: string(m.Slot), ItemInstanceID: m.ItemInstanceID})
 	case protocol.ClientPickupItem:
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
 	case *protocol.ClientPickupItem:
@@ -90,9 +105,17 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		out := inventorySnapshot{Revision: m.Revision, CurrentCarryWeight: m.CurrentCarryWeight, MaxCarryWeight: m.MaxCarryWeight, Items: make([]inventoryItemStack, len(m.Items))}
 		for i, item := range m.Items { out.Items[i] = inventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity} }
 		return json.Marshal(out)
+	case protocol.InventoryInstanceSnapshot:
+		out := inventoryInstanceSnapshot{Revision: m.Revision, Items: make([]itemInstanceState, len(m.Items))}
+		for i := range m.Items { out.Items[i] = toItemInstanceState(m.Items[i]) }
+		return json.Marshal(out)
 	case protocol.EquipmentSnapshot:
 		out := equipmentSnapshot{Revision: m.Revision, Slots: make([]equipmentSlotState, len(m.Slots))}
 		for i, slot := range m.Slots { out.Slots[i] = equipmentSlotState{Slot: string(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID} }
+		return json.Marshal(out)
+	case protocol.EquipmentInstanceSnapshot:
+		out := equipmentInstanceSnapshot{Revision: m.Revision, Slots: make([]equipmentInstanceSlotState, len(m.Slots))}
+		for i := range m.Slots { out.Slots[i] = equipmentInstanceSlotState{Slot: string(m.Slots[i].Slot), Item: toItemInstanceState(m.Slots[i].Item)} }
 		return json.Marshal(out)
 	case protocol.NPCInteraction:
 		return json.Marshal(npcInteraction{NPCEntityID: uint64(m.NPCEntityID), NPCArchetypeID: m.NPCArchetypeID, DisplayName: m.DisplayName, Text: m.Text})
