@@ -57,22 +57,19 @@ func TestDefenseMitigationBasisPoints(t *testing.T) {
 }
 
 func TestMagicDefenseThenShieldReductionUsesSeparateMultipliers(t *testing.T) {
-	amount := uint32(100)
-	afterDefense := ApplyMitigationBasisPoints(amount, DefenseMitigationBasisPoints(5))
-	if afterDefense != 80 {
-		t.Fatalf("after defense = %d, want 80", afterDefense)
+	magicDefenseRemaining := RemainingBasisPointsAfterMitigation(DefenseMitigationBasisPoints(5))
+	if magicDefenseRemaining != 8000 {
+		t.Fatalf("magic defense remaining = %d, want 8000", magicDefenseRemaining)
 	}
-	afterShield := ApplyMitigationBasisPoints(afterDefense, 800)
-	if afterShield != 73 {
-		t.Fatalf("after shield = %d, want integer-stage result 73", afterShield)
+	shieldRemaining := uint32(9200)
+	combined := CombineRemainingBasisPoints(magicDefenseRemaining, shieldRemaining)
+	if combined != 7360 {
+		t.Fatalf("combined remaining = %d, want 7360", combined)
 	}
 }
 
-func TestApplyCriticalMultiplierV1(t *testing.T) {
-	if got := ApplyCriticalMultiplierV1(20); got != 30 {
-		t.Fatalf("20 critical => %d, want 30", got)
-	}
-	if got := ApplyCriticalMultiplierV1(21); got != 31 {
-		t.Fatalf("21 critical => %d, want 31 with integer truncation", got)
+func TestCriticalMultiplierV1IsThreeHalves(t *testing.T) {
+	if CriticalMultiplierV1Numerator != 3 || CriticalMultiplierV1Denominator != 2 {
+		t.Fatalf("critical multiplier = %d/%d, want 3/2", CriticalMultiplierV1Numerator, CriticalMultiplierV1Denominator)
 	}
 }
