@@ -28,7 +28,25 @@ func TestDefaultCatalogExistingItemsAreLowTier(t *testing.T) {
 	}
 }
 
-func TestCatalogRejectsMissingOrUnknownTier(t *testing.T) {
+func TestAuthoredCatalogRejectsMissingTier(t *testing.T) {
+	data := []byte(`{
+		"revision":"test",
+		"weapon_types":[{"weapon_type":"one_hand_sword"}],
+		"items":[{
+			"item_archetype_id":"item_test",
+			"kind":"weapon",
+			"slot":"main_hand",
+			"weight":1,
+			"material":"iron",
+			"weapon":{"weapon_type":"one_hand_sword","small_damage":{"min":1,"max":1},"large_damage":{"min":1,"max":1},"extra_damage":0,"accuracy_modifier":0}
+		}]
+	}`)
+	if _, err := Load(data); err == nil {
+		t.Fatal("authored catalog with missing tier unexpectedly valid")
+	}
+}
+
+func TestCatalogRejectsUnknownTierAndAcceptsMidTier(t *testing.T) {
 	base := CatalogDefinition{
 		Revision: "test",
 		WeaponTypes: []WeaponTypeDefinition{{
@@ -46,9 +64,6 @@ func TestCatalogRejectsMissingOrUnknownTier(t *testing.T) {
 				LargeDamage: DamageRange{Min: 1, Max: 1},
 			},
 		}},
-	}
-	if _, err := New(base); err == nil {
-		t.Fatal("catalog with missing tier unexpectedly valid")
 	}
 	base.Items[0].Tier = Tier("mythic")
 	if _, err := New(base); err == nil {
