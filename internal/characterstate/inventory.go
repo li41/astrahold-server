@@ -21,11 +21,6 @@ type InventoryState struct {
 	OffHand     string `json:"off_hand,omitempty"`
 }
 
-// NewInventoryState preserves the pre-v5 call surface for main-hand-only callers.
-func NewInventoryState(stacks []InventoryStack, mainHand string) (InventoryState, error) {
-	return NewInventoryStateWithEquipment(stacks, mainHand, "")
-}
-
 func NewInventoryStateWithEquipment(stacks []InventoryStack, mainHand, offHand string) (InventoryState, error) {
 	canonical := append([]InventoryStack(nil), stacks...)
 	for index := range canonical { canonical[index].ItemArchetypeID = strings.TrimSpace(canonical[index].ItemArchetypeID) }
