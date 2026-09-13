@@ -32,6 +32,9 @@ type RuntimeSink interface {
 	gateway.ActionCommandSink
 	AwaitJoinOwned(context.Context, worldruntime.JoinRequest) (worldruntime.SessionOwnershipFence, error)
 	EnqueueLeave(session.ID) error
+	EnqueueFencedLeave(worldruntime.SessionOwnershipFence) error
+	EnqueueFencedMove(worldruntime.SessionOwnershipFence, uint32, protocol.ClientMoveInput) error
+	EnqueueFencedUseAction(worldruntime.SessionOwnershipFence, uint32, protocol.ClientUseAction) error
 }
 
 type PlayerSpec struct {
@@ -80,7 +83,6 @@ type Handler struct {
 	config      Config
 	runtime     RuntimeSink
 	codec       transport.PayloadCodec
-	ingress     *gateway.Ingress
 	nextSession atomic.Uint64
 	nextEntity  atomic.Uint64
 }
@@ -104,7 +106,7 @@ func NewHandler(config Config, runtime RuntimeSink, codec transport.PayloadCodec
 	if config.PlayerFactory == nil {
 		config.PlayerFactory = defaultPlayerFactory
 	}
-	return &Handler{config: config, runtime: runtime, codec: codec, ingress: gateway.NewIngress(runtime)}
+	return &Handler{config: config, runtime: runtime, codec: codec}
 }
 
 func defaultPlayerFactory(_ session.ID, entityID world.EntityID) PlayerSpec {
@@ -178,23 +180,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.runtime.AwaitJoinOwned(ctx, worldruntime.JoinRequest{
+	ownership, err := h.runtime.AwaitJoinOwned(ctx, worldruntime.JoinRequest{
 		Session:       sess,
 		Entity:        spec.Entity,
 		Speed:         spec.Speed,
 		Radius:        spec.Radius,
 		MaxStepHeight: spec.MaxStepHeight,
 		Restore:       restore,
-	}); err != nil {
+	})
+	if err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "world join failed")
 		return
 	}
-	joined := true
 	defer func() {
-		if joined {
-			_ = h.runtime.EnqueueLeave(sid)
+		if ownership.Valid() {
+			_ = h.runtime.EnqueueFencedLeave(ownership)
+			return
 		}
+		_ = h.runtime.EnqueueLeave(sid)
 	}()
+
+	var commandSink gateway.MoveCommandSink = h.runtime
+	if ownership.Valid() {
+		commandSink = ownedCommandSink{runtime: h.runtime, ownership: ownership}
+	}
+	ingress := gateway.NewIngress(commandSink)
 
 	welcome := protocol.Envelope{
 		Delivery: protocol.DeliveryReliableOrdered,
@@ -232,7 +242,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = conn.Close(websocket.StatusProtocolError, "invalid ASTR frame")
 			return
 		}
-		if err := h.ingress.Handle(sid, envelope); err != nil {
+		if err := ingress.Handle(sid, envelope); err != nil {
 			_ = conn.Close(websocket.StatusPolicyViolation, "invalid client intent")
 			return
 		}
