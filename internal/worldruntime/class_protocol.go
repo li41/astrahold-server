@@ -30,6 +30,29 @@ func protocolClassResourceState(state character.State) (protocol.CharacterClassR
 	}, true
 }
 
+// queueCurrentActionResourceState is the no-StepReport publication path used while establishing
+// or transferring a trusted session. The queued message is still encoded as Protocol v27 Type117,
+// but the source state is the Server-owned classless action resource.
+func (r *Runtime) queueCurrentActionResourceState(s *session.Session) {
+	if s == nil {
+		return
+	}
+	state, ok := r.characters.State(s.EntityID)
+	if !ok {
+		return
+	}
+	message, ok := protocolClassResourceState(state)
+	if !ok {
+		return
+	}
+	pending := r.pendingResourceMessages[s.ID]
+	if len(pending) >= maxPendingResourceMessagesPerSession {
+		_ = s.Connection().Close()
+		return
+	}
+	r.pendingResourceMessages[s.ID] = append(pending, message)
+}
+
 // sendCurrentActionResourceState is the generic gameplay-facing publication path. Protocol v27
 // still encodes this state as legacy CharacterClassResourceState; callers must not infer a class.
 func (r *Runtime) sendCurrentActionResourceState(s *session.Session, report *StepReport) {
