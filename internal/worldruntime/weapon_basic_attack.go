@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"math"
 	"math/rand/v2"
+	"strconv"
 
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
@@ -95,6 +96,17 @@ func weaponBasicAttackHits(weaponAccuracyModifier int32, physicalHitBonus, targe
 	return rollBasisPoints < weaponBasicAttackHitChanceBasisPoints(weaponAccuracyModifier, physicalHitBonus, targetEvasion)
 }
 
+func preparedEntityTargetID(prepared combat.PreparedAction) (world.EntityID, bool) {
+	if prepared.Target.Kind != combat.TargetEntity {
+		return 0, false
+	}
+	value, err := strconv.ParseUint(prepared.Target.ID, 10, 64)
+	if err != nil || value == 0 {
+		return 0, false
+	}
+	return world.EntityID(value), true
+}
+
 // resolveEquippedBasicAttackHit applies the formal V1 physical hit/evasion rating formula to an
 // entity-target basic attack made with an authored catalog weapon. Attribute-derived ratings are
 // not fabricated here; this path consumes the weapon modifier plus currently implemented equipment
@@ -107,11 +119,15 @@ func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSe
 	if !ok || definition.Weapon == nil {
 		return true
 	}
+	targetID, ok := preparedEntityTargetID(prepared)
+	if !ok {
+		return false
+	}
 	attackerModifiers, err := r.equippedInstanceModifiers(actorID)
 	if err != nil {
 		return false
 	}
-	targetModifiers, err := r.equippedInstanceModifiers(world.EntityID(prepared.TargetEntityID()))
+	targetModifiers, err := r.equippedInstanceModifiers(targetID)
 	if err != nil {
 		return false
 	}
