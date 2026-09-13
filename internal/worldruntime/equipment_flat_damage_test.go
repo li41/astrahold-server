@@ -86,24 +86,24 @@ func TestEquippedPhysicalDamageAffixAppliesToDirectPhysicalAction(t *testing.T) 
 func TestEquippedMagicPowerAffixAppliesToDirectMagicAction(t *testing.T) {
 	runtime, s := runtimeWithEquippedMidTierDamageAffix(t, equipmentaffix.Affix{
 		ID: equipmentaffix.AffixMagicPower,
-		Strength: 3,
-		Value: 3,
+		Strength: 2,
+		Value: 2,
 	})
 	prepared := combat.PreparedAction{
 		Definition: combat.ActionDefinition{ID: "fireball", Effect: combat.EffectDamage},
 		Target: combat.Target{Kind: combat.TargetEntity, ID: "999"},
 		Damage: combat.Damage{Type: combat.DamageMagic, Amount: 150},
 	}
-	if got := runtime.resolveEquippedBasicAttackDamage(s.EntityID, s.ID, 999, prepared); got != 153 {
-		t.Fatalf("magic damage with equipped affix=%d want=153", got)
+	if got := runtime.resolveEquippedBasicAttackDamage(s.EntityID, s.ID, 999, prepared); got != 152 {
+		t.Fatalf("magic damage with equipped affix=%d want=152", got)
 	}
 }
 
 func TestEquippedFlatDamageAffixDoesNotCrossDamageTypes(t *testing.T) {
 	runtime, s := runtimeWithEquippedMidTierDamageAffix(t, equipmentaffix.Affix{
 		ID: equipmentaffix.AffixMagicPower,
-		Strength: 3,
-		Value: 3,
+		Strength: 2,
+		Value: 2,
 	})
 	prepared := combat.PreparedAction{
 		Definition: combat.ActionDefinition{ID: "shatter-strike", Effect: combat.EffectDamage},
