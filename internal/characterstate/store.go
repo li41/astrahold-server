@@ -33,7 +33,8 @@ const (
 	LoadoutSchemaVersion       uint16 = 7
 	LearnedSkillsSchemaVersion uint16 = 8
 	ClasslessSchemaVersion     uint16 = 9
-	SchemaVersion              uint16 = ClasslessSchemaVersion
+	ItemInstanceSchemaVersion  uint16 = 10
+	SchemaVersion              uint16 = ItemInstanceSchemaVersion
 	LegacyDefaultMaxMP         uint32 = 100
 )
 
@@ -62,8 +63,8 @@ type DefeatedRespawn struct {
 }
 
 // Snapshot is the current durable character-state contract. Profession/ClassID is deliberately
-// absent: schema v9 is classless. Historical class fields are accepted only by legacy wire decoders
-// and are validated then discarded before a Snapshot is constructed.
+// absent. Historical class fields are accepted only by legacy wire decoders and are validated then
+// discarded before a Snapshot is constructed. Schema v10 adds unique equipment instance state.
 type Snapshot struct {
 	World         WorldRef
 	HP            uint32
@@ -136,10 +137,11 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v9 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v10 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
 // v6-v8 may contain the retired durable ClassID; it is validated during migration and discarded.
 // v7 adds the classless six-slot combat loadout. v8 adds learned skills. v9 retires durable ClassID.
+// v10 adds unique equipment instances and rolled affixes. Older schemas must not carry v10 fields.
 // When loading v7, only configured combat skills are inferred as learned; no other skills are granted.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
@@ -152,7 +154,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV9(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV10(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -187,6 +189,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion == LegacySchemaVersion && wire.DefeatedRespawn != nil { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < InventorySchemaVersion && wire.Inventory != (InventoryState{}) { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion == InventorySchemaVersion && wire.Inventory.OffHand != "" { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < ItemInstanceSchemaVersion && wire.Inventory.HasItemInstances() { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < ClassSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion >= ClasslessSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LoadoutSchemaVersion && len(wire.CombatLoadout) != 0 { return Record{}, false, ErrCorruptRecord }
@@ -327,7 +330,12 @@ func validateTrustedIdentity(identity characteridentity.Binding) error {
 	return nil
 }
 
+func validateSnapshotV10(snapshot Snapshot) error {
+	return validateSnapshotV8(snapshot)
+}
+
 func validateSnapshotV9(snapshot Snapshot) error {
+	if snapshot.Inventory.HasItemInstances() { return ErrInvalidSnapshot }
 	return validateSnapshotV8(snapshot)
 }
 
