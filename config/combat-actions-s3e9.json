@@ -1,6 +1,6 @@
 {
-  "schema_version": 3,
-  "revision": "s3e9-soak-002",
+  "schema_version": 4,
+  "revision": "s3e9-soak-003",
   "actions": [
     {
       "id": "basic-attack",
@@ -9,6 +9,7 @@
       "range": 4.5,
       "base_damage": 100,
       "damage_type": "physical",
+      "critical_eligible": true,
       "blockable": true,
       "cooldown_seconds": 0.5
     },
@@ -19,6 +20,7 @@
       "range": 4.5,
       "base_damage": 1,
       "damage_type": "physical",
+      "critical_eligible": true,
       "blockable": true,
       "cooldown_seconds": 0.05
     }
