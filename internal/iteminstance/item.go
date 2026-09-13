@@ -52,12 +52,31 @@ func Create(id ID, definition equipmentcatalog.Definition, random equipmentaffix
 	return instance, nil
 }
 
-func Validate(instance Instance, definition equipmentcatalog.Definition) error {
+// ValidateShape validates durable instance identity, canonical affix ordering, and the intrinsic
+// strength-to-value mapping without consulting the current equipment catalog. Persistence can use
+// this layer without rerolling or making historical durable state depend on presentation metadata.
+func ValidateShape(instance Instance) error {
 	if strings.TrimSpace(string(instance.ID)) == "" || string(instance.ID) != strings.TrimSpace(string(instance.ID)) {
 		return ErrInvalidInstance
 	}
 	if strings.TrimSpace(instance.ItemArchetypeID) == "" || instance.ItemArchetypeID != strings.TrimSpace(instance.ItemArchetypeID) {
 		return ErrInvalidInstance
+	}
+	for index, affix := range instance.Affixes {
+		value, ok := equipmentaffix.ValueFor(affix.ID, affix.Strength)
+		if !ok || value != affix.Value {
+			return ErrInvalidInstance
+		}
+		if index > 0 && instance.Affixes[index-1].ID >= affix.ID {
+			return ErrInvalidInstance
+		}
+	}
+	return nil
+}
+
+func Validate(instance Instance, definition equipmentcatalog.Definition) error {
+	if err := ValidateShape(instance); err != nil {
+		return err
 	}
 	if instance.ItemArchetypeID != definition.ItemArchetypeID {
 		return ErrInvalidInstance
@@ -69,16 +88,10 @@ func Validate(instance Instance, definition equipmentcatalog.Definition) error {
 	if err := equipmentaffix.Validate(tier, kind, instance.Affixes); err != nil {
 		return ErrInvalidInstance
 	}
-	for index := 1; index < len(instance.Affixes); index++ {
-		if instance.Affixes[index-1].ID >= instance.Affixes[index].ID {
-			return ErrInvalidInstance
-		}
-	}
 	return nil
 }
 
-// CanonicalJSON is the durable value encoding for one item instance. It never rerolls affixes.
-func CanonicalJSON(instance Instance, definition equipmentcatalog.Definition) ([]byte, error) {
+func canonicalShape(instance Instance) (Instance, error) {
 	canonical := Instance{
 		ID:              instance.ID,
 		ItemArchetypeID: instance.ItemArchetypeID,
@@ -88,22 +101,43 @@ func CanonicalJSON(instance Instance, definition equipmentcatalog.Definition) ([
 	if len(canonical.Affixes) == 0 {
 		canonical.Affixes = nil
 	}
+	if err := ValidateShape(canonical); err != nil {
+		return Instance{}, err
+	}
+	return canonical, nil
+}
+
+// CanonicalShapeJSON is the catalog-independent durable encoding used inside character persistence.
+func CanonicalShapeJSON(instance Instance) ([]byte, error) {
+	canonical, err := canonicalShape(instance)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(canonical)
+}
+
+// CanonicalJSON is the durable value encoding for one item instance. It never rerolls affixes.
+func CanonicalJSON(instance Instance, definition equipmentcatalog.Definition) ([]byte, error) {
+	canonical, err := canonicalShape(instance)
+	if err != nil {
+		return nil, err
+	}
 	if err := Validate(canonical, definition); err != nil {
 		return nil, err
 	}
 	return json.Marshal(canonical)
 }
 
-// DecodeCanonicalJSON restores persisted instance state and rejects non-canonical or invalid data.
-// No random source is accepted here: reload can never reroll an item.
-func DecodeCanonicalJSON(data []byte, definition equipmentcatalog.Definition) (Instance, error) {
+// DecodeCanonicalShapeJSON restores persistence-owned instance shape without a catalog lookup.
+// Gameplay restore must still call Validate against the current authoritative item definition.
+func DecodeCanonicalShapeJSON(data []byte) (Instance, error) {
 	var instance Instance
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&instance); err != nil {
 		return Instance{}, err
 	}
-	canonical, err := CanonicalJSON(instance, definition)
+	canonical, err := CanonicalShapeJSON(instance)
 	if err != nil {
 		return Instance{}, err
 	}
@@ -111,6 +145,19 @@ func DecodeCanonicalJSON(data []byte, definition equipmentcatalog.Definition) (I
 		return Instance{}, ErrInvalidInstance
 	}
 	instance.Affixes = cloneAffixes(instance.Affixes)
+	return instance, nil
+}
+
+// DecodeCanonicalJSON restores persisted instance state and rejects non-canonical or invalid data.
+// No random source is accepted here: reload can never reroll an item.
+func DecodeCanonicalJSON(data []byte, definition equipmentcatalog.Definition) (Instance, error) {
+	instance, err := DecodeCanonicalShapeJSON(data)
+	if err != nil {
+		return Instance{}, err
+	}
+	if err := Validate(instance, definition); err != nil {
+		return Instance{}, err
+	}
 	return instance, nil
 }
 
