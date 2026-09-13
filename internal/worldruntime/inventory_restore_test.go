@@ -19,10 +19,10 @@ func TestJoinRestoresInitializedInventoryAndMainHandBeforeFirstSnapshot(t *testi
 	conn := session.NewQueueConnection(32, 32)
 	sess, err := session.NewWithCharacterIdentity(1, 1, identity, 64, conn)
 	if err != nil { t.Fatal(err) }
-	persisted, err := characterstate.NewInventoryState([]characterstate.InventoryStack{
+	persisted, err := characterstate.NewInventoryStateWithEquipment([]characterstate.InventoryStack{
 		{ItemArchetypeID: "item_minor_healing_potion", Quantity: 2},
 		{ItemArchetypeID: "item_minor_mana_potion", Quantity: 3},
-	}, "item_training_blade")
+	}, "item_training_blade", "")
 	if err != nil { t.Fatal(err) }
 	restore := CharacterRestore{
 		SchemaVersion: characterstate.InventorySchemaVersion,
@@ -47,7 +47,7 @@ func TestJoinInitializedEmptyInventoryDoesNotBootstrapStarterItems(t *testing.T)
 	identity, _ := characteridentity.NewTrusted("character:restore-empty-inventory")
 	conn := session.NewQueueConnection(32, 32)
 	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, conn)
-	empty, err := characterstate.NewInventoryState(nil, "")
+	empty, err := characterstate.NewInventoryStateWithEquipment(nil, "", "")
 	if err != nil { t.Fatal(err) }
 	restore := CharacterRestore{SchemaVersion:characterstate.InventorySchemaVersion,CharacterID:identity.ID,Revision:1,World:characterRestoreWorld,HP:1000,MaxHP:1000,MP:100,MaxMP:100,Transform:world.Transform{Position:world.Position{Layer:4}},Inventory:empty}
 	if err := rt.EnqueueJoin(JoinRequest{Session:sess,Entity:world.EntityState{ID:1,Kind:world.EntityPlayer},Speed:6,Radius:0.35,MaxStepHeight:0.5,Restore:&restore});err!=nil{t.Fatal(err)}
@@ -60,7 +60,7 @@ func TestJoinRejectsIllegalDurableMainHandBeforeWorldMutation(t *testing.T) {
 	identity, _ := characteridentity.NewTrusted("character:restore-illegal-mainhand")
 	conn := session.NewQueueConnection(32, 32)
 	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, conn)
-	persisted, err := characterstate.NewInventoryState(nil, "item_forbidden_sword")
+	persisted, err := characterstate.NewInventoryStateWithEquipment(nil, "item_forbidden_sword", "")
 	if err != nil { t.Fatal(err) }
 	restore := CharacterRestore{SchemaVersion:characterstate.InventorySchemaVersion,CharacterID:identity.ID,Revision:1,World:characterRestoreWorld,HP:1000,MaxHP:1000,MP:100,MaxMP:100,Transform:world.Transform{Position:world.Position{Layer:4}},Inventory:persisted}
 	if err := rt.EnqueueJoin(JoinRequest{Session:sess,Entity:world.EntityState{ID:1,Kind:world.EntityPlayer},Speed:6,Radius:0.35,MaxStepHeight:0.5,Restore:&restore});err!=nil{t.Fatal(err)}
