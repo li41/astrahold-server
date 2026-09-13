@@ -5,7 +5,9 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/inventory"
+	"github.com/li41/astrahold-server/internal/iteminstance"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 )
@@ -39,31 +41,111 @@ func validateStarterInventory(maxStacks int, stacks []inventory.Stack) error {
 	return nil
 }
 
+func validateDurableEquipmentInstance(instance iteminstance.Instance, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot) error {
+	definition, ok := defaultEquipmentCatalog.Resolve(instance.ItemArchetypeID)
+	if !ok {
+		return ErrEquipmentItemNotAllowed
+	}
+	if kind != "" && !equipmentDefinitionAllowed(definition, kind, slot) {
+		return ErrEquipmentItemNotAllowed
+	}
+	return iteminstance.Validate(instance, definition)
+}
+
+// Legacy archetype-only equipment is intentionally restricted to low-tier equipment. Mid/high
+// equipment must be a unique instance because its Server-rolled affixes are gameplay truth.
+func legacyEquipmentArchetypeAllowed(itemArchetypeID string, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot) bool {
+	if kind == equipmentcatalog.KindWeapon && slot == equipmentcatalog.SlotMainHand && itemArchetypeID == trainingBladeArchetypeID {
+		return true
+	}
+	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID)
+	return ok && definition.Tier == equipmentcatalog.TierLow && equipmentDefinitionAllowed(definition, kind, slot)
+}
+
 func durableInventoryState(inv *inventory.Inventory) (characterstate.InventoryState, error) {
 	if inv == nil { return characterstate.InventoryState{}, errors.New("worldruntime: inventory unavailable") }
+
 	stacks := inv.Snapshot()
-	durable := make([]characterstate.InventoryStack, 0, len(stacks))
-	for _, stack := range stacks { durable = append(durable, characterstate.InventoryStack{ItemArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity}) }
-	return characterstate.NewInventoryStateWithEquipment(durable, inv.MainHand(), inv.OffHand())
+	durableStacks := make([]characterstate.InventoryStack, 0, len(stacks))
+	for _, stack := range stacks {
+		if definition, ok := defaultEquipmentCatalog.Resolve(stack.ArchetypeID); ok && definition.Tier != equipmentcatalog.TierLow {
+			return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed
+		}
+		durableStacks = append(durableStacks, characterstate.InventoryStack{ItemArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity})
+	}
+
+	instances := inv.InstanceSnapshot()
+	for _, instance := range instances {
+		if err := validateDurableEquipmentInstance(instance, "", ""); err != nil { return characterstate.InventoryState{}, err }
+	}
+
+	mainHand := inv.MainHand()
+	var mainHandInstance *iteminstance.Instance
+	if instance, ok := inv.MainHandInstance(); ok {
+		if err := validateDurableEquipmentInstance(instance, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand); err != nil { return characterstate.InventoryState{}, err }
+		mainHand = ""
+		mainHandInstance = &instance
+	} else if mainHand != "" && !legacyEquipmentArchetypeAllowed(mainHand, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand) {
+		return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed
+	}
+
+	offHand := inv.OffHand()
+	var offHandInstance *iteminstance.Instance
+	if instance, ok := inv.OffHandInstance(); ok {
+		if err := validateDurableEquipmentInstance(instance, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand); err != nil { return characterstate.InventoryState{}, err }
+		offHand = ""
+		offHandInstance = &instance
+	} else if offHand != "" && !legacyEquipmentArchetypeAllowed(offHand, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand) {
+		return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed
+	}
+
+	return characterstate.NewInventoryStateWithInstances(durableStacks, instances, mainHand, offHand, mainHandInstance, offHandInstance)
 }
 
 // restoreCharacterInventory restores classless durable inventory/equipment truth. Equipment
-// legality depends only on the actual item and slot; retired ClassID never participates.
+// legality depends only on the actual item and slot; retired ClassID never participates. Unique
+// instances are restored exactly as persisted and are never sent through an affix roller.
 func restoreCharacterInventory(maxStacks int, state characterstate.InventoryState) (*inventory.Inventory, error) {
 	if !state.Initialized { return nil, nil }
+	canonical, err := characterstate.CanonicalInventoryState(state)
+	if err != nil || canonical != state { return nil, characterstate.ErrInvalidSnapshot }
+
 	stacks, err := state.Stacks(); if err != nil { return nil, err }
+	instances, err := state.Instances(); if err != nil { return nil, err }
+	mainHandInstance, hasMainHandInstance, err := state.MainHandInstance(); if err != nil { return nil, err }
+	offHandInstance, hasOffHandInstance, err := state.OffHandInstance(); if err != nil { return nil, err }
+
 	inv := newCharacterInventory(maxStacks)
 	if state.MainHand != "" {
-		if !mainHandItemAllowed(state.MainHand) { return nil, ErrEquipmentItemNotAllowed }
+		if !legacyEquipmentArchetypeAllowed(state.MainHand, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.MainHand, 1); err != nil { return nil, err }
 		if err := inv.EquipMainHand(state.MainHand); err != nil { return nil, err }
 	}
+	if hasMainHandInstance {
+		if err := validateDurableEquipmentInstance(mainHandInstance, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand); err != nil { return nil, err }
+		if err := inv.AddInstance(mainHandInstance); err != nil { return nil, err }
+		if err := inv.EquipMainHandInstance(mainHandInstance.ID); err != nil { return nil, err }
+	}
 	if state.OffHand != "" {
-		if !offHandItemAllowed(state.OffHand) { return nil, ErrEquipmentItemNotAllowed }
+		if !legacyEquipmentArchetypeAllowed(state.OffHand, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand) { return nil, ErrEquipmentItemNotAllowed }
 		if err := inv.Add(state.OffHand, 1); err != nil { return nil, err }
 		if err := inv.EquipOffHand(state.OffHand); err != nil { return nil, err }
 	}
-	for _, stack := range stacks { if err := inv.Add(stack.ItemArchetypeID, stack.Quantity); err != nil { return nil, err } }
+	if hasOffHandInstance {
+		if err := validateDurableEquipmentInstance(offHandInstance, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand); err != nil { return nil, err }
+		if err := inv.AddInstance(offHandInstance); err != nil { return nil, err }
+		if err := inv.EquipOffHandInstance(offHandInstance.ID); err != nil { return nil, err }
+	}
+	for _, instance := range instances {
+		if err := validateDurableEquipmentInstance(instance, "", ""); err != nil { return nil, err }
+		if err := inv.AddInstance(instance); err != nil { return nil, err }
+	}
+	for _, stack := range stacks {
+		if definition, ok := defaultEquipmentCatalog.Resolve(stack.ItemArchetypeID); ok && definition.Tier != equipmentcatalog.TierLow {
+			return nil, ErrEquipmentItemNotAllowed
+		}
+		if err := inv.Add(stack.ItemArchetypeID, stack.Quantity); err != nil { return nil, err }
+	}
 	return inv, nil
 }
 
