@@ -43,21 +43,30 @@ func DefenseMitigationBasisPoints(defense uint32) uint32 {
 	return uint32((uint64(defense) * 10000) / uint64(defense+20))
 }
 
-// ApplyMitigationBasisPoints applies a reduction using integer basis points without allowing
-// a percentage value greater than 100%. Rounding remains a caller-level final damage concern.
-func ApplyMitigationBasisPoints(amount uint32, mitigationBasisPoints uint32) uint32 {
-	if amount == 0 {
-		return 0
-	}
+// RemainingBasisPointsAfterMitigation converts one mitigation layer into its remaining-damage
+// multiplier. 8000 means 80% of the incoming amount remains.
+func RemainingBasisPointsAfterMitigation(mitigationBasisPoints uint32) uint32 {
 	if mitigationBasisPoints >= 10000 {
 		return 0
 	}
-	return uint32((uint64(amount) * uint64(10000-mitigationBasisPoints)) / 10000)
+	return 10000 - mitigationBasisPoints
 }
 
-// ApplyCriticalMultiplierV1 applies the fixed first-version 1.5x critical multiplier.
-// Integer arithmetic deliberately truncates; the full damage pipeline must still perform its
-// single final rounding policy when the runtime integration replaces legacy paths.
-func ApplyCriticalMultiplierV1(amount uint32) uint32 {
-	return uint32((uint64(amount) * 3) / 2)
+// CombineRemainingBasisPoints multiplies independent remaining-damage layers while retaining
+// basis-point precision for the caller. This supports the formal rule that defense and shield
+// percentage reduction are separate multiplicative layers, without rounding the damage between
+// those layers.
+func CombineRemainingBasisPoints(first, second uint32) uint32 {
+	if first > 10000 {
+		first = 10000
+	}
+	if second > 10000 {
+		second = 10000
+	}
+	return uint32((uint64(first) * uint64(second)) / 10000)
 }
+
+const (
+	CriticalMultiplierV1Numerator   uint32 = 3
+	CriticalMultiplierV1Denominator uint32 = 2
+)
