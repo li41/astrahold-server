@@ -33,11 +33,12 @@ func (r *Runtime) validateActionResourceCost(
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: character.ErrCharacterNotFound})
 		return false
 	}
-	if state.ClassResourceID != policy.CostResource || state.MaxClassResource == 0 {
+	resource := state.ActionResource()
+	if resource.ID != policy.CostResource || resource.Max == 0 {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: actionresource.ErrResourceMismatch})
 		return false
 	}
-	if state.ClassResource < policy.CostAmount {
+	if resource.Current < policy.CostAmount {
 		r.rejectClientAction(name, sourceSessionID, clientActionSequence, actorID, prepared.Definition.ID, targetKind, character.ErrInsufficientResource, tick, report)
 		return false
 	}
@@ -93,13 +94,14 @@ func (r *Runtime) applyAcceptedActionResourceReduction(
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: character.ErrCharacterNotFound})
 		return false
 	}
-	if state.ClassResourceID != policy.AcceptedReductionResource || state.MaxClassResource == 0 {
+	resource := state.ActionResource()
+	if resource.ID != policy.AcceptedReductionResource || resource.Max == 0 {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: actionresource.ErrResourceMismatch})
 		return false
 	}
 	amount := policy.AcceptedReductionAmount
-	if amount > state.ClassResource {
-		amount = state.ClassResource
+	if amount > resource.Current {
+		amount = resource.Current
 	}
 	if amount > 0 {
 		if _, err := r.characters.SpendActionResource(actorID, policy.AcceptedReductionResource, amount); err != nil {

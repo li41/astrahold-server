@@ -18,14 +18,15 @@ const maxPendingResourceMessagesPerSession = 8
 var ErrLegacyClassResourceFeedbackBacklog = errors.New("worldruntime: legacy class resource feedback backlog full")
 
 func protocolClassResourceState(state character.State) (protocol.CharacterClassResourceState, bool) {
-	if state.EntityID == 0 || state.ClassResourceID == "" || state.MaxClassResource == 0 {
+	resource := state.ActionResource()
+	if state.EntityID == 0 || resource.ID == "" || resource.Max == 0 {
 		return protocol.CharacterClassResourceState{}, false
 	}
 	return protocol.CharacterClassResourceState{
 		EntityID:   state.EntityID,
-		ResourceID: string(state.ClassResourceID),
-		Current:    state.ClassResource,
-		Max:        state.MaxClassResource,
+		ResourceID: string(resource.ID),
+		Current:    resource.Current,
+		Max:        resource.Max,
 	}, true
 }
 
