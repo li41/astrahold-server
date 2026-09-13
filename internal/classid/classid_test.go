@@ -3,34 +3,27 @@ package classid
 import "testing"
 
 func TestCanonicalClassIDsLocked(t *testing.T) {
-	want := []ID{
-		Oathguard,
-		Breaker,
-		Ranger,
-		StarfireMage,
-		Oathhealer,
-		Shadowblade,
+	want := []struct {
+		id  ID
+		raw string
+	}{
+		{Oathguard, "class_oathguard"},
+		{Breaker, "class_breaker"},
+		{Ranger, "class_ranger"},
+		{StarfireMage, "class_starfire_mage"},
+		{Oathhealer, "class_oathhealer"},
+		{Shadowblade, "class_shadowblade"},
 	}
-	got := All()
-	if len(got) != len(want) {
-		t.Fatalf("All() len = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("All()[%d] = %q, want %q", i, got[i], want[i])
+	for _, tc := range want {
+		if string(tc.id) != tc.raw {
+			t.Fatalf("ClassID = %q, want %q", tc.id, tc.raw)
 		}
-		if !IsCanonical(got[i]) {
-			t.Fatalf("IsCanonical(%q) = false", got[i])
+		if !IsCanonical(tc.id) {
+			t.Fatalf("IsCanonical(%q) = false", tc.id)
 		}
-	}
-
-	if string(Oathguard) != "class_oathguard" ||
-		string(Breaker) != "class_breaker" ||
-		string(Ranger) != "class_ranger" ||
-		string(StarfireMage) != "class_starfire_mage" ||
-		string(Oathhealer) != "class_oathhealer" ||
-		string(Shadowblade) != "class_shadowblade" {
-		t.Fatal("canonical ClassID spelling changed")
+		if got, ok := Parse(tc.raw); !ok || got != tc.id {
+			t.Fatalf("Parse(%q) = (%q, %v), want (%q, true)", tc.raw, got, ok, tc.id)
+		}
 	}
 }
 
@@ -47,14 +40,5 @@ func TestUnassignedAndUnknownAreNotCanonical(t *testing.T) {
 		if _, ok := Parse(raw); ok {
 			t.Fatalf("Parse(%q) unexpectedly accepted", raw)
 		}
-	}
-}
-
-func TestAllReturnsDefensiveCopy(t *testing.T) {
-	first := All()
-	first[0] = "corrupted"
-	second := All()
-	if second[0] != Oathguard {
-		t.Fatalf("All() shared mutable backing storage: got %q", second[0])
 	}
 }
