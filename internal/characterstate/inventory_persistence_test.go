@@ -10,10 +10,10 @@ func TestStoreV4InventoryRoundTripPreservesStacksAndMainHand(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:inventory-v4")
-	inventoryState, err := NewInventoryState([]InventoryStack{
+	inventoryState, err := NewInventoryStateWithEquipment([]InventoryStack{
 		{ItemArchetypeID: "item_minor_mana_potion", Quantity: 2},
 		{ItemArchetypeID: "item_minor_healing_potion", Quantity: 3},
-	}, "item_training_blade")
+	}, "item_training_blade", "")
 	if err != nil { t.Fatal(err) }
 	snapshot := testSnapshot()
 	snapshot.Inventory = inventoryState
@@ -57,7 +57,7 @@ func TestStoreV3InventoryMigrationRemainsUninitialized(t *testing.T) {
 func TestSaveJournalV3InventoryRoundTripAndV2Migration(t *testing.T) {
 	identity := trusted(t, "character:journal-inventory")
 	snapshot := testSnapshot()
-	inventoryState, err := NewInventoryState([]InventoryStack{{ItemArchetypeID: "item_minor_healing_potion", Quantity: 4}}, "item_training_blade")
+	inventoryState, err := NewInventoryStateWithEquipment([]InventoryStack{{ItemArchetypeID: "item_minor_healing_potion", Quantity: 4}}, "item_training_blade", "")
 	if err != nil { t.Fatal(err) }
 	snapshot.Inventory = inventoryState
 	intent := SaveIntent{IntentID: 7, Identity: identity, Snapshot: snapshot}
