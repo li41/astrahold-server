@@ -7,7 +7,6 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
-	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -27,27 +26,23 @@ var (
 
 // CharacterRestore is immutable durable state prepared outside the world owner.
 // Store/network I/O must complete before this value is enqueued with JoinRequest.
-//
-// LegacyRuntimeClassID is not durable schema-v9 truth. It exists only for explicit in-process
-// compatibility fixtures that need to exercise the retired v6-v8 profession runtime contract.
-// CharacterRestoreFromRecord never populates it because current persistence migration discards
-// historical ClassID before constructing characterstate.Snapshot.
+// Historical profession identity is deliberately excluded: persistence migration validates and
+// discards legacy ClassID before constructing the current classless snapshot.
 type CharacterRestore struct {
-	SchemaVersion        uint16
-	CharacterID          characteridentity.ID
-	Revision             uint64
-	World                protocol.WorldIdentity
-	LegacyRuntimeClassID classid.ID
-	HP                   uint32
-	MaxHP                uint32
-	MP                   uint32
-	MaxMP                uint32
-	Defeated             bool
-	Transform            world.Transform
-	Respawn              characterstate.DefeatedRespawn
-	Inventory            characterstate.InventoryState
-	CombatLoadout        skillloadout.Slots
-	LearnedSkills        learnedskills.Set
+	SchemaVersion uint16
+	CharacterID   characteridentity.ID
+	Revision      uint64
+	World         protocol.WorldIdentity
+	HP            uint32
+	MaxHP         uint32
+	MP            uint32
+	MaxMP         uint32
+	Defeated      bool
+	Transform     world.Transform
+	Respawn       characterstate.DefeatedRespawn
+	Inventory     characterstate.InventoryState
+	CombatLoadout skillloadout.Slots
+	LearnedSkills learnedskills.Set
 }
 
 func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
@@ -88,20 +83,6 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	}
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
 		return ErrCharacterRestoreInvalid
-	}
-	switch {
-	case restore.SchemaVersion < characterstate.ClassSchemaVersion:
-		if restore.LegacyRuntimeClassID != "" {
-			return ErrCharacterRestoreInvalid
-		}
-	case restore.SchemaVersion >= characterstate.ClasslessSchemaVersion:
-		if restore.LegacyRuntimeClassID != "" {
-			return ErrCharacterRestoreInvalid
-		}
-	default:
-		if restore.LegacyRuntimeClassID != "" && !classid.IsCanonical(restore.LegacyRuntimeClassID) {
-			return ErrCharacterRestoreInvalid
-		}
 	}
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
