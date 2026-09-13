@@ -177,7 +177,7 @@ func main() {
 		return browserws.TrustedE2EBootstrap{
 			Identity: trustedIdentity,
 			Restore: worldruntime.CharacterRestore{
-				SchemaVersion: characterstate.CurrentSchemaVersion,
+				SchemaVersion: characterstate.SchemaVersion,
 				CharacterID:   trustedIdentity.ID,
 				Revision:      1,
 				World:         worldIdentity,
