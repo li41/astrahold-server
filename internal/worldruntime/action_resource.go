@@ -71,7 +71,7 @@ func (r *Runtime) consumeActionResource(
 		return false
 	}
 	if sourceSession, ok := r.sessions.Get(sourceSessionID); ok && sourceSession.EntityID == actorID {
-		r.sendCurrentClassResourceState(sourceSession, report)
+		r.sendCurrentActionResourceState(sourceSession, report)
 	}
 	return true
 }
@@ -110,7 +110,7 @@ func (r *Runtime) applyAcceptedActionResourceReduction(
 		}
 	}
 	if sourceSession, ok := r.sessions.Get(sourceSessionID); ok && sourceSession.EntityID == actorID {
-		r.sendCurrentClassResourceState(sourceSession, report)
+		r.sendCurrentActionResourceState(sourceSession, report)
 	}
 	return true
 }
