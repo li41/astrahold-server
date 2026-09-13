@@ -125,10 +125,10 @@ func TestLowTierWeaponMissIsAuthoritativeOutcomeAndCommitsCooldown(t *testing.T)
 	if event.Damage != 0 || event.Blocked {
 		t.Fatalf("miss must not carry damage/block outcome: %#v", event)
 	}
-	// one_hand_sword is classified but intentionally has no approved production cadence yet.
-	// It must therefore keep the action definition's 0.5-second cooldown: 10 ticks from tick 3.
-	if event.CooldownReadyTick != 13 {
-		t.Fatalf("unauthored weapon type cooldown ready tick=%d, want 13", event.CooldownReadyTick)
+	// one_hand_sword now has the formal 900ms base interval. At 20 Hz this is 18 ticks,
+	// so an accepted attack at tick 3 becomes ready at tick 21 even when the result is a miss.
+	if event.CooldownReadyTick != 21 {
+		t.Fatalf("one-hand sword cooldown ready tick=%d, want 21", event.CooldownReadyTick)
 	}
 	monster, ok := rt.combatantState(monsterID)
 	if !ok || monster.HP != 200 {
