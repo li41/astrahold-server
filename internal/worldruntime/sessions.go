@@ -116,13 +116,13 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			resourceID = definition.ID
 		}
 		state := character.State{
-			EntityID:        request.Entity.ID,
-			ClassResourceID: resourceID,
-			HP:              request.Restore.HP,
-			MaxHP:           request.Restore.MaxHP,
-			MP:              request.Restore.MP,
-			MaxMP:           request.Restore.MaxMP,
-			Defeated:        request.Restore.Defeated,
+			EntityID:         request.Entity.ID,
+			ActionResourceID: resourceID,
+			HP:               request.Restore.HP,
+			MaxHP:            request.Restore.MaxHP,
+			MP:               request.Restore.MP,
+			MaxMP:            request.Restore.MaxMP,
+			Defeated:         request.Restore.Defeated,
 		}
 		restoredState = &state
 		if request.Restore.Defeated {
