@@ -70,11 +70,12 @@ func NewServiceWithResources(defaultMaxHP, defaultMaxMP uint32) (*Service, error
 
 func (s *Service) Register(id world.EntityID) error {
 	return s.RegisterState(State{
-		EntityID: id,
-		HP:       s.defaultMaxHP,
-		MaxHP:    s.defaultMaxHP,
-		MP:       s.defaultMaxMP,
-		MaxMP:    s.defaultMaxMP,
+		EntityID:     id,
+		HP:           s.defaultMaxHP,
+		MaxHP:        s.defaultMaxHP,
+		MP:           s.defaultMaxMP,
+		MaxMP:        s.defaultMaxMP,
+		PrimaryStats: characterstats.DefaultPrimary(),
 	})
 }
 
@@ -88,6 +89,12 @@ func (s *Service) RegisterState(state State) error {
 	if state.MP == 0 && state.MaxMP == 0 {
 		state.MP = s.defaultMaxMP
 		state.MaxMP = s.defaultMaxMP
+	}
+	// Legacy/internal callers that predate primary attributes represent an absent value as the
+	// zero struct. Normalize only that complete absence to the formal neutral baseline; partially
+	// invalid base attributes still fail closed below.
+	if state.PrimaryStats == (characterstats.Primary{}) {
+		state.PrimaryStats = characterstats.DefaultPrimary()
 	}
 	if err := normalizeActionResourceState(&state); err != nil {
 		return err
@@ -121,6 +128,9 @@ func normalizeActionResourceState(state *State) error {
 
 func validateState(state State) error {
 	if state.MaxHP == 0 || state.HP > state.MaxHP || state.MaxMP == 0 || state.MP > state.MaxMP {
+		return ErrInvalidState
+	}
+	if err := characterstats.ValidateBase(state.PrimaryStats); err != nil {
 		return ErrInvalidState
 	}
 	if state.ActionResourceCurrent > state.MaxActionResource {
