@@ -222,7 +222,7 @@ func (s *SaveCheckpointStore) Save(journal *SaveJournal, record SaveJournalRecor
 	if _, err := tmp.Write(data); err != nil { cleanup(); return SaveCheckpoint{}, err }
 	if err := tmp.Sync(); err != nil { cleanup(); return SaveCheckpoint{}, err }
 	if err := tmp.Close(); err != nil { _ = os.Remove(tmpName); return SaveCheckpoint{}, err }
-	if err := os.Rename(tmpName, s.path); err != nil { _ = os.Remove(tmpName); return err }
+	if err := os.Rename(tmpName, s.path); err != nil { _ = os.Remove(tmpName); return SaveCheckpoint{}, err }
 	if err := syncDirectory(dir); err != nil { return SaveCheckpoint{}, err }
 	return checkpoint, nil
 }
