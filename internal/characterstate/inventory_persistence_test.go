@@ -67,12 +67,14 @@ func TestSaveJournalV3InventoryRoundTripAndV2Migration(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if decoded != intent { t.Fatalf("decoded=%#v intent=%#v", decoded, intent) }
 
+	legacySnapshot := snapshotToSaveJournalWire(testSnapshot())
+	legacySnapshot.Inventory = InventoryState{}
+	legacySnapshot.PrimaryStats = nil
 	legacyWire := saveJournalWireRecord{
 		SchemaVersion: ResourceSaveJournalSchemaVersion,
 		RecordID: 4, ExpectedRevision: 3, IntentID: 8, CharacterID: string(identity.ID),
-		Snapshot: snapshotToSaveJournalWire(testSnapshot()),
+		Snapshot: legacySnapshot,
 	}
-	legacyWire.Snapshot.Inventory = InventoryState{}
 	legacyPayload, err := json.Marshal(legacyWire)
 	if err != nil { t.Fatal(err) }
 	_, _, legacyDecoded, err := decodeSaveJournalRecord(legacyPayload)
