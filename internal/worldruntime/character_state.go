@@ -64,6 +64,7 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 		CombatLoadout: combatLoadout,
 		LearnedSkills: learnedSkills,
 		PrimaryStats:  state.PrimaryStats,
+		SkinID:        r.characterSkills.appearanceID(entityID),
 	}
 	if state.Defeated {
 		if r.respawnPolicy == nil {
