@@ -22,8 +22,8 @@ func protocolItemInstanceState(instance iteminstance.Instance) protocol.ItemInst
 	}
 }
 
-// buildInventoryInstanceSnapshot builds the staged v28 supplement without emitting it. Protocol
-// v27 replication must continue to send only its existing messages until coordinated cutover.
+// buildInventoryInstanceSnapshot builds the Protocol v28 complete unique-instance inventory view.
+// An empty Items set is meaningful and must still be published so Clients can clear stale state.
 func buildInventoryInstanceSnapshot(inv *inventory.Inventory) (protocol.InventoryInstanceSnapshot, error) {
 	snapshot := protocol.InventoryInstanceSnapshot{Revision: inv.Revision()}
 	instances := inv.InstanceSnapshot()
@@ -40,8 +40,9 @@ func buildInventoryInstanceSnapshot(inv *inventory.Inventory) (protocol.Inventor
 	return snapshot, nil
 }
 
-// buildEquipmentInstanceSnapshot returns only unique-instance occupants. Low-tier archetype-only
-// occupants remain represented by the existing EquipmentSnapshot contract.
+// buildEquipmentInstanceSnapshot is the Protocol v28 complete unique-instance equipment view.
+// Low-tier archetype-only occupants remain represented by EquipmentSnapshot; an empty Slots set is
+// still authoritative and clears stale unique-equipment presentation on the Client.
 func buildEquipmentInstanceSnapshot(inv *inventory.Inventory) (protocol.EquipmentInstanceSnapshot, error) {
 	snapshot := protocol.EquipmentInstanceSnapshot{Revision: inv.EquipmentRevision()}
 	if instance, ok := inv.MainHandInstance(); ok {
