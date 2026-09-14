@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/combat"
@@ -18,14 +19,14 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStrengthScaling(t *testing.T) {
+func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingStrengthAndSkinAffinity(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
 	weaponAccuracyRoll = func() uint32 { return 0 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
 
-	// This interval is a test fixture, not production content. It proves that runtime cadence and
-	// physical-damage attribute scaling are resolved from WeaponType while the item itself carries
-	// only classification and damage data.
+	// This interval and fixed large-target damage are test fixtures, not production content. They
+	// prove cadence, primary-stat scaling and skin affinity are all resolved from authoritative
+	// WeaponType data while the item itself carries only classification and damage data.
 	interval := uint32(1200)
 	catalog, err := equipmentcatalog.New(equipmentcatalog.CatalogDefinition{
 		Revision: "test-only-weapon-type-cadence",
@@ -39,7 +40,7 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStreng
 			Tier: equipmentcatalog.TierLow, Weight: 10, Material: "iron_wood",
 			Weapon: &equipmentcatalog.Weapon{
 				WeaponType: equipmentcatalog.WeaponTypeOneHandAxe,
-				SmallDamage: equipmentcatalog.DamageRange{Min: 5, Max: 8}, LargeDamage: equipmentcatalog.DamageRange{Min: 8, Max: 12}, AccuracyModifier: -1,
+				SmallDamage: equipmentcatalog.DamageRange{Min: 5, Max: 8}, LargeDamage: equipmentcatalog.DamageRange{Min: 8, Max: 8}, AccuracyModifier: -1,
 			},
 		}},
 	})
@@ -122,6 +123,9 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStreng
 	if err := rt.characters.RegisterState(actorState); err != nil {
 		t.Fatal(err)
 	}
+	if err := rt.characterSkills.restoreAppearance(s.EntityID, appearance.PeasantGirl); err != nil {
+		t.Fatal(err)
+	}
 
 	inv := rt.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
@@ -153,8 +157,9 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStreng
 	if firstEvent.ActorEntityID != s.EntityID || firstEvent.TargetEntityID != monsterID || firstEvent.Result != protocol.CombatEventHit {
 		t.Fatalf("first event=%#v", firstEvent)
 	}
-	if firstEvent.Damage < 13 || firstEvent.Damage > 17 {
-		t.Fatalf("large-target axe damage=%d, want weapon 8..12 + Strength bonus 5 => 13..17", firstEvent.Damage)
+	// Fixed weapon 8 + Strength 5 + matching Peasant Girl / one-hand-axe affinity 1 = 14.
+	if firstEvent.Damage != 14 {
+		t.Fatalf("matching-skin axe damage=%d, want 14", firstEvent.Damage)
 	}
 	if firstEvent.CooldownReadyTick != 27 {
 		t.Fatalf("type cadence ready tick=%d, want 27", firstEvent.CooldownReadyTick)
@@ -179,6 +184,11 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStreng
 		t.Fatalf("cooldown-rejected attack changed HP: %+v ok=%v want=%d", monster, ok, firstHP)
 	}
 
+	// Change only the authoritative selected skin. Ninja is a dagger affinity, so the same axe
+	// attack loses exactly the +1 while weapon damage, Strength and cadence remain unchanged.
+	if err := rt.characterSkills.restoreAppearance(s.EntityID, appearance.Ninja); err != nil {
+		t.Fatal(err)
+	}
 	if err := rt.EnqueueUseAction(s.ID, 4, attack); err != nil {
 		t.Fatal(err)
 	}
@@ -187,8 +197,8 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStreng
 		t.Fatalf("ready attack report=%#v", report)
 	}
 	secondEvent := waitForCombatEvent(t, conn)
-	if secondEvent.Damage < 13 || secondEvent.Damage > 17 {
-		t.Fatalf("second large-target axe damage=%d, want weapon 8..12 + Strength bonus 5 => 13..17", secondEvent.Damage)
+	if secondEvent.Damage != 13 {
+		t.Fatalf("mismatched-skin axe damage=%d, want 13", secondEvent.Damage)
 	}
 	monster, ok = rt.combatantState(monsterID)
 	if !ok || monster.HP != firstHP-secondEvent.Damage {
