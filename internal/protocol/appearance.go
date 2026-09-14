@@ -2,7 +2,8 @@ package protocol
 
 import "github.com/li41/astrahold-server/internal/appearance"
 
-const MessageAppearanceSnapshot MessageType = 119
+// 119-121 are reserved by the staged unique-equipment contract in item_instance.go.
+const MessageAppearanceSnapshot MessageType = 122
 
 // AppearanceSnapshot is the owning character's complete Server-authoritative appearance gameplay
 // state introduced by Protocol v28. SkinID is a stable Server-owned gameplay identity, never a
