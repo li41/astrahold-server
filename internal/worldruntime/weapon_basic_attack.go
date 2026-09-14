@@ -206,11 +206,22 @@ func rollWeaponDamage(definition equipmentcatalog.Definition, size equipmentcata
 	return uint32(total)
 }
 
+func weaponBasicAttackAttributeDamageBonus(attribute characterstats.ID, stats characterstats.Primary) uint32 {
+	switch attribute {
+	case characterstats.Strength:
+		return characterstats.MeleePhysicalDamageBonus(stats.Strength)
+	case characterstats.Agility:
+		return characterstats.RangedPhysicalDamageBonus(stats.Agility)
+	default:
+		return 0
+	}
+}
+
 // resolveEquippedBasicAttackDamage retains its historical name because it is already the common
-// entity-damage hook. Basic attacks first replace the authored placeholder amount with authoritative
-// weapon damage. Then all direct entity damage receives the matching equipped unique-instance flat
-// modifier: PhysicalDamage for physical damage and MagicPower for magic damage. Attribute-derived
-// Strength/Dexterity/Intelligence bonuses are intentionally not fabricated here.
+// entity-damage hook. Physical basic attacks first replace the authored placeholder amount with
+// authoritative weapon damage, then apply only the WeaponType's formally authored primary-attribute
+// scaling. All direct entity damage finally receives the matching equipped unique-instance flat
+// modifier: PhysicalDamage for physical damage and MagicPower for magic damage.
 func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourceSessionID session.ID, targetID world.EntityID, prepared combat.PreparedAction) uint32 {
 	if prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
@@ -221,9 +232,15 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 		if definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID); ok {
 			if weaponDamage := rollWeaponDamage(definition, r.entityWeaponBodySize(targetID), rand.Uint32()); weaponDamage != 0 {
 				damage = weaponDamage
+				if prepared.Damage.Type == combat.DamagePhysical {
+					if attribute, authored := defaultEquipmentCatalog.BasicAttackDamageAttributeForItem(definition.ItemArchetypeID); authored {
+						if stats, err := r.characterEffectivePrimaryStats(actorID); err == nil {
+							damage = saturatingAddUint32(damage, weaponBasicAttackAttributeDamageBonus(attribute, stats))
+						}
+					}
+				}
 			}
 		}
-
 	}
 
 	modifiers, err := r.equippedInstanceModifiers(actorID)
