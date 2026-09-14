@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/li41/astrahold-server/internal/characterstats"
 )
 
 //go:embed default.json
@@ -45,12 +47,14 @@ type DamageRange struct {
 	Max uint32 `json:"max"`
 }
 
-// WeaponTypeDefinition owns shared base cadence for a gameplay weapon type. A nil interval means
-// the type is classified but its formal cadence is not authored yet; callers must keep the normal
-// action-definition cadence rather than inventing one from item data or presentation assets.
+// WeaponTypeDefinition owns shared basic-attack gameplay data for a weapon type. Cadence and
+// physical-damage attribute scaling are type-level truth so individual ItemArchetypes cannot
+// silently diverge. Damage scaling may remain unauthored until a WeaponType has production items;
+// runtime treats an unauthored value as no attribute bonus rather than inventing melee/ranged data.
 type WeaponTypeDefinition struct {
-	WeaponType            WeaponType `json:"weapon_type"`
-	BasicAttackIntervalMS *uint32    `json:"basic_attack_interval_ms,omitempty"`
+	WeaponType                 WeaponType       `json:"weapon_type"`
+	BasicAttackIntervalMS      *uint32          `json:"basic_attack_interval_ms,omitempty"`
+	BasicAttackDamageAttribute characterstats.ID `json:"basic_attack_damage_attribute,omitempty"`
 }
 
 type Weapon struct {
@@ -115,7 +119,8 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	}
 	for _, authored := range def.WeaponTypes {
 		authored.WeaponType = WeaponType(strings.TrimSpace(string(authored.WeaponType)))
-		if authored.WeaponType == "" {
+		authored.BasicAttackDamageAttribute = characterstats.ID(strings.TrimSpace(string(authored.BasicAttackDamageAttribute)))
+		if authored.WeaponType == "" || !validBasicAttackDamageAttribute(authored.BasicAttackDamageAttribute) {
 			return nil, ErrInvalidCatalog
 		}
 		if _, exists := catalog.weaponTypes[authored.WeaponType]; exists {
@@ -176,6 +181,15 @@ func validTier(tier Tier) bool {
 	}
 }
 
+func validBasicAttackDamageAttribute(attribute characterstats.ID) bool {
+	switch attribute {
+	case "", characterstats.Strength, characterstats.Agility:
+		return true
+	default:
+		return false
+	}
+}
+
 func validWeapon(w Weapon) bool {
 	return w.WeaponType != "" && validRange(w.SmallDamage) && validRange(w.LargeDamage)
 }
@@ -230,6 +244,24 @@ func (c *Catalog) BasicAttackIntervalMSForItem(itemArchetypeID string) (uint32, 
 		return 0, false
 	}
 	return *typeDefinition.BasicAttackIntervalMS, true
+}
+
+// BasicAttackDamageAttributeForItem resolves shared WeaponType physical-damage scaling. False
+// means the item is not a weapon or the type has not yet been formally classified for attribute
+// scaling; callers must not infer melee/ranged semantics from item names or presentation assets.
+func (c *Catalog) BasicAttackDamageAttributeForItem(itemArchetypeID string) (characterstats.ID, bool) {
+	if c == nil {
+		return "", false
+	}
+	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	if !ok || item.Weapon == nil {
+		return "", false
+	}
+	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]
+	if !ok || typeDefinition.BasicAttackDamageAttribute == "" {
+		return "", false
+	}
+	return typeDefinition.BasicAttackDamageAttribute, true
 }
 
 // UnitWeights returns a defensive copy of the authored carry weight for every catalog item.
