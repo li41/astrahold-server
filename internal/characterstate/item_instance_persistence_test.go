@@ -35,18 +35,18 @@ func durableTestInstances(t *testing.T) (InventoryState, iteminstance.Instance, 
 	return state, bag, main
 }
 
-func TestStoreV10RoundTripsUniqueItemInstancesWithoutReroll(t *testing.T) {
+func TestStoreCurrentRoundTripsUniqueItemInstancesWithoutReroll(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
-	identity := trusted(t, "character:item-instance-v10")
+	identity := trusted(t, "character:item-instance-current")
 	inventoryState, _, _ := durableTestInstances(t)
 	snapshot := testSnapshot()
 	snapshot.Inventory = inventoryState
 
 	saved, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if saved.SchemaVersion != ItemInstanceSchemaVersion {
-		t.Fatalf("schema=%d want=%d", saved.SchemaVersion, ItemInstanceSchemaVersion)
+	if saved.SchemaVersion != SchemaVersion {
+		t.Fatalf("schema=%d want=%d", saved.SchemaVersion, SchemaVersion)
 	}
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
@@ -77,7 +77,7 @@ func TestStoreV9RejectsItemInstanceFields(t *testing.T) {
 	}
 }
 
-func TestSaveJournalV9RoundTripsUniqueItemInstancesWithoutReroll(t *testing.T) {
+func TestSaveJournalCurrentRoundTripsUniqueItemInstancesWithoutReroll(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "item-instances.journal")
 	journal, err := OpenSaveJournal(path)
 	if err != nil { t.Fatal(err) }
