@@ -113,6 +113,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		out := equipmentSnapshot{Revision: m.Revision, Slots: make([]equipmentSlotState, len(m.Slots))}
 		for i, slot := range m.Slots { out.Slots[i] = equipmentSlotState{Slot: string(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID} }
 		return json.Marshal(out)
+	case protocol.AppearanceSnapshot:
+		return json.Marshal(toAppearanceSnapshot(m))
 	case protocol.EquipmentInstanceSnapshot:
 		out := equipmentInstanceSnapshot{Revision: m.Revision, Slots: make([]equipmentInstanceSlotState, len(m.Slots))}
 		for i := range m.Slots { out.Slots[i] = equipmentInstanceSlotState{Slot: string(m.Slots[i].Slot), Item: toItemInstanceState(m.Slots[i].Item)} }
