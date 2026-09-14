@@ -34,9 +34,9 @@ func validateEquipmentInstanceIntent(command protocol.ClientEquipmentInstanceCom
 	return nil
 }
 
-// EnqueueEquipmentInstanceCommand is a Server-internal staged entrypoint for the next protocol
-// contract. Protocol v27 adapters must not call it; formal network acceptance starts only after the
-// coordinated version cutover. The mutation itself already uses the normal bounded world-owner path.
+// EnqueueEquipmentInstanceCommand is the Protocol v28 exact-instance equipment entrypoint.
+// Network adapters may only reach it through gateway validation; trusted durable sessions use the
+// fenced variant so the mutation still enters the normal bounded world-owner queue.
 func (r *Runtime) EnqueueEquipmentInstanceCommand(id session.ID, sequence uint32, equipment protocol.ClientEquipmentInstanceCommand) error {
 	if id == 0 || sequence == 0 {
 		return errors.New("worldruntime: invalid equipment instance intent")
