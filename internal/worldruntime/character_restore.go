@@ -6,6 +6,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -42,6 +43,7 @@ type CharacterRestore struct {
 	Inventory     characterstate.InventoryState
 	CombatLoadout skillloadout.Slots
 	LearnedSkills learnedskills.Set
+	PrimaryStats  characterstats.Primary
 }
 
 func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
@@ -64,6 +66,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		Inventory:     record.Snapshot.Inventory,
 		CombatLoadout: record.Snapshot.CombatLoadout,
 		LearnedSkills: record.Snapshot.LearnedSkills,
+		PrimaryStats:  record.Snapshot.PrimaryStats,
 	}
 }
 
@@ -81,6 +84,9 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		return ErrCharacterRestoreWorldMismatch
 	}
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
+		return ErrCharacterRestoreInvalid
+	}
+	if restore.SchemaVersion < characterstate.PrimaryStatsSchemaVersion && restore.PrimaryStats != (characterstats.Primary{}) {
 		return ErrCharacterRestoreInvalid
 	}
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
