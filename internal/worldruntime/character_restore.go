@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/characterstats"
@@ -44,6 +45,7 @@ type CharacterRestore struct {
 	CombatLoadout skillloadout.Slots
 	LearnedSkills learnedskills.Set
 	PrimaryStats  characterstats.Primary
+	SkinID        appearance.SkinID
 }
 
 func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
@@ -67,6 +69,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		CombatLoadout: record.Snapshot.CombatLoadout,
 		LearnedSkills: record.Snapshot.LearnedSkills,
 		PrimaryStats:  record.Snapshot.PrimaryStats,
+		SkinID:        record.Snapshot.SkinID,
 	}
 }
 
@@ -88,6 +91,13 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	}
 	if err := validateCharacterPrimaryStatsRestore(restore.SchemaVersion, restore.PrimaryStats); err != nil {
 		return err
+	}
+	if restore.SchemaVersion < characterstate.AppearanceSchemaVersion {
+		if restore.SkinID != appearance.None {
+			return ErrCharacterRestoreInvalid
+		}
+	} else if !appearance.ValidSelection(restore.SkinID) {
+		return ErrCharacterRestoreInvalid
 	}
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
