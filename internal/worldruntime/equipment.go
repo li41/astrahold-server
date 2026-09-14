@@ -31,9 +31,9 @@ func equipmentDefinitionAllowed(definition equipmentcatalog.Definition, kind equ
 	return definition.Kind == kind && definition.Slot == slot
 }
 
-// Protocol v27 equip intent identifies only ItemArchetypeID, so it is intentionally restricted to
-// low-tier archetype-only equipment. Mid/high equipment must be selected by unique instance identity
-// once the presentation contract exposes that identity; otherwise affix-bearing items would collapse.
+// The active archetype-only equip intent identifies only ItemArchetypeID, so it is intentionally
+// restricted to low-tier equipment. Mid/high equipment must be selected by unique instance identity
+// once that staged presentation contract is formally activated; otherwise affix-bearing items would collapse.
 func mainHandItemAllowed(itemArchetypeID string) bool {
 	itemArchetypeID = strings.TrimSpace(itemArchetypeID)
 	if itemArchetypeID == trainingBladeArchetypeID {
