@@ -25,19 +25,20 @@ import (
 )
 
 const (
-	LegacySchemaVersion        uint16 = 1
-	RespawnSchemaVersion       uint16 = 2
-	ResourceSchemaVersion      uint16 = 3
-	InventorySchemaVersion     uint16 = 4
-	EquipmentSchemaVersion     uint16 = 5
-	ClassSchemaVersion         uint16 = 6
-	LoadoutSchemaVersion       uint16 = 7
-	LearnedSkillsSchemaVersion uint16 = 8
-	ClasslessSchemaVersion     uint16 = 9
-	ItemInstanceSchemaVersion  uint16 = 10
-	PrimaryStatsSchemaVersion  uint16 = 11
-	SchemaVersion              uint16 = PrimaryStatsSchemaVersion
-	LegacyDefaultMaxMP         uint32 = 100
+	LegacySchemaVersion          uint16 = 1
+	RespawnSchemaVersion         uint16 = 2
+	ResourceSchemaVersion        uint16 = 3
+	InventorySchemaVersion       uint16 = 4
+	EquipmentSchemaVersion       uint16 = 5
+	ClassSchemaVersion           uint16 = 6
+	LoadoutSchemaVersion         uint16 = 7
+	LearnedSkillsSchemaVersion   uint16 = 8
+	ClasslessSchemaVersion       uint16 = 9
+	ItemInstanceSchemaVersion    uint16 = 10
+	PrimaryStatsSchemaVersion    uint16 = 11 // historical two-attribute interim schema
+	SixPrimaryStatsSchemaVersion uint16 = 12
+	SchemaVersion                uint16 = SixPrimaryStatsSchemaVersion
+	LegacyDefaultMaxMP           uint32 = 100
 )
 
 var (
@@ -65,9 +66,9 @@ type DefeatedRespawn struct {
 }
 
 // Snapshot is the current durable character-state contract. Profession/ClassID is deliberately
-// absent. Historical class fields are accepted only by legacy wire decoders and are validated then
-// discarded before a Snapshot is constructed. Schema v10 adds unique equipment instance state;
-// schema v11 adds the classless primary-stat base values without inventing allocation semantics.
+// absent. Schema v11 was a short-lived two-attribute Strength/Agility foundation. Schema v12 owns
+// all six formal classless base attributes. Allocation provenance/level points remain separate
+// future state until a formal character-level owner exists.
 type Snapshot struct {
 	World         WorldRef
 	HP            uint32
@@ -109,8 +110,12 @@ type wireDefeatedRespawn struct {
 }
 
 type wirePrimaryStats struct {
-	Strength uint32 `json:"strength"`
-	Agility  uint32 `json:"agility"`
+	Strength     uint32  `json:"strength"`
+	Agility      uint32  `json:"agility"`
+	Constitution *uint32 `json:"constitution,omitempty"`
+	Intelligence *uint32 `json:"intelligence,omitempty"`
+	Spirit       *uint32 `json:"spirit,omitempty"`
+	Charisma     *uint32 `json:"charisma,omitempty"`
 }
 
 type wireRecord struct {
@@ -147,13 +152,12 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v11 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v12 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
 // v6-v8 may contain the retired durable ClassID; it is validated during migration and discarded.
-// v7 adds the classless six-slot combat loadout. v8 adds learned skills. v9 retires durable ClassID.
-// v10 adds unique equipment instances and rolled affixes. v11 adds classless primary-stat base values.
-// Older schemas must not carry fields introduced by a later schema. When loading v7, only configured
-// combat skills are inferred as learned; no other skills or stat values are granted.
+// v7 adds the six-slot combat loadout. v8 adds learned skills. v9 retires durable ClassID.
+// v10 adds unique equipment instances. v11 carries only Strength/Agility and is migrated into the
+// formal six-attribute baseline; v12 persists all six formal base attributes.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -165,7 +169,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV11(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV12(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -207,16 +211,14 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion < LearnedSkillsSchemaVersion && len(wire.LearnedSkills) != 0 { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < PrimaryStatsSchemaVersion && wire.PrimaryStats != nil { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion >= PrimaryStatsSchemaVersion && wire.PrimaryStats == nil { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion == PrimaryStatsSchemaVersion && hasSixPrimaryWireFields(wire.PrimaryStats) { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion >= SixPrimaryStatsSchemaVersion && !hasSixPrimaryWireFields(wire.PrimaryStats) { return Record{}, false, ErrCorruptRecord }
 
-	// Historical ClassID is migration-only input. Validate it so corrupt legacy state does not
-	// become silently acceptable, then discard it instead of restoring profession truth.
 	if wire.SchemaVersion >= ClassSchemaVersion && wire.SchemaVersion < ClasslessSchemaVersion && wire.ClassID != "" {
 		if _, ok := classid.Parse(wire.ClassID); !ok { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
 	}
 	mp, maxMP := wire.MP, wire.MaxMP
-	if wire.SchemaVersion < ResourceSchemaVersion {
-		mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP
-	}
+	if wire.SchemaVersion < ResourceSchemaVersion { mp, maxMP = LegacyDefaultMaxMP, LegacyDefaultMaxMP }
 	inventoryState := InventoryState{}
 	if wire.SchemaVersion >= InventorySchemaVersion {
 		var err error
@@ -239,52 +241,31 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		learnedSkills, err = learnedSkillsFromCombatLoadout(combatLoadout)
 		if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
-	primaryStats := characterstats.Primary{}
-	if wire.PrimaryStats != nil {
-		primaryStats = characterstats.Primary{Strength: wire.PrimaryStats.Strength, Agility: wire.PrimaryStats.Agility}
-	}
+	primaryStats, err := primaryStatsFromWire(wire.SchemaVersion, wire.PrimaryStats)
+	if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
-		CharacterID:   characteridentity.ID(wire.CharacterID),
-		Revision:      wire.Revision,
+		CharacterID: characteridentity.ID(wire.CharacterID),
+		Revision: wire.Revision,
 		Snapshot: Snapshot{
-			World:         WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
-			HP:            wire.HP,
-			MaxHP:         wire.MaxHP,
-			MP:            mp,
-			MaxMP:         maxMP,
-			Defeated:      wire.Defeated,
-			Position:      world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer},
-			Yaw:           wire.Yaw,
-			Inventory:     inventoryState,
-			CombatLoadout: combatLoadout,
-			LearnedSkills: learnedSkills,
-			PrimaryStats:  primaryStats,
+			World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
+			HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
+			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
+			Inventory: inventoryState, CombatLoadout: combatLoadout, LearnedSkills: learnedSkills, PrimaryStats: primaryStats,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
 		record.Snapshot.Respawn = DefeatedRespawn{
-			Context:        wire.DefeatedRespawn.Context,
-			SpawnPointID:   wire.DefeatedRespawn.SpawnPointID,
-			SpawnClass:     wire.DefeatedRespawn.SpawnClass,
-			Position:       world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
-			RemainingTicks: wire.DefeatedRespawn.RemainingTicks,
-			CheckpointID:   wire.DefeatedRespawn.CheckpointID,
+			Context: wire.DefeatedRespawn.Context, SpawnPointID: wire.DefeatedRespawn.SpawnPointID, SpawnClass: wire.DefeatedRespawn.SpawnClass,
+			Position: world.Position{X: wire.DefeatedRespawn.X, Y: wire.DefeatedRespawn.Y, Z: wire.DefeatedRespawn.Z, Layer: wire.DefeatedRespawn.Layer},
+			RemainingTicks: wire.DefeatedRespawn.RemainingTicks, CheckpointID: wire.DefeatedRespawn.CheckpointID,
 		}
 	}
 	if err := validateSnapshotBase(record.Snapshot); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
-	if wire.SchemaVersion >= RespawnSchemaVersion {
-		if err := validateRespawnSnapshot(record.Snapshot); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
-	}
-	if wire.SchemaVersion >= ResourceSchemaVersion {
-		if record.Snapshot.MaxMP == 0 || record.Snapshot.MP > record.Snapshot.MaxMP { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
-	}
-	if wire.SchemaVersion >= InventorySchemaVersion {
-		if err := validateInventoryState(record.Snapshot.Inventory); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
-	}
-	if wire.SchemaVersion >= LoadoutSchemaVersion {
-		if err := validateCombatLoadout(record.Snapshot.CombatLoadout); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
-	}
+	if wire.SchemaVersion >= RespawnSchemaVersion { if err := validateRespawnSnapshot(record.Snapshot); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) } }
+	if wire.SchemaVersion >= ResourceSchemaVersion { if record.Snapshot.MaxMP == 0 || record.Snapshot.MP > record.Snapshot.MaxMP { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) } }
+	if wire.SchemaVersion >= InventorySchemaVersion { if err := validateInventoryState(record.Snapshot.Inventory); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) } }
+	if wire.SchemaVersion >= LoadoutSchemaVersion { if err := validateCombatLoadout(record.Snapshot.CombatLoadout); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) } }
 	if wire.SchemaVersion >= LearnedSkillsSchemaVersion {
 		if err := validateLearnedSkills(record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 		if err := validateCombatLoadoutLearned(record.Snapshot.CombatLoadout, record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
@@ -296,50 +277,67 @@ func (s *Store) writeLocked(record Record) error {
 	inventoryState, err := CanonicalInventoryState(record.Snapshot.Inventory)
 	if err != nil { return err }
 	wire := wireRecord{
-		SchemaVersion:  SchemaVersion,
-		CharacterID:    string(record.CharacterID),
-		Revision:       record.Revision,
-		WorldID:        record.Snapshot.World.WorldID,
-		WorldRevision:  record.Snapshot.World.Revision,
-		GameplaySHA256: record.Snapshot.World.GameplaySHA256,
-		HP:             record.Snapshot.HP,
-		MaxHP:          record.Snapshot.MaxHP,
-		MP:             record.Snapshot.MP,
-		MaxMP:          record.Snapshot.MaxMP,
-		Defeated:       record.Snapshot.Defeated,
-		X:              record.Snapshot.Position.X,
-		Y:              record.Snapshot.Position.Y,
-		Z:              record.Snapshot.Position.Z,
-		Layer:          record.Snapshot.Position.Layer,
-		Yaw:            record.Snapshot.Yaw,
-		Inventory:      inventoryState,
-		CombatLoadout:  combatLoadoutToWire(record.Snapshot.CombatLoadout),
-		LearnedSkills:  learnedSkillsToWire(record.Snapshot.LearnedSkills),
-		PrimaryStats: &wirePrimaryStats{
-			Strength: record.Snapshot.PrimaryStats.Strength,
-			Agility:  record.Snapshot.PrimaryStats.Agility,
-		},
+		SchemaVersion: SchemaVersion, CharacterID: string(record.CharacterID), Revision: record.Revision,
+		WorldID: record.Snapshot.World.WorldID, WorldRevision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256,
+		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
+		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
+		Inventory: inventoryState, CombatLoadout: combatLoadoutToWire(record.Snapshot.CombatLoadout), LearnedSkills: learnedSkillsToWire(record.Snapshot.LearnedSkills),
+		PrimaryStats: primaryStatsToWire(record.Snapshot.PrimaryStats),
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
-		wire.DefeatedRespawn = &wireDefeatedRespawn{
-			Context: respawn.Context, SpawnPointID: respawn.SpawnPointID, SpawnClass: respawn.SpawnClass,
-			X: respawn.Position.X, Y: respawn.Position.Y, Z: respawn.Position.Z, Layer: respawn.Position.Layer,
-			RemainingTicks: respawn.RemainingTicks, CheckpointID: respawn.CheckpointID,
-		}
+		wire.DefeatedRespawn = &wireDefeatedRespawn{Context: respawn.Context, SpawnPointID: respawn.SpawnPointID, SpawnClass: respawn.SpawnClass, X: respawn.Position.X, Y: respawn.Position.Y, Z: respawn.Position.Z, Layer: respawn.Position.Layer, RemainingTicks: respawn.RemainingTicks, CheckpointID: respawn.CheckpointID}
 	}
 	data, err := json.Marshal(wire)
 	if err != nil { return err }
 	data = append(data, '\n')
 	tmp, err := os.CreateTemp(s.root, ".character-state.tmp-")
 	if err != nil { return err }
-	tmpName := tmp.Name()
-	cleanup := func() { _ = tmp.Close(); _ = os.Remove(tmpName) }
+	tmpName := tmp.Name(); cleanup := func() { _ = tmp.Close(); _ = os.Remove(tmpName) }
 	if _, err := tmp.Write(data); err != nil { cleanup(); return err }
 	if err := tmp.Sync(); err != nil { cleanup(); return err }
 	if err := tmp.Close(); err != nil { _ = os.Remove(tmpName); return err }
 	if err := os.Rename(tmpName, s.recordPath(record.CharacterID)); err != nil { _ = os.Remove(tmpName); return err }
 	return syncDirectory(s.root)
+}
+
+func primaryStatsToWire(primary characterstats.Primary) *wirePrimaryStats {
+	constitution, intelligence, spirit, charisma := primary.Constitution, primary.Intelligence, primary.Spirit, primary.Charisma
+	return &wirePrimaryStats{Strength: primary.Strength, Agility: primary.Agility, Constitution: &constitution, Intelligence: &intelligence, Spirit: &spirit, Charisma: &charisma}
+}
+
+func hasSixPrimaryWireFields(wire *wirePrimaryStats) bool {
+	return wire != nil && wire.Constitution != nil && wire.Intelligence != nil && wire.Spirit != nil && wire.Charisma != nil
+}
+
+func primaryStatsFromWire(schemaVersion uint16, wire *wirePrimaryStats) (characterstats.Primary, error) {
+	if schemaVersion < PrimaryStatsSchemaVersion {
+		return characterstats.DefaultPrimary(), nil
+	}
+	if wire == nil { return characterstats.Primary{}, ErrInvalidSnapshot }
+	if schemaVersion == PrimaryStatsSchemaVersion {
+		if hasSixPrimaryWireFields(wire) { return characterstats.Primary{}, ErrInvalidSnapshot }
+		primary := characterstats.DefaultPrimary()
+		switch {
+		case wire.Strength == 0:
+		case wire.Strength < characterstats.BasePrimaryValue:
+			return characterstats.Primary{}, ErrInvalidSnapshot
+		default:
+			primary.Strength = wire.Strength
+		}
+		switch {
+		case wire.Agility == 0:
+		case wire.Agility < characterstats.BasePrimaryValue:
+			return characterstats.Primary{}, ErrInvalidSnapshot
+		default:
+			primary.Agility = wire.Agility
+		}
+		return primary, nil
+	}
+	if !hasSixPrimaryWireFields(wire) { return characterstats.Primary{}, ErrInvalidSnapshot }
+	primary := characterstats.Primary{Strength: wire.Strength, Agility: wire.Agility, Constitution: *wire.Constitution, Intelligence: *wire.Intelligence, Spirit: *wire.Spirit, Charisma: *wire.Charisma}
+	if err := characterstats.ValidateBase(primary); err != nil { return characterstats.Primary{}, ErrInvalidSnapshot }
+	return primary, nil
 }
 
 func (s *Store) recordPath(id characteridentity.ID) string {
@@ -352,45 +350,26 @@ func validateTrustedIdentity(identity characteridentity.Binding) error {
 	return nil
 }
 
-func validateSnapshotV11(snapshot Snapshot) error {
-	return validateSnapshotV10(snapshot)
+func validateSnapshotV12(snapshot Snapshot) error {
+	if err := characterstats.ValidateBase(snapshot.PrimaryStats); err != nil { return ErrInvalidSnapshot }
+	return validateSnapshotV11(snapshot)
 }
 
-func validateSnapshotV10(snapshot Snapshot) error {
-	return validateSnapshotV8(snapshot)
-}
-
+func validateSnapshotV11(snapshot Snapshot) error { return validateSnapshotV10(snapshot) }
+func validateSnapshotV10(snapshot Snapshot) error { return validateSnapshotV8(snapshot) }
 func validateSnapshotV9(snapshot Snapshot) error {
 	if snapshot.Inventory.HasItemInstances() { return ErrInvalidSnapshot }
 	return validateSnapshotV8(snapshot)
 }
-
 func validateSnapshotV8(snapshot Snapshot) error {
 	if err := validateSnapshotV7(snapshot); err != nil { return err }
 	if err := validateLearnedSkills(snapshot.LearnedSkills); err != nil { return err }
 	return validateCombatLoadoutLearned(snapshot.CombatLoadout, snapshot.LearnedSkills)
 }
-
-func validateSnapshotV7(snapshot Snapshot) error {
-	if err := validateSnapshotV6(snapshot); err != nil { return err }
-	return validateCombatLoadout(snapshot.CombatLoadout)
-}
-
-func validateSnapshotV6(snapshot Snapshot) error {
-	return validateSnapshotV5(snapshot)
-}
-
-func validateSnapshotV5(snapshot Snapshot) error {
-	if err := validateSnapshotV3(snapshot); err != nil { return err }
-	return validateInventoryState(snapshot.Inventory)
-}
-
-func validateSnapshotV4(snapshot Snapshot) error {
-	if err := validateSnapshotV3(snapshot); err != nil { return err }
-	if snapshot.Inventory.OffHand != "" { return ErrInvalidSnapshot }
-	return validateInventoryState(snapshot.Inventory)
-}
-
+func validateSnapshotV7(snapshot Snapshot) error { if err := validateSnapshotV6(snapshot); err != nil { return err }; return validateCombatLoadout(snapshot.CombatLoadout) }
+func validateSnapshotV6(snapshot Snapshot) error { return validateSnapshotV5(snapshot) }
+func validateSnapshotV5(snapshot Snapshot) error { if err := validateSnapshotV3(snapshot); err != nil { return err }; return validateInventoryState(snapshot.Inventory) }
+func validateSnapshotV4(snapshot Snapshot) error { if err := validateSnapshotV3(snapshot); err != nil { return err }; if snapshot.Inventory.OffHand != "" { return ErrInvalidSnapshot }; return validateInventoryState(snapshot.Inventory) }
 func validateSnapshotV3(snapshot Snapshot) error {
 	if err := validateSnapshotBase(snapshot); err != nil { return err }
 	if err := validateRespawnSnapshot(snapshot); err != nil { return err }
@@ -400,9 +379,7 @@ func validateSnapshotV3(snapshot Snapshot) error {
 
 func validateRespawnSnapshot(snapshot Snapshot) error {
 	if snapshot.Defeated {
-		if !validDeathContext(snapshot.Respawn.Context) || snapshot.Respawn.SpawnPointID == "" || !validSpawnClass(snapshot.Respawn.SpawnClass) || !finitePosition(snapshot.Respawn.Position) {
-			return ErrInvalidSnapshot
-		}
+		if !validDeathContext(snapshot.Respawn.Context) || snapshot.Respawn.SpawnPointID == "" || !validSpawnClass(snapshot.Respawn.SpawnClass) || !finitePosition(snapshot.Respawn.Position) { return ErrInvalidSnapshot }
 		return nil
 	}
 	if snapshot.Respawn != (DefeatedRespawn{}) { return ErrInvalidSnapshot }
@@ -412,33 +389,22 @@ func validateRespawnSnapshot(snapshot Snapshot) error {
 func validateSnapshotBase(snapshot Snapshot) error {
 	if snapshot.World.WorldID == "" || snapshot.World.Revision == "" || !validSHA256(snapshot.World.GameplaySHA256) { return ErrInvalidSnapshot }
 	if snapshot.MaxHP == 0 || snapshot.HP > snapshot.MaxHP { return ErrInvalidSnapshot }
-	if snapshot.Defeated {
-		if snapshot.HP != 0 { return ErrInvalidSnapshot }
-	} else if snapshot.HP == 0 { return ErrInvalidSnapshot }
+	if snapshot.Defeated { if snapshot.HP != 0 { return ErrInvalidSnapshot } } else if snapshot.HP == 0 { return ErrInvalidSnapshot }
 	if !finitePosition(snapshot.Position) || !finite32(snapshot.Yaw) { return ErrInvalidSnapshot }
+	if err := characterstats.ValidateBase(snapshot.PrimaryStats); err != nil { return ErrInvalidSnapshot }
 	return nil
 }
 
 func validDeathContext(context respawnpolicy.DeathContext) bool {
-	switch context {
-	case respawnpolicy.DeathContextPvE, respawnpolicy.DeathContextPvP, respawnpolicy.DeathContextSiege: return true
-	default: return false
-	}
+	switch context { case respawnpolicy.DeathContextPvE, respawnpolicy.DeathContextPvP, respawnpolicy.DeathContextSiege: return true; default: return false }
 }
 func validSpawnClass(class respawnpolicy.SpawnClass) bool {
-	switch class {
-	case respawnpolicy.SpawnClassSafe, respawnpolicy.SpawnClassCheckpoint, respawnpolicy.SpawnClassSiege: return true
-	default: return false
-	}
+	switch class { case respawnpolicy.SpawnClassSafe, respawnpolicy.SpawnClassCheckpoint, respawnpolicy.SpawnClassSiege: return true; default: return false }
 }
 func finitePosition(position world.Position) bool { return finite32(position.X) && finite32(position.Y) && finite32(position.Z) }
 func finite32(value float32) bool { return !math.IsNaN(float64(value)) && !math.IsInf(float64(value), 0) }
 func validSHA256(value string) bool {
 	if len(value) != 64 { return false }
-	for i := 0; i < len(value); i++ {
-		c := value[i]
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') { continue }
-		return false
-	}
+	for i := 0; i < len(value); i++ { c := value[i]; if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') { continue }; return false }
 	return true
 }
