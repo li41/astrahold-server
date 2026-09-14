@@ -12,6 +12,6 @@ func TestMarshalCharacterTargetResourceState(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	const want = `{"source_entity_id":10,"target_entity_id":9403,"resource_id":"flaw","current":2,"max":3}`
 	if string(payload) != want { t.Fatalf("payload=%s want=%s", payload, want) }
-	if protocol.Version != 27 { t.Fatalf("protocol version=%d want 27", protocol.Version) }
+	if protocol.Version != 28 { t.Fatalf("protocol version=%d want 28", protocol.Version) }
 	if protocol.MessageCharacterTargetResourceState != 118 { t.Fatalf("type=%d want 118", protocol.MessageCharacterTargetResourceState) }
 }
