@@ -23,7 +23,7 @@ const (
 	PeasantMan       SkinID = "skin_peasant_man"
 	Ortiz            SkinID = "skin_ortiz"
 	Drake            SkinID = "skin_drake"
-	DreyarByMAure    SkinID = "skin_dreyar_by_m_aure"
+	HerakliosByADizon SkinID = "skin_heraklios_by_a_dizon"
 	Brute            SkinID = "skin_brute"
 	CastleGuard02    SkinID = "skin_castle_guard_02"
 	TheBoss          SkinID = "skin_the_boss"
@@ -52,7 +52,7 @@ var definitions = map[SkinID]Definition{
 	PeasantMan:       {ID: PeasantMan, WeaponAffinity: equipmentcatalog.WeaponType("warhammer")},
 	Ortiz:            {ID: Ortiz, WeaponAffinity: equipmentcatalog.WeaponType("morning_star")},
 	Drake:            {ID: Drake, WeaponAffinity: equipmentcatalog.WeaponType("mace")},
-	DreyarByMAure:    {ID: DreyarByMAure, WeaponAffinity: equipmentcatalog.WeaponType("two_hand_sword")},
+	HerakliosByADizon: {ID: HerakliosByADizon, WeaponAffinity: equipmentcatalog.WeaponType("two_hand_sword")},
 	Brute:            {ID: Brute, WeaponAffinity: equipmentcatalog.WeaponType("two_hand_axe")},
 	CastleGuard02:    {ID: CastleGuard02, WeaponAffinity: equipmentcatalog.WeaponType("two_hand_spear")},
 	TheBoss:          {ID: TheBoss, WeaponAffinity: equipmentcatalog.WeaponType("knuckles")},
