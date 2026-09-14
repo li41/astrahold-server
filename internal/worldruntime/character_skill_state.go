@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"errors"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/skillcatalog"
@@ -13,11 +14,14 @@ import (
 
 var ErrCharacterSkillStateInvalid = errors.New("worldruntime: invalid character skill state")
 
-// characterSkillRuntime owns classless learned-skill and combat-loadout state inside the
-// single-threaded world owner. The underlying stores intentionally add no second lock or authority.
+// characterSkillRuntime owns classless learned-skill, combat-loadout and selected-skin state inside
+// the single-threaded world owner. The selected skin lives here only as character-owned runtime
+// state; appearance gameplay data itself is owned by package appearance. The underlying stores
+// intentionally add no second lock or authority.
 type characterSkillRuntime struct {
-	learned learnedskills.Store
-	loadout skillloadout.Store
+	learned    learnedskills.Store
+	loadout    skillloadout.Store
+	appearance appearance.Store
 }
 
 func validateCharacterSkillValues(learned learnedskills.Set, loadout skillloadout.Slots) error {
@@ -80,6 +84,20 @@ func (s *characterSkillRuntime) restore(entityID world.EntityID, learned learned
 	return nil
 }
 
+func (s *characterSkillRuntime) restoreAppearance(entityID world.EntityID, skinID appearance.SkinID) error {
+	if s == nil || entityID == 0 {
+		return appearance.ErrInvalidSkin
+	}
+	return s.appearance.Set(entityID, skinID)
+}
+
+func (s *characterSkillRuntime) appearanceID(entityID world.EntityID) appearance.SkinID {
+	if s == nil {
+		return appearance.None
+	}
+	return s.appearance.Get(entityID)
+}
+
 func (s *characterSkillRuntime) capture(entityID world.EntityID) (learnedskills.Set, skillloadout.Slots, error) {
 	if s == nil || entityID == 0 {
 		return learnedskills.Set{}, skillloadout.Slots{}, ErrCharacterSkillStateInvalid
@@ -109,6 +127,7 @@ func (s *characterSkillRuntime) clear(entityID world.EntityID) {
 	if s == nil || entityID == 0 {
 		return
 	}
+	s.appearance.ClearEntity(entityID)
 	s.loadout.ClearEntity(entityID)
 	s.learned.ClearEntity(entityID)
 }
