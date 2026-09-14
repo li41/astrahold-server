@@ -133,6 +133,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		slots := make([]protocol.EquipmentSlotState, len(in.Slots))
 		for i, slot := range in.Slots { slots[i] = protocol.EquipmentSlotState{Slot: protocol.EquipmentSlot(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID} }
 		return protocol.EquipmentSnapshot{Revision: in.Revision, Slots: slots}, nil
+	case protocol.MessageAppearanceSnapshot:
+		var in appearanceSnapshot
+		if err := decodeStrict(data, &in); err != nil { return nil, err }
+		return fromAppearanceSnapshot(in), nil
 	case protocol.MessageEquipmentInstanceSnapshot:
 		var in equipmentInstanceSnapshot
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
