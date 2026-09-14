@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -31,6 +32,10 @@ func TestEquipmentCommandMovesTrainingBladeAndReplicatesAuthoritativeTruth(t *te
 	}
 	<-connection.Reliable() // Inventory revision 3.
 	<-connection.Reliable() // Equipment revision 0.
+	appearanceAtJoin := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if appearanceAtJoin.SkinID != appearance.None || appearanceAtJoin.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("appearance at join=%#v", appearanceAtJoin)
+	}
 
 	if err := runtime.EnqueueEquipmentCommand(s.ID, 1, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotMainHand, ItemArchetypeID: "item_training_blade"}); err != nil {
 		t.Fatal(err)
@@ -51,6 +56,10 @@ func TestEquipmentCommandMovesTrainingBladeAndReplicatesAuthoritativeTruth(t *te
 	equipmentAfterEquip := (<-connection.Reliable()).Message.(protocol.EquipmentSnapshot)
 	if equipmentAfterEquip.Revision != 1 || len(equipmentAfterEquip.Slots) != 1 || equipmentAfterEquip.Slots[0].Slot != protocol.EquipmentSlotMainHand || equipmentAfterEquip.Slots[0].ItemArchetypeID != "item_training_blade" {
 		t.Fatalf("equipment after equip=%#v", equipmentAfterEquip)
+	}
+	appearanceAfterEquip := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if appearanceAfterEquip.SkinID != appearance.None || appearanceAfterEquip.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("appearance after training-blade equip=%#v", appearanceAfterEquip)
 	}
 
 	if err := runtime.EnqueueEquipmentCommand(s.ID, 2, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationUnequip, Slot: protocol.EquipmentSlotMainHand}); err != nil {
@@ -77,6 +86,10 @@ func TestEquipmentCommandMovesTrainingBladeAndReplicatesAuthoritativeTruth(t *te
 	if equipmentAfterUnequip.Revision != 2 || len(equipmentAfterUnequip.Slots) != 0 {
 		t.Fatalf("equipment after unequip=%#v", equipmentAfterUnequip)
 	}
+	appearanceAfterUnequip := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if appearanceAfterUnequip.SkinID != appearance.None || appearanceAfterUnequip.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("appearance after unequip=%#v", appearanceAfterUnequip)
+	}
 }
 
 func TestEquipmentSnapshotReplicatesMainAndOffHandTogether(t *testing.T) {
@@ -95,6 +108,7 @@ func TestEquipmentSnapshotReplicatesMainAndOffHandTogether(t *testing.T) {
 	if report := runtime.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 {
 		t.Fatalf("join errors: %#v", report.CommandErrors)
 	}
+	<-connection.Reliable()
 	<-connection.Reliable()
 	<-connection.Reliable()
 
@@ -120,6 +134,10 @@ func TestEquipmentSnapshotReplicatesMainAndOffHandTogether(t *testing.T) {
 	if len(mainOnly.Slots) != 1 || mainOnly.Slots[0].Slot != protocol.EquipmentSlotMainHand || mainOnly.Slots[0].ItemArchetypeID != "item_militia_iron_sword" {
 		t.Fatalf("main-only equipment=%#v", mainOnly)
 	}
+	mainOnlyAppearance := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if mainOnlyAppearance.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("main-only appearance=%#v", mainOnlyAppearance)
+	}
 
 	if err := runtime.EnqueueEquipmentCommand(s.ID, 2, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotOffHand, ItemArchetypeID: "item_runed_square_shield"}); err != nil {
 		t.Fatal(err)
@@ -143,5 +161,67 @@ func TestEquipmentSnapshotReplicatesMainAndOffHandTogether(t *testing.T) {
 	}
 	if inv.MainHand() != "item_militia_iron_sword" || inv.OffHand() != "item_runed_square_shield" {
 		t.Fatalf("runtime equipment main=%q off=%q", inv.MainHand(), inv.OffHand())
+	}
+	bothAppearance := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if bothAppearance.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("both-slot appearance=%#v", bothAppearance)
+	}
+}
+
+func TestAppearanceSnapshotTracksMatchingSkinBonusAcrossMainHandChange(t *testing.T) {
+	sim := simulation.New(spatial.NewGrid(16), movement.NewService(navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100}, 0.1))
+	config := DefaultConfig()
+	config.SnapshotEveryTicks = 1000
+	runtime := New(sim, config)
+	connection := session.NewQueueConnection(32, 8)
+	s, err := session.New(3, 30, 32, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.EnqueueJoin(JoinRequest{Session: s, Entity: world.EntityState{ID: 30, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+	if report := runtime.Step(1, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("join errors: %#v", report.CommandErrors)
+	}
+	<-connection.Reliable()
+	<-connection.Reliable()
+	<-connection.Reliable()
+
+	if err := runtime.characterSkills.restoreAppearance(s.EntityID, appearance.KnightDPelegrini); err != nil {
+		t.Fatal(err)
+	}
+	inv := runtime.inventories[s.CharacterIdentity.ID]
+	if inv == nil {
+		t.Fatal("inventory missing")
+	}
+	if err := inv.Add("item_militia_iron_sword", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.EnqueueEquipmentCommand(s.ID, 1, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotMainHand, ItemArchetypeID: "item_militia_iron_sword"}); err != nil {
+		t.Fatal(err)
+	}
+	if report := runtime.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("equip errors: %#v", report.CommandErrors)
+	}
+	<-connection.Reliable()
+	<-connection.Reliable()
+	matching := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if matching.SkinID != appearance.KnightDPelegrini || matching.BasicAttackAffinityBonus != 1 {
+		t.Fatalf("matching appearance=%#v want skin=%q bonus=1", matching, appearance.KnightDPelegrini)
+	}
+
+	if err := runtime.EnqueueEquipmentCommand(s.ID, 2, protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperationUnequip, Slot: protocol.EquipmentSlotMainHand}); err != nil {
+		t.Fatal(err)
+	}
+	if report := runtime.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+		t.Fatalf("unequip errors: %#v", report.CommandErrors)
+	}
+	<-connection.Reliable()
+	<-connection.Reliable()
+	withoutWeapon := (<-connection.Reliable()).Message.(protocol.AppearanceSnapshot)
+	if withoutWeapon.SkinID != appearance.KnightDPelegrini || withoutWeapon.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("appearance without weapon=%#v want skin=%q bonus=0", withoutWeapon, appearance.KnightDPelegrini)
 	}
 }
