@@ -16,7 +16,7 @@ func TestFormalSkinWeaponAffinities(t *testing.T) {
 		PeasantMan:       "warhammer",
 		Ortiz:            "morning_star",
 		Drake:            "mace",
-		DreyarByMAure:    "two_hand_sword",
+		HerakliosByADizon: "two_hand_sword",
 		Brute:            "two_hand_axe",
 		CastleGuard02:    "two_hand_spear",
 		TheBoss:          "knuckles",
@@ -38,6 +38,9 @@ func TestFormalSkinWeaponAffinities(t *testing.T) {
 	}
 	if ValidSelection("skin_unknown") {
 		t.Fatal("unknown skin accepted")
+	}
+	if ValidSelection("skin_dreyar_by_m_aure") {
+		t.Fatal("superseded Dreyar skin accepted")
 	}
 	if !ValidSelection(None) {
 		t.Fatal("empty skin must remain a valid no-bonus selection")
