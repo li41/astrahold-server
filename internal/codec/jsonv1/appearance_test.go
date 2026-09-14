@@ -46,3 +46,11 @@ func TestAppearanceSnapshotEmptySelectionStillCarriesAuthoritativeZeroBonus(t *t
 		t.Fatalf("payload=%s", got)
 	}
 }
+
+func TestAppearanceSnapshotRejectsUnknownPresentationFields(t *testing.T) {
+	codec := Codec{}
+	payload := []byte(`{"skin_id":"skin_peasant_girl","basic_attack_affinity_bonus":1,"asset_path":"client-only.glb"}`)
+	if _, err := codec.Unmarshal(protocol.MessageAppearanceSnapshot, payload); err == nil {
+		t.Fatal("appearance snapshot accepted unknown client presentation field")
+	}
+}
