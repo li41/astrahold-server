@@ -7,19 +7,19 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
-func TestUniqueItemInstanceContractRemainsStagedThroughV28(t *testing.T) {
+func TestV28UniqueItemAndAppearanceMessageIDsDoNotOverlap(t *testing.T) {
 	if protocol.Version != 28 {
-		t.Fatalf("protocol version=%d, appearance cutover should be v28 while item-instance messages remain staged", protocol.Version)
+		t.Fatalf("protocol version=%d want=28", protocol.Version)
 	}
 	if protocol.MessageClientEquipmentInstanceCommand != 119 || protocol.MessageInventoryInstanceSnapshot != 120 || protocol.MessageEquipmentInstanceSnapshot != 121 {
-		t.Fatalf("unexpected staged message ids: equip=%d inventory=%d equipment=%d",
+		t.Fatalf("unexpected unique-instance message ids: equip=%d inventory=%d equipment=%d",
 			protocol.MessageClientEquipmentInstanceCommand,
 			protocol.MessageInventoryInstanceSnapshot,
 			protocol.MessageEquipmentInstanceSnapshot,
 		)
 	}
 	if protocol.MessageAppearanceSnapshot != 122 {
-		t.Fatalf("appearance message id=%d want=122 after reserved item-instance ids", protocol.MessageAppearanceSnapshot)
+		t.Fatalf("appearance message id=%d want=122", protocol.MessageAppearanceSnapshot)
 	}
 }
 
