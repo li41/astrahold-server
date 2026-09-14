@@ -11,7 +11,7 @@ import (
 	"github.com/li41/astrahold-server/internal/classid"
 )
 
-func TestSaveJournalV8SnapshotIsClassless(t *testing.T) {
+func TestSaveJournalCurrentSnapshotIsClassless(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "classless-saves.journal")
 	journal, err := OpenSaveJournal(path); if err != nil { t.Fatal(err) }
 	snapshot := testSnapshot()
@@ -20,7 +20,7 @@ func TestSaveJournalV8SnapshotIsClassless(t *testing.T) {
 	if record.Intent.Snapshot != snapshot { t.Fatalf("append snapshot=%#v want=%#v", record.Intent.Snapshot, snapshot) }
 	if err := journal.Close(); err != nil { t.Fatal(err) }
 	data, err := os.ReadFile(path); if err != nil { t.Fatal(err) }
-	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("v8 journal still contains class_id") }
+	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("current journal still contains class_id") }
 	reopened, err := OpenSaveJournal(path); if err != nil { t.Fatal(err) }
 	defer reopened.Close()
 	records, err := reopened.RecordsAfter(reopened.InitialCheckpoint(), 0); if err != nil { t.Fatal(err) }
@@ -29,7 +29,9 @@ func TestSaveJournalV8SnapshotIsClassless(t *testing.T) {
 
 func TestSaveJournalV7ValidatesThenDiscardsLegacyClassID(t *testing.T) {
 	snapshot := testSnapshot()
-	wireSnapshot := snapshotToSaveJournalWire(snapshot); wireSnapshot.ClassID = string(classid.Oathguard)
+	wireSnapshot := snapshotToSaveJournalWire(snapshot)
+	wireSnapshot.PrimaryStats = nil
+	wireSnapshot.ClassID = string(classid.Oathguard)
 	wire := saveJournalWireRecord{SchemaVersion: LearnedSkillsSaveJournalSchemaVersion, RecordID: 1, ExpectedRevision: 0, IntentID: 1, CharacterID: string(trusted(t, "character:journal-v7-class").ID), Snapshot: wireSnapshot}
 	payload, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 	_, _, intent, err := decodeSaveJournalRecord(payload); if err != nil { t.Fatal(err) }
@@ -44,7 +46,10 @@ func TestSaveJournalRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
 		{name: "classless schema smuggles retired class", schema: ClasslessSaveJournalSchemaVersion, classID: string(classid.Oathguard)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			snapshot := testSnapshot(); wireSnapshot := snapshotToSaveJournalWire(snapshot); wireSnapshot.ClassID = tc.classID
+			snapshot := testSnapshot()
+			wireSnapshot := snapshotToSaveJournalWire(snapshot)
+			wireSnapshot.PrimaryStats = nil
+			wireSnapshot.ClassID = tc.classID
 			wire := saveJournalWireRecord{SchemaVersion: tc.schema, RecordID: 1, ExpectedRevision: 0, IntentID: 1, CharacterID: string(trusted(t, "character:journal-class-corrupt").ID), Snapshot: wireSnapshot}
 			payload, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 			if _, _, _, err := decodeSaveJournalRecord(payload); !errors.Is(err, ErrCorruptSaveJournal) { t.Fatalf("decode err=%v", err) }
