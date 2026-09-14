@@ -1,13 +1,13 @@
 {
-  "revision": "low-tier-equipment-v3",
+  "revision": "low-tier-equipment-v4",
   "weapon_types": [
-    {"weapon_type": "one_hand_sword", "basic_attack_interval_ms": 900},
+    {"weapon_type": "one_hand_sword", "basic_attack_interval_ms": 900, "basic_attack_damage_attribute": "strength"},
     {"weapon_type": "dagger", "basic_attack_interval_ms": 650},
-    {"weapon_type": "one_hand_axe", "basic_attack_interval_ms": 1050},
+    {"weapon_type": "one_hand_axe", "basic_attack_interval_ms": 1050, "basic_attack_damage_attribute": "strength"},
     {"weapon_type": "one_hand_spear", "basic_attack_interval_ms": 1000},
     {"weapon_type": "warhammer", "basic_attack_interval_ms": 1150},
     {"weapon_type": "morning_star", "basic_attack_interval_ms": 1200},
-    {"weapon_type": "mace", "basic_attack_interval_ms": 1050},
+    {"weapon_type": "mace", "basic_attack_interval_ms": 1050, "basic_attack_damage_attribute": "strength"},
     {"weapon_type": "two_hand_sword", "basic_attack_interval_ms": 1350},
     {"weapon_type": "two_hand_axe", "basic_attack_interval_ms": 1500},
     {"weapon_type": "two_hand_spear", "basic_attack_interval_ms": 1300},
