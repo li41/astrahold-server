@@ -148,7 +148,7 @@ func TestStoreRejectsLearnedSkillsThatDoNotMatchSchema(t *testing.T) {
 	}
 }
 
-func TestSaveJournalV7RoundTripsLearnedSkills(t *testing.T) {
+func TestSaveJournalCurrentRoundTripsLearnedSkills(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "learned-saves.journal")
 	journal, err := OpenSaveJournal(path)
 	if err != nil { t.Fatal(err) }
@@ -174,6 +174,7 @@ func TestSaveJournalV6InfersLearnedSkillsOnlyFromCombatLoadout(t *testing.T) {
 	snapshot.CombatLoadout = mustCombatSlots(t, skillcatalog.Cleave, skillcatalog.Meteor)
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
 	wireSnapshot.LearnedSkills = nil
+	wireSnapshot.PrimaryStats = nil
 	wire := saveJournalWireRecord{
 		SchemaVersion: LoadoutSaveJournalSchemaVersion,
 		RecordID: 1, ExpectedRevision: 0, IntentID: 1,
@@ -202,9 +203,10 @@ func TestSaveJournalRejectsCurrentSnapshotWithUnlearnedCombatLoadout(t *testing.
 	}
 }
 
-func TestSaveJournalRejectsCurrentWireWithUnlearnedCombatLoadout(t *testing.T) {
+func TestSaveJournalRejectsLearnedSchemaWireWithUnlearnedCombatLoadout(t *testing.T) {
 	snapshot := testSnapshot()
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
+	wireSnapshot.PrimaryStats = nil
 	wireSnapshot.CombatLoadout = []string{string(skillcatalog.Cleave), string(skillcatalog.Meteor)}
 	wireSnapshot.LearnedSkills = []string{string(skillcatalog.Cleave)}
 	wire := saveJournalWireRecord{
@@ -226,12 +228,13 @@ func TestSaveJournalRejectsLearnedSkillsThatDoNotMatchSchema(t *testing.T) {
 		ids    []string
 	}{
 		{name: "legacy schema carries learned skills", schema: LoadoutSaveJournalSchemaVersion, ids: []string{string(skillcatalog.HeavyStrike)}},
-		{name: "current schema unknown skill", schema: LearnedSkillsSaveJournalSchemaVersion, ids: []string{"unknown-skill"}},
-		{name: "current schema duplicate skill", schema: LearnedSkillsSaveJournalSchemaVersion, ids: []string{string(skillcatalog.FireBolt), string(skillcatalog.FireBolt)}},
+		{name: "learned schema unknown skill", schema: LearnedSkillsSaveJournalSchemaVersion, ids: []string{"unknown-skill"}},
+		{name: "learned schema duplicate skill", schema: LearnedSkillsSaveJournalSchemaVersion, ids: []string{string(skillcatalog.FireBolt), string(skillcatalog.FireBolt)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := testSnapshot()
 			wireSnapshot := snapshotToSaveJournalWire(snapshot)
+			wireSnapshot.PrimaryStats = nil
 			wireSnapshot.LearnedSkills = tc.ids
 			wire := saveJournalWireRecord{
 				SchemaVersion: tc.schema,
