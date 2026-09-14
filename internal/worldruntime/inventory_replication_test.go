@@ -72,6 +72,15 @@ func TestJoinEmitsAuthoritativeInventorySnapshot(t *testing.T) {
 	if equipment.Revision != 0 || len(equipment.Slots) != 0 {
 		t.Fatalf("equipment bootstrap = %#v, want revision 0 empty slots", equipment)
 	}
+
+	appearanceEnvelope := <-connection.Reliable()
+	appearanceSnapshot, ok := appearanceEnvelope.Message.(protocol.AppearanceSnapshot)
+	if !ok {
+		t.Fatalf("message = %T, want protocol.AppearanceSnapshot", appearanceEnvelope.Message)
+	}
+	if appearanceSnapshot.SkinID != "" || appearanceSnapshot.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("appearance bootstrap = %#v, want empty skin and zero affinity bonus", appearanceSnapshot)
+	}
 }
 
 func TestInventorySnapshotCarryWeightIncludesEquippedMainHand(t *testing.T) {
@@ -101,6 +110,7 @@ func TestInventorySnapshotCarryWeightIncludesEquippedMainHand(t *testing.T) {
 	}
 	<-connection.Reliable() // bootstrap InventorySnapshot
 	<-connection.Reliable() // bootstrap EquipmentSnapshot
+	<-connection.Reliable() // bootstrap AppearanceSnapshot
 
 	inv := runtime.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
@@ -139,5 +149,14 @@ func TestInventorySnapshotCarryWeightIncludesEquippedMainHand(t *testing.T) {
 	}
 	if len(equipment.Slots) != 1 || equipment.Slots[0].Slot != protocol.EquipmentSlotMainHand || equipment.Slots[0].ItemArchetypeID != "item_training_blade" {
 		t.Fatalf("equipment snapshot = %#v, want training blade in main hand", equipment)
+	}
+
+	appearanceEnvelope := <-connection.Reliable()
+	appearanceSnapshot, ok := appearanceEnvelope.Message.(protocol.AppearanceSnapshot)
+	if !ok {
+		t.Fatalf("message = %T, want protocol.AppearanceSnapshot", appearanceEnvelope.Message)
+	}
+	if appearanceSnapshot.BasicAttackAffinityBonus != 0 {
+		t.Fatalf("appearance affinity bonus = %d, want 0 without selected skin", appearanceSnapshot.BasicAttackAffinityBonus)
 	}
 }
