@@ -111,12 +111,13 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		}
 		entity.Transform = request.Restore.Transform
 		state := character.State{
-			EntityID: request.Entity.ID,
-			HP:       request.Restore.HP,
-			MaxHP:    request.Restore.MaxHP,
-			MP:       request.Restore.MP,
-			MaxMP:    request.Restore.MaxMP,
-			Defeated: request.Restore.Defeated,
+			EntityID:     request.Entity.ID,
+			HP:           request.Restore.HP,
+			MaxHP:        request.Restore.MaxHP,
+			MP:           request.Restore.MP,
+			MaxMP:        request.Restore.MaxMP,
+			PrimaryStats: request.Restore.PrimaryStats,
+			Defeated:     request.Restore.Defeated,
 		}
 		restoredState = &state
 		if request.Restore.Defeated {
