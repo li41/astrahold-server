@@ -1,9 +1,9 @@
 package protocol
 
-// These message IDs stage the next unique-equipment contract while protocol.Version remains v27.
-// Runtime/adapters must not emit or accept them until the formal version cutover is coordinated
-// with the Client. Keeping the IDs and payload semantics authored now prevents presentation work
-// from inventing a parallel item-instance contract.
+// These message IDs remain reserved by the staged unique-equipment contract in Protocol v28.
+// Runtime/adapters must not treat them as activated wire semantics until a later formal cutover is
+// coordinated with the Client. Keeping the IDs and payload semantics authored now prevents
+// presentation work from inventing a parallel item-instance contract.
 const (
 	MessageClientEquipmentInstanceCommand MessageType = 119
 	MessageInventoryInstanceSnapshot       MessageType = 120
