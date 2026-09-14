@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/actionresource"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/targetresource"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -29,6 +30,10 @@ type State struct {
 	MaxHP    uint32
 	MP       uint32
 	MaxMP    uint32
+
+	// PrimaryStats are authoritative base values. Learned passive-skill bonuses are derived from
+	// learned-skill truth and are not duplicated here.
+	PrimaryStats characterstats.Primary
 
 	ActionResourceID       actionresource.ID
 	ActionResourceCurrent  uint32
