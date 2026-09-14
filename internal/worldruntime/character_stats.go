@@ -12,7 +12,7 @@ import (
 func effectivePrimaryStatsFromLearned(base characterstats.Primary, learned learnedskills.Set) (characterstats.Primary, error) {
 	bonus := characterstats.AdditiveBonus{}
 	for _, skillID := range learned.IDs() {
-		skillBonus, ok := characterstats.BonusForLearnedSkill(skillID)
+		skillBonus, ok := characterstats.PrimaryBonusForSkill(skillID)
 		if !ok {
 			continue
 		}
