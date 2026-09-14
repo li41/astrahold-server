@@ -6,7 +6,7 @@ const (
 	MessageInitialClassSelectionResult MessageType = 116
 )
 
-// ClientInitialClassSelection is retained only as a Protocol v27 compatibility wire type.
+// ClientInitialClassSelection is retained only as a legacy compatibility wire type in Protocol v28.
 // Production ingress no longer accepts fixed-class selection as a gameplay command; decoding
 // this message must not be interpreted as permission to mutate authoritative character truth.
 type ClientInitialClassSelection struct {
@@ -15,7 +15,7 @@ type ClientInitialClassSelection struct {
 
 func (ClientInitialClassSelection) Type() MessageType { return MessageClientInitialClassSelection }
 
-// CharacterClassState is retained only as a Protocol v27 compatibility wire type.
+// CharacterClassState is retained only as a legacy compatibility wire type in Protocol v28.
 // Current classless runtime does not publish this message as authoritative profession state.
 type CharacterClassState struct {
 	ClassID string
@@ -42,10 +42,10 @@ const (
 	InitialClassSelectionServerRejected          InitialClassSelectionRejectionReason = "server_rejected"
 )
 
-// InitialClassSelectionResult is retained only as a Protocol v27 compatibility wire type.
+// InitialClassSelectionResult is retained only as a legacy compatibility wire type in Protocol v28.
 // Current production runtime does not commit fixed-class selection or emit a new durable
 // profession decision through this message. Outcome/reason constants remain source-compatible
-// until the coordinated breaking Protocol cleanup after consumer audit.
+// until the coordinated breaking Protocol cleanup after consumer migration.
 type InitialClassSelectionResult struct {
 	ClientActionSequence uint32
 	ClassID              string
