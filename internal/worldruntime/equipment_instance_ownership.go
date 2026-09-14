@@ -6,9 +6,9 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
-// EnqueueFencedEquipmentInstanceCommand mirrors the trusted ownership fence used by all mutable
-// character intents. It is staged for the next protocol version and must not be called by v27
-// adapters before coordinated cutover.
+// EnqueueFencedEquipmentInstanceCommand is the trusted-session Protocol v28 exact-instance path.
+// It mirrors every other mutable character intent: immutable ownership is captured by the adapter,
+// then validated again by the world owner before any inventory/equipment truth can change.
 func (r *Runtime) EnqueueFencedEquipmentInstanceCommand(fence SessionOwnershipFence, sequence uint32, equipment protocol.ClientEquipmentInstanceCommand) error {
 	if !fence.Valid() {
 		return ErrCharacterOwnershipFenceInvalid
