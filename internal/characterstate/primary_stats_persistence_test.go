@@ -10,17 +10,17 @@ import (
 	"github.com/li41/astrahold-server/internal/characterstats"
 )
 
-func TestStoreV12RoundTripsSixPrimaryStats(t *testing.T) {
+func TestStoreCurrentRoundTripsSixPrimaryStats(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
-	identity := trusted(t, "character:primary-stats-v12")
+	identity := trusted(t, "character:primary-stats-current")
 	snapshot := testSnapshot()
 	snapshot.PrimaryStats = characterstats.Primary{Strength: 17, Agility: 18, Constitution: 19, Intelligence: 20, Spirit: 21, Charisma: 22}
 
 	saved, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if saved.SchemaVersion != SixPrimaryStatsSchemaVersion {
-		t.Fatalf("schema=%d want=%d", saved.SchemaVersion, SixPrimaryStatsSchemaVersion)
+	if saved.SchemaVersion != SchemaVersion {
+		t.Fatalf("schema=%d want=%d", saved.SchemaVersion, SchemaVersion)
 	}
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
