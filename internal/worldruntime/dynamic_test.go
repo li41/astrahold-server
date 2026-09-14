@@ -72,7 +72,7 @@ func nextDynamicState(t *testing.T, conn *session.QueueConnection) protocol.Worl
 			switch state := envelope.Message.(type) {
 			case protocol.WorldDynamicState:
 				return state
-			case protocol.InventorySnapshot, protocol.EquipmentSnapshot, protocol.AppearanceSnapshot:
+			case protocol.InventorySnapshot, protocol.InventoryInstanceSnapshot, protocol.EquipmentSnapshot, protocol.EquipmentInstanceSnapshot, protocol.AppearanceSnapshot:
 				// Character owner bootstrap shares the same ReliableOrdered stream. This helper is
 				// intentionally scoped to WorldDynamicState, so consume those independent complete
 				// views instead of coupling legacy world-state tests to their delivery position.
