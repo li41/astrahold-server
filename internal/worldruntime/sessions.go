@@ -140,11 +140,18 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
-	// A successful entity incarnation starts with an explicit empty skill state. Durable
+	// A successful entity incarnation starts with an explicit empty skill/appearance state. Durable
 	// restores then replace it atomically; this prevents EntityID reuse from inheriting residue.
 	r.characterSkills.clear(request.Entity.ID)
 	if request.Restore != nil {
 		if err := r.characterSkills.restore(request.Entity.ID, request.Restore.LearnedSkills, request.Restore.CombatLoadout); err != nil {
+			r.characterSkills.clear(request.Entity.ID)
+			r.characters.Remove(request.Entity.ID)
+			r.world.Remove(request.Entity.ID)
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+			return
+		}
+		if err := r.characterSkills.restoreAppearance(request.Entity.ID, request.Restore.SkinID); err != nil {
 			r.characterSkills.clear(request.Entity.ID)
 			r.characters.Remove(request.Entity.ID)
 			r.world.Remove(request.Entity.ID)
