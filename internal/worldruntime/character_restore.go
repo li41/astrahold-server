@@ -86,8 +86,8 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
 		return ErrCharacterRestoreInvalid
 	}
-	if restore.SchemaVersion < characterstate.PrimaryStatsSchemaVersion && restore.PrimaryStats != (characterstats.Primary{}) {
-		return ErrCharacterRestoreInvalid
+	if err := validateCharacterPrimaryStatsRestore(restore.SchemaVersion, restore.PrimaryStats); err != nil {
+		return err
 	}
 	if restore.SchemaVersion < characterstate.InventorySchemaVersion && restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
@@ -132,6 +132,28 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	}
 	if restore.HP == 0 || restore.Respawn != (characterstate.DefeatedRespawn{}) {
 		return ErrCharacterRestoreInvalid
+	}
+	return nil
+}
+
+func validateCharacterPrimaryStatsRestore(schemaVersion uint16, primary characterstats.Primary) error {
+	if err := characterstats.ValidateBase(primary); err != nil {
+		return ErrCharacterRestoreInvalid
+	}
+	neutral := characterstats.DefaultPrimary()
+	if schemaVersion < characterstate.PrimaryStatsSchemaVersion {
+		if primary != neutral {
+			return ErrCharacterRestoreInvalid
+		}
+		return nil
+	}
+	if schemaVersion == characterstate.PrimaryStatsSchemaVersion {
+		if primary.Constitution != neutral.Constitution ||
+			primary.Intelligence != neutral.Intelligence ||
+			primary.Spirit != neutral.Spirit ||
+			primary.Charisma != neutral.Charisma {
+			return ErrCharacterRestoreInvalid
+		}
 	}
 	return nil
 }
