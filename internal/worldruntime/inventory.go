@@ -157,8 +157,8 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
 		r.inventories[identity] = inv
 	}
-	// Trusted sessions receive the current Server-owned action resource when one exists. Protocol
-	// v27 still presents that generic state through Type117, but no profession identity is restored.
+	// Trusted sessions receive the current Server-owned action resource when one exists. Type117
+	// remains a compatibility presentation lane; no fixed profession identity is restored.
 	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
 		r.queueCurrentActionResourceState(s)
 	}
@@ -177,6 +177,22 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		if _, pending := r.sessionInventoryPending[s.ID]; !pending { continue }
 		inv := r.inventories[s.CharacterIdentity.ID]
 		if inv == nil { delete(r.sessionInventoryPending, s.ID); continue }
+
+		// Build/validate both unique-instance supplements before sending any part of this complete
+		// owner-state group. If authoritative instance state is corrupt, fail closed and keep pending
+		// so a later step can retry after the underlying state is corrected instead of publishing a
+		// partial mixed-generation inventory/equipment view.
+		inventoryInstanceMessage, err := buildInventoryInstanceSnapshot(inv)
+		if err != nil {
+			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageInventoryInstanceSnapshot, Err: err})
+			continue
+		}
+		equipmentInstanceMessage, err := buildEquipmentInstanceSnapshot(inv)
+		if err != nil {
+			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageEquipmentInstanceSnapshot, Err: err})
+			continue
+		}
+
 		stacks := inv.Snapshot()
 		items := make([]protocol.InventoryItemStack, 0, len(stacks))
 		for _, stack := range stacks { items = append(items, protocol.InventoryItemStack{ArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity}) }
@@ -188,6 +204,13 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 			continue
 		}
 
+		inventoryInstanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: inventoryInstanceMessage}
+		report.Metrics.OutboundMessages++
+		if err := s.Connection().TrySend(inventoryInstanceEnvelope); err != nil {
+			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: inventoryInstanceEnvelope.Delivery, MessageType: inventoryInstanceMessage.Type(), Err: err}) }
+			continue
+		}
+
 		slots := make([]protocol.EquipmentSlotState, 0, 2)
 		if mainHand := inv.MainHand(); mainHand != "" { slots = append(slots, protocol.EquipmentSlotState{Slot: protocol.EquipmentSlotMainHand, ItemArchetypeID: mainHand}) }
 		if offHand := inv.OffHand(); offHand != "" { slots = append(slots, protocol.EquipmentSlotState{Slot: protocol.EquipmentSlotOffHand, ItemArchetypeID: offHand}) }
@@ -196,6 +219,13 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		report.Metrics.OutboundMessages++
 		if err := s.Connection().TrySend(equipmentEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentEnvelope.Delivery, MessageType: equipmentMessage.Type(), Err: err}) }
+			continue
+		}
+
+		equipmentInstanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: equipmentInstanceMessage}
+		report.Metrics.OutboundMessages++
+		if err := s.Connection().TrySend(equipmentInstanceEnvelope); err != nil {
+			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentInstanceEnvelope.Delivery, MessageType: equipmentInstanceMessage.Type(), Err: err}) }
 			continue
 		}
 
