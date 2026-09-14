@@ -3,32 +3,35 @@ package equipmentcatalog
 import (
 	"errors"
 	"testing"
+
+	"github.com/li41/astrahold-server/internal/characterstats"
 )
 
-func TestDefaultCatalogLocksLowTierEquipmentV3(t *testing.T) {
+func TestDefaultCatalogLocksLowTierEquipmentV4(t *testing.T) {
 	catalog, err := Default()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := catalog.Revision(); got != "low-tier-equipment-v3" {
+	if got := catalog.Revision(); got != "low-tier-equipment-v4" {
 		t.Fatalf("revision = %q", got)
 	}
 
 	cases := []struct {
-		id         string
-		weaponType WeaponType
-		small      DamageRange
-		large      DamageRange
-		extra      uint32
-		accuracy   int32
-		weight     uint32
-		intervalMS uint32
+		id              string
+		weaponType      WeaponType
+		small           DamageRange
+		large           DamageRange
+		extra           uint32
+		accuracy        int32
+		weight          uint32
+		intervalMS      uint32
+		damageAttribute characterstats.ID
 	}{
-		{"item_militia_iron_sword", WeaponTypeOneHandSword, DamageRange{6, 9}, DamageRange{6, 8}, 0, 0, 7, 900},
-		{"item_light_guard_sword", WeaponTypeOneHandSword, DamageRange{5, 8}, DamageRange{5, 7}, 0, 2, 6, 900},
-		{"item_gladiator_iron_sword", WeaponTypeOneHandSword, DamageRange{7, 10}, DamageRange{6, 9}, 0, 0, 8, 900},
-		{"item_militia_battle_axe", WeaponTypeOneHandAxe, DamageRange{5, 8}, DamageRange{8, 12}, 0, -1, 10, 1050},
-		{"item_iron_war_mace", WeaponTypeMace, DamageRange{6, 9}, DamageRange{6, 9}, 1, 1, 9, 1050},
+		{"item_militia_iron_sword", WeaponTypeOneHandSword, DamageRange{6, 9}, DamageRange{6, 8}, 0, 0, 7, 900, characterstats.Strength},
+		{"item_light_guard_sword", WeaponTypeOneHandSword, DamageRange{5, 8}, DamageRange{5, 7}, 0, 2, 6, 900, characterstats.Strength},
+		{"item_gladiator_iron_sword", WeaponTypeOneHandSword, DamageRange{7, 10}, DamageRange{6, 9}, 0, 0, 8, 900, characterstats.Strength},
+		{"item_militia_battle_axe", WeaponTypeOneHandAxe, DamageRange{5, 8}, DamageRange{8, 12}, 0, -1, 10, 1050, characterstats.Strength},
+		{"item_iron_war_mace", WeaponTypeMace, DamageRange{6, 9}, DamageRange{6, 9}, 1, 1, 9, 1050, characterstats.Strength},
 	}
 	for _, tc := range cases {
 		item, ok := catalog.Resolve(tc.id)
@@ -44,6 +47,10 @@ func TestDefaultCatalogLocksLowTierEquipmentV3(t *testing.T) {
 		interval, authored := catalog.BasicAttackIntervalMSForItem(tc.id)
 		if !authored || interval != tc.intervalMS {
 			t.Fatalf("%s cadence = %d authored=%v, want %d", tc.id, interval, authored, tc.intervalMS)
+		}
+		attribute, authored := catalog.BasicAttackDamageAttributeForItem(tc.id)
+		if !authored || attribute != tc.damageAttribute {
+			t.Fatalf("%s damage attribute = %q authored=%v, want %q", tc.id, attribute, authored, tc.damageAttribute)
 		}
 	}
 
@@ -68,10 +75,13 @@ func TestDefaultCatalogLocksLowTierEquipmentV3(t *testing.T) {
 		if item.Shield.PhysicalDefense != tc.physical || item.Shield.BlockChancePercent != tc.block || item.Shield.BlockDamageReductionPercent != tc.blockReduction || item.Shield.MagicDamageReductionPercent != tc.magicReduction || item.Weight != tc.weight {
 			t.Fatalf("%s unexpected values: %#v", tc.id, item)
 		}
+		if attribute, authored := catalog.BasicAttackDamageAttributeForItem(tc.id); authored || attribute != "" {
+			t.Fatalf("shield %s unexpectedly has basic-attack damage attribute %q", tc.id, attribute)
+		}
 	}
 }
 
-func TestDefaultCatalogLocksFormalWeaponTypeCadence(t *testing.T) {
+func TestDefaultCatalogLocksFormalWeaponTypeCadenceAndCurrentScaling(t *testing.T) {
 	catalog, err := Default()
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +105,11 @@ func TestDefaultCatalogLocksFormalWeaponTypeCadence(t *testing.T) {
 		"sling": 1100,
 		"staff": 1250,
 	}
+	wantDamageAttribute := map[WeaponType]characterstats.ID{
+		WeaponTypeOneHandSword: characterstats.Strength,
+		WeaponTypeOneHandAxe:   characterstats.Strength,
+		WeaponTypeMace:         characterstats.Strength,
+	}
 	if len(catalog.weaponTypes) != len(want) {
 		t.Fatalf("weapon type count = %d, want %d", len(catalog.weaponTypes), len(want))
 	}
@@ -102,6 +117,9 @@ func TestDefaultCatalogLocksFormalWeaponTypeCadence(t *testing.T) {
 		definition, ok := catalog.weaponTypes[weaponType]
 		if !ok || definition.BasicAttackIntervalMS == nil || *definition.BasicAttackIntervalMS != intervalMS {
 			t.Fatalf("%s cadence = %#v, want %dms", weaponType, definition.BasicAttackIntervalMS, intervalMS)
+		}
+		if definition.BasicAttackDamageAttribute != wantDamageAttribute[weaponType] {
+			t.Fatalf("%s damage attribute = %q, want %q", weaponType, definition.BasicAttackDamageAttribute, wantDamageAttribute[weaponType])
 		}
 	}
 }
@@ -123,6 +141,29 @@ func TestCatalogWeaponTypeOwnsSharedBasicAttackInterval(t *testing.T) {
 		got, ok := catalog.BasicAttackIntervalMSForItem(itemID)
 		if !ok || got != interval {
 			t.Fatalf("%s cadence = %d ok=%v, want %d", itemID, got, ok, interval)
+		}
+	}
+}
+
+func TestCatalogWeaponTypeOwnsSharedBasicAttackDamageAttribute(t *testing.T) {
+	bow := WeaponType("bow")
+	catalog, err := New(CatalogDefinition{
+		Revision: "shared-damage-attribute-test",
+		WeaponTypes: []WeaponTypeDefinition{{
+			WeaponType: bow, BasicAttackDamageAttribute: characterstats.Agility,
+		}},
+		Items: []Definition{
+			{ItemArchetypeID: "item_bow_a", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Material: "wood", Weapon: &Weapon{WeaponType: bow, SmallDamage: DamageRange{1, 2}, LargeDamage: DamageRange{1, 2}}},
+			{ItemArchetypeID: "item_bow_b", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 2, Material: "wood", Weapon: &Weapon{WeaponType: bow, SmallDamage: DamageRange{2, 3}, LargeDamage: DamageRange{2, 3}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, itemID := range []string{"item_bow_a", "item_bow_b"} {
+		got, ok := catalog.BasicAttackDamageAttributeForItem(itemID)
+		if !ok || got != characterstats.Agility {
+			t.Fatalf("%s damage attribute = %q ok=%v, want %q", itemID, got, ok, characterstats.Agility)
 		}
 	}
 }
@@ -180,15 +221,16 @@ func TestCatalogRejectsMalformedDefinitions(t *testing.T) {
 	weaponTypes := []WeaponTypeDefinition{{WeaponType: WeaponTypeOneHandSword}}
 	validWeapon := Definition{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: &Weapon{WeaponType: WeaponTypeOneHandSword, SmallDamage: DamageRange{1, 2}, LargeDamage: DamageRange{1, 2}}}
 	for name, def := range map[string]CatalogDefinition{
-		"duplicate_item":        {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{validWeapon, validWeapon}},
-		"duplicate_weapon_type": {Revision: "x", WeaponTypes: []WeaponTypeDefinition{{WeaponType: WeaponTypeOneHandSword}, {WeaponType: WeaponTypeOneHandSword}}, Items: []Definition{validWeapon}},
-		"zero_type_interval":    {Revision: "x", WeaponTypes: []WeaponTypeDefinition{{WeaponType: WeaponTypeOneHandSword, BasicAttackIntervalMS: &zeroInterval}}, Items: []Definition{validWeapon}},
-		"unknown_weapon_type":   {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: &Weapon{WeaponType: WeaponType("unknown"), SmallDamage: DamageRange{1, 2}, LargeDamage: DamageRange{1, 2}}}}},
-		"weapon_in_offhand":     {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotOffHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: validWeapon.Weapon}}},
-		"invalid_range":         {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: &Weapon{WeaponType: WeaponTypeOneHandSword, SmallDamage: DamageRange{3, 2}, LargeDamage: DamageRange{1, 2}}}}},
-		"empty_material":        {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Weapon: validWeapon.Weapon}}},
-		"zero_weight":           {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Material: "iron", Weapon: validWeapon.Weapon}}},
-		"missing_tier":          {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", Weapon: validWeapon.Weapon}}},
+		"duplicate_item":           {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{validWeapon, validWeapon}},
+		"duplicate_weapon_type":    {Revision: "x", WeaponTypes: []WeaponTypeDefinition{{WeaponType: WeaponTypeOneHandSword}, {WeaponType: WeaponTypeOneHandSword}}, Items: []Definition{validWeapon}},
+		"zero_type_interval":       {Revision: "x", WeaponTypes: []WeaponTypeDefinition{{WeaponType: WeaponTypeOneHandSword, BasicAttackIntervalMS: &zeroInterval}}, Items: []Definition{validWeapon}},
+		"invalid_damage_attribute": {Revision: "x", WeaponTypes: []WeaponTypeDefinition{{WeaponType: WeaponTypeOneHandSword, BasicAttackDamageAttribute: characterstats.Intelligence}}, Items: []Definition{validWeapon}},
+		"unknown_weapon_type":      {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: &Weapon{WeaponType: WeaponType("unknown"), SmallDamage: DamageRange{1, 2}, LargeDamage: DamageRange{1, 2}}}}},
+		"weapon_in_offhand":        {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotOffHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: validWeapon.Weapon}}},
+		"invalid_range":            {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Material: "iron", Weapon: &Weapon{WeaponType: WeaponTypeOneHandSword, SmallDamage: DamageRange{3, 2}, LargeDamage: DamageRange{1, 2}}}}},
+		"empty_material":           {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Weight: 1, Weapon: validWeapon.Weapon}}},
+		"zero_weight":              {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Tier: TierLow, Material: "iron", Weapon: validWeapon.Weapon}}},
+		"missing_tier":             {Revision: "x", WeaponTypes: weaponTypes, Items: []Definition{{ItemArchetypeID: "item_test", Kind: KindWeapon, Slot: SlotMainHand, Weight: 1, Material: "iron", Weapon: validWeapon.Weapon}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := New(def); !errors.Is(err, ErrInvalidCatalog) {
