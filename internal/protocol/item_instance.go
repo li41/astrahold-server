@@ -1,9 +1,7 @@
 package protocol
 
-// These message IDs remain reserved by the staged unique-equipment contract in Protocol v28.
-// Runtime/adapters must not treat them as activated wire semantics until a later formal cutover is
-// coordinated with the Client. Keeping the IDs and payload semantics authored now prevents
-// presentation work from inventing a parallel item-instance contract.
+// Protocol v28 activates exact unique-equipment identity and complete unique-instance snapshots.
+// These IDs are stable wire contract and must not be reused for appearance or presentation metadata.
 const (
 	MessageClientEquipmentInstanceCommand MessageType = 119
 	MessageInventoryInstanceSnapshot       MessageType = 120
@@ -11,9 +9,9 @@ const (
 )
 
 type ItemAffixState struct {
-	AffixID   string
-	Strength  uint8
-	Value     uint32
+	AffixID  string
+	Strength uint8
+	Value    uint32
 }
 
 type ItemInstanceState struct {
