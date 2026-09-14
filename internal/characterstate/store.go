@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/classid"
@@ -37,7 +38,8 @@ const (
 	ItemInstanceSchemaVersion    uint16 = 10
 	PrimaryStatsSchemaVersion    uint16 = 11 // historical two-attribute interim schema
 	SixPrimaryStatsSchemaVersion uint16 = 12
-	SchemaVersion                uint16 = SixPrimaryStatsSchemaVersion
+	AppearanceSchemaVersion      uint16 = 13
+	SchemaVersion                uint16 = AppearanceSchemaVersion
 	LegacyDefaultMaxMP           uint32 = 100
 )
 
@@ -66,9 +68,10 @@ type DefeatedRespawn struct {
 }
 
 // Snapshot is the current durable character-state contract. Profession/ClassID is deliberately
-// absent. Schema v11 was a short-lived two-attribute Strength/Agility foundation. Schema v12 owns
-// all six formal classless base attributes. Allocation provenance/level points remain separate
-// future state until a formal character-level owner exists.
+// absent. Schema v11 was a short-lived two-attribute Strength/Agility foundation, schema v12 owns
+// all six formal classless base attributes, and schema v13 adds the Server-owned selected SkinID.
+// Allocation provenance/level points remain separate future state until a formal character-level
+// owner exists.
 type Snapshot struct {
 	World         WorldRef
 	HP            uint32
@@ -83,6 +86,7 @@ type Snapshot struct {
 	CombatLoadout skillloadout.Slots
 	LearnedSkills learnedskills.Set
 	PrimaryStats  characterstats.Primary
+	SkinID        appearance.SkinID
 }
 
 type Record struct {
@@ -126,6 +130,7 @@ type wireRecord struct {
 	WorldRevision   string               `json:"world_revision"`
 	GameplaySHA256  string               `json:"gameplay_sha256"`
 	ClassID         string               `json:"class_id,omitempty"`
+	SkinID          string               `json:"skin_id,omitempty"`
 	HP              uint32               `json:"hp"`
 	MaxHP           uint32               `json:"max_hp"`
 	MP              uint32               `json:"mp,omitempty"`
@@ -152,12 +157,13 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path() string { return s.root }
 
-// Load accepts v1-v12 records. v1/v2 predate MP and migrate to the legacy full resource pool.
+// Load accepts v1-v13 records. v1/v2 predate MP and migrate to the legacy full resource pool.
 // v1-v3 predate inventory persistence. v4 persists MainHand only; v5 adds durable OffHand.
 // v6-v8 may contain the retired durable ClassID; it is validated during migration and discarded.
 // v7 adds the six-slot combat loadout. v8 adds learned skills. v9 retires durable ClassID.
 // v10 adds unique equipment instances. v11 carries only Strength/Agility and is migrated into the
-// formal six-attribute baseline; v12 persists all six formal base attributes.
+// formal six-attribute baseline; v12 persists all six formal base attributes. v13 persists selected
+// SkinID; v1-v12 migrate to the explicit no-skin/no-affinity state rather than guessing appearance.
 func (s *Store) Load(identity characteridentity.Binding) (Record, bool, error) {
 	if err := validateTrustedIdentity(identity); err != nil { return Record{}, false, err }
 	s.mu.Lock(); defer s.mu.Unlock()
@@ -169,7 +175,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil { return Record{}, err }
 	snapshot.Inventory = inventoryState
-	if err := validateSnapshotV12(snapshot); err != nil { return Record{}, err }
+	if err := validateSnapshotV13(snapshot); err != nil { return Record{}, err }
 	s.mu.Lock(); defer s.mu.Unlock()
 	current, exists, err := s.loadLocked(identity)
 	if err != nil { return Record{}, err }
@@ -207,6 +213,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion < ItemInstanceSchemaVersion && wire.Inventory.HasItemInstances() { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < ClassSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion >= ClasslessSchemaVersion && wire.ClassID != "" { return Record{}, false, ErrCorruptRecord }
+	if wire.SchemaVersion < AppearanceSchemaVersion && wire.SkinID != "" { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LoadoutSchemaVersion && len(wire.CombatLoadout) != 0 { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < LearnedSkillsSchemaVersion && len(wire.LearnedSkills) != 0 { return Record{}, false, ErrCorruptRecord }
 	if wire.SchemaVersion < PrimaryStatsSchemaVersion && wire.PrimaryStats != nil { return Record{}, false, ErrCorruptRecord }
@@ -243,6 +250,11 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	}
 	primaryStats, err := primaryStatsFromWire(wire.SchemaVersion, wire.PrimaryStats)
 	if err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
+	skinID := appearance.None
+	if wire.SchemaVersion >= AppearanceSchemaVersion {
+		skinID = appearance.SkinID(wire.SkinID)
+		if !appearance.ValidSelection(skinID) { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
+	}
 	record := Record{
 		SchemaVersion: wire.SchemaVersion,
 		CharacterID: characteridentity.ID(wire.CharacterID),
@@ -251,7 +263,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 			World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
 			HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
 			Position: world.Position{X: wire.X, Y: wire.Y, Z: wire.Z, Layer: wire.Layer}, Yaw: wire.Yaw,
-			Inventory: inventoryState, CombatLoadout: combatLoadout, LearnedSkills: learnedSkills, PrimaryStats: primaryStats,
+			Inventory: inventoryState, CombatLoadout: combatLoadout, LearnedSkills: learnedSkills, PrimaryStats: primaryStats, SkinID: skinID,
 		},
 	}
 	if wire.DefeatedRespawn != nil {
@@ -270,6 +282,7 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 		if err := validateLearnedSkills(record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 		if err := validateCombatLoadoutLearned(record.Snapshot.CombatLoadout, record.Snapshot.LearnedSkills); err != nil { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, err) }
 	}
+	if wire.SchemaVersion >= AppearanceSchemaVersion && !appearance.ValidSelection(record.Snapshot.SkinID) { return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot) }
 	return record, true, nil
 }
 
@@ -282,7 +295,7 @@ func (s *Store) writeLocked(record Record) error {
 		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP, Defeated: record.Snapshot.Defeated,
 		X: record.Snapshot.Position.X, Y: record.Snapshot.Position.Y, Z: record.Snapshot.Position.Z, Layer: record.Snapshot.Position.Layer, Yaw: record.Snapshot.Yaw,
 		Inventory: inventoryState, CombatLoadout: combatLoadoutToWire(record.Snapshot.CombatLoadout), LearnedSkills: learnedSkillsToWire(record.Snapshot.LearnedSkills),
-		PrimaryStats: primaryStatsToWire(record.Snapshot.PrimaryStats),
+		PrimaryStats: primaryStatsToWire(record.Snapshot.PrimaryStats), SkinID: string(record.Snapshot.SkinID),
 	}
 	if record.Snapshot.Defeated {
 		respawn := record.Snapshot.Respawn
@@ -350,6 +363,10 @@ func validateTrustedIdentity(identity characteridentity.Binding) error {
 	return nil
 }
 
+func validateSnapshotV13(snapshot Snapshot) error {
+	if !appearance.ValidSelection(snapshot.SkinID) { return ErrInvalidSnapshot }
+	return validateSnapshotV12(snapshot)
+}
 func validateSnapshotV12(snapshot Snapshot) error {
 	if err := characterstats.ValidateBase(snapshot.PrimaryStats); err != nil { return ErrInvalidSnapshot }
 	return validateSnapshotV11(snapshot)
