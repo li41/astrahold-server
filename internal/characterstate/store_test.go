@@ -128,6 +128,8 @@ func TestStoreRevisionOverflowDoesNotAdvanceTruth(t *testing.T) {
 		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
 		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated,
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
+		Inventory: snapshot.Inventory,
+		PrimaryStats: &wirePrimaryStats{Strength: snapshot.PrimaryStats.Strength, Agility: snapshot.PrimaryStats.Agility},
 	}
 	data, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 	if err := os.WriteFile(store.recordPath(identity.ID), append(data,'\n'), 0o600); err != nil { t.Fatal(err) }
