@@ -9,7 +9,7 @@ import (
 
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
-// v28: Reliable AppearanceSnapshot exposes authoritative SkinID and active basic-attack skin affinity bonus.
+// v28: activates exact unique-equipment Type119-121 plus Reliable AppearanceSnapshot Type122.
 // v27: Shadowblade adds authoritative source-target resource state for per-target Flaw.
 // v26: Oathguard class action legality added wrong_class rejection plus authoritative class-resource state.
 // v25: Reliable initial class selection intent/result plus authoritative CharacterClassState.
