@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -12,7 +13,7 @@ func TestRegisterStateRestoresAuthoritativeHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := State{EntityID: 7, HP: 640, MaxHP: 1200, MP: DefaultMaxMP, MaxMP: DefaultMaxMP}
+	want := State{EntityID: 7, HP: 640, MaxHP: 1200, MP: DefaultMaxMP, MaxMP: DefaultMaxMP, PrimaryStats: characterstats.DefaultPrimary()}
 	if err := service.RegisterState(want); err != nil {
 		t.Fatal(err)
 	}
