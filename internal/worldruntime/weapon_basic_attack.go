@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
@@ -217,11 +218,23 @@ func weaponBasicAttackAttributeDamageBonus(attribute characterstats.ID, stats ch
 	}
 }
 
+func (r *Runtime) matchingSkinBasicAttackDamageBonus(actorID world.EntityID, weaponType equipmentcatalog.WeaponType) uint32 {
+	if r == nil || actorID == 0 || weaponType == "" {
+		return 0
+	}
+	affinity, ok := appearance.WeaponAffinity(r.characterSkills.appearanceID(actorID))
+	if !ok || affinity != weaponType {
+		return 0
+	}
+	return 1
+}
+
 // resolveEquippedBasicAttackDamage retains its historical name because it is already the common
 // entity-damage hook. Physical basic attacks first replace the authored placeholder amount with
 // authoritative weapon damage, then apply only the WeaponType's formally authored primary-attribute
-// scaling. All direct entity damage finally receives the matching equipped unique-instance flat
-// modifier: PhysicalDamage for physical damage and MagicPower for magic damage.
+// scaling, then the selected-skin WeaponType affinity flat +1. All direct entity damage finally
+// receives the matching equipped unique-instance flat modifier: PhysicalDamage for physical damage
+// and MagicPower for magic damage. Critical and target mitigation happen later in the owner path.
 func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourceSessionID session.ID, targetID world.EntityID, prepared combat.PreparedAction) uint32 {
 	if prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
@@ -238,6 +251,7 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 							damage = saturatingAddUint32(damage, weaponBasicAttackAttributeDamageBonus(attribute, stats))
 						}
 					}
+					damage = saturatingAddUint32(damage, r.matchingSkinBasicAttackDamageBonus(actorID, definition.Weapon.WeaponType))
 				}
 			}
 		}
