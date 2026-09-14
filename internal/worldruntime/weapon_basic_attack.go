@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/session"
@@ -67,33 +68,56 @@ func (r *Runtime) applyEquippedBasicAttackTiming(prepared *combat.PreparedAction
 	prepared.Definition.CooldownSeconds = weaponAttackCooldownSeconds(milliseconds)
 }
 
-func ratingWithSignedBase(base int32, bonus uint32) int32 {
-	total := int64(base) + int64(bonus)
-	if total > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if total < math.MinInt32 {
-		return math.MinInt32
-	}
-	return int32(total)
-}
-
-func uintRatingAsInt32(value uint32) int32 {
+func signedRatingAsInt32(value int64) int32 {
 	if value > math.MaxInt32 {
 		return math.MaxInt32
+	}
+	if value < math.MinInt32 {
+		return math.MinInt32
 	}
 	return int32(value)
 }
 
-func weaponBasicAttackHitChanceBasisPoints(weaponAccuracyModifier int32, physicalHitBonus, targetEvasion uint32) uint32 {
+func weaponBasicAttackAttackerRating(weaponAccuracyModifier int32, attributePhysicalHit int64, equipmentPhysicalHit uint32) int32 {
+	return signedRatingAsInt32(int64(weaponAccuracyModifier) + attributePhysicalHit + int64(equipmentPhysicalHit))
+}
+
+func weaponBasicAttackEvasionRating(attributeEvasion, equipmentEvasion uint32) int32 {
+	total := uint64(attributeEvasion) + uint64(equipmentEvasion)
+	if total > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(total)
+}
+
+func weaponBasicAttackHitChanceBasisPoints(
+	weaponAccuracyModifier int32,
+	attributePhysicalHit int64,
+	equipmentPhysicalHit uint32,
+	attributeEvasion uint32,
+	equipmentEvasion uint32,
+) uint32 {
 	return combat.PhysicalHitChanceBasisPoints(
-		ratingWithSignedBase(weaponAccuracyModifier, physicalHitBonus),
-		uintRatingAsInt32(targetEvasion),
+		weaponBasicAttackAttackerRating(weaponAccuracyModifier, attributePhysicalHit, equipmentPhysicalHit),
+		weaponBasicAttackEvasionRating(attributeEvasion, equipmentEvasion),
 	)
 }
 
-func weaponBasicAttackHits(weaponAccuracyModifier int32, physicalHitBonus, targetEvasion, rollBasisPoints uint32) bool {
-	return rollBasisPoints < weaponBasicAttackHitChanceBasisPoints(weaponAccuracyModifier, physicalHitBonus, targetEvasion)
+func weaponBasicAttackHits(
+	weaponAccuracyModifier int32,
+	attributePhysicalHit int64,
+	equipmentPhysicalHit uint32,
+	attributeEvasion uint32,
+	equipmentEvasion uint32,
+	rollBasisPoints uint32,
+) bool {
+	return rollBasisPoints < weaponBasicAttackHitChanceBasisPoints(
+		weaponAccuracyModifier,
+		attributePhysicalHit,
+		equipmentPhysicalHit,
+		attributeEvasion,
+		equipmentEvasion,
+	)
 }
 
 func preparedEntityTargetID(prepared combat.PreparedAction) (world.EntityID, bool) {
@@ -108,9 +132,9 @@ func preparedEntityTargetID(prepared combat.PreparedAction) (world.EntityID, boo
 }
 
 // resolveEquippedBasicAttackHit applies the formal V1 physical hit/evasion rating formula to an
-// entity-target basic attack made with an authored catalog weapon. Attribute-derived ratings are
-// not fabricated here; this path consumes the weapon modifier plus currently implemented equipment
-// instance affixes, and can accept attribute contributions when the authoritative attribute owner lands.
+// entity-target basic attack made with an authored catalog weapon. The authoritative character
+// owner supplies effective Agility (including learned passive bonuses); its derived hit/evasion
+// ratings are combined with the weapon modifier and unique-equipment affixes before one hit roll.
 func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSessionID session.ID, prepared combat.PreparedAction) bool {
 	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return true
@@ -123,6 +147,14 @@ func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSe
 	if !ok {
 		return false
 	}
+	attackerStats, err := r.characterEffectivePrimaryStats(actorID)
+	if err != nil {
+		return false
+	}
+	targetStats, err := r.characterEffectivePrimaryStats(targetID)
+	if err != nil {
+		return false
+	}
 	attackerModifiers, err := r.equippedInstanceModifiers(actorID)
 	if err != nil {
 		return false
@@ -133,7 +165,9 @@ func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSe
 	}
 	return weaponBasicAttackHits(
 		definition.Weapon.AccuracyModifier,
+		characterstats.PhysicalHitModifier(attackerStats.Agility),
 		attackerModifiers.PhysicalHit,
+		characterstats.EvasionModifier(targetStats.Agility),
 		targetModifiers.Evasion,
 		weaponAccuracyRoll(),
 	)
@@ -189,6 +223,7 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 				damage = weaponDamage
 			}
 		}
+
 	}
 
 	modifiers, err := r.equippedInstanceModifiers(actorID)
