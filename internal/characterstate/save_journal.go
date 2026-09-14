@@ -15,7 +15,6 @@ import (
 	"sync"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
-	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/classid"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/skillloadout"
@@ -23,20 +22,21 @@ import (
 )
 
 const (
-	LegacySaveJournalSchemaVersion        uint16 = 1
-	ResourceSaveJournalSchemaVersion      uint16 = 2
-	InventorySaveJournalSchemaVersion     uint16 = 3
-	EquipmentSaveJournalSchemaVersion     uint16 = 4
-	ClassSaveJournalSchemaVersion         uint16 = 5
-	LoadoutSaveJournalSchemaVersion       uint16 = 6
-	LearnedSkillsSaveJournalSchemaVersion uint16 = 7
-	ClasslessSaveJournalSchemaVersion     uint16 = 8
-	ItemInstanceSaveJournalSchemaVersion  uint16 = 9
-	PrimaryStatsSaveJournalSchemaVersion  uint16 = 10
-	SaveJournalSchemaVersion              uint16 = PrimaryStatsSaveJournalSchemaVersion
-	saveCheckpointSchemaVersion           uint16 = 1
-	saveJournalIDSize                            = 16
-	maxSaveJournalPayload                        = 1 << 20
+	LegacySaveJournalSchemaVersion          uint16 = 1
+	ResourceSaveJournalSchemaVersion        uint16 = 2
+	InventorySaveJournalSchemaVersion       uint16 = 3
+	EquipmentSaveJournalSchemaVersion       uint16 = 4
+	ClassSaveJournalSchemaVersion           uint16 = 5
+	LoadoutSaveJournalSchemaVersion         uint16 = 6
+	LearnedSkillsSaveJournalSchemaVersion   uint16 = 7
+	ClasslessSaveJournalSchemaVersion       uint16 = 8
+	ItemInstanceSaveJournalSchemaVersion    uint16 = 9
+	PrimaryStatsSaveJournalSchemaVersion    uint16 = 10 // historical two-attribute interim schema
+	SixPrimaryStatsSaveJournalSchemaVersion uint16 = 11
+	SaveJournalSchemaVersion                uint16 = SixPrimaryStatsSaveJournalSchemaVersion
+	saveCheckpointSchemaVersion             uint16 = 1
+	saveJournalIDSize                              = 16
+	maxSaveJournalPayload                          = 1 << 20
 )
 
 var (
@@ -307,7 +307,7 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 	var wire saveJournalWireRecord
 	if err := decoder.Decode(&wire); err != nil { return 0, 0, SaveIntent{}, fmt.Errorf("%w: decode record: %v", ErrCorruptSaveJournal, err) }
 	var trailing any; if err := decoder.Decode(&trailing); err != io.EOF { return 0, 0, SaveIntent{}, fmt.Errorf("%w: trailing record data", ErrCorruptSaveJournal) }
-	if (wire.SchemaVersion != LegacySaveJournalSchemaVersion && wire.SchemaVersion != ResourceSaveJournalSchemaVersion && wire.SchemaVersion != InventorySaveJournalSchemaVersion && wire.SchemaVersion != EquipmentSaveJournalSchemaVersion && wire.SchemaVersion != ClassSaveJournalSchemaVersion && wire.SchemaVersion != LoadoutSaveJournalSchemaVersion && wire.SchemaVersion != LearnedSkillsSaveJournalSchemaVersion && wire.SchemaVersion != ClasslessSaveJournalSchemaVersion && wire.SchemaVersion != ItemInstanceSaveJournalSchemaVersion && wire.SchemaVersion != PrimaryStatsSaveJournalSchemaVersion) || wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
+	if (wire.SchemaVersion != LegacySaveJournalSchemaVersion && wire.SchemaVersion != ResourceSaveJournalSchemaVersion && wire.SchemaVersion != InventorySaveJournalSchemaVersion && wire.SchemaVersion != EquipmentSaveJournalSchemaVersion && wire.SchemaVersion != ClassSaveJournalSchemaVersion && wire.SchemaVersion != LoadoutSaveJournalSchemaVersion && wire.SchemaVersion != LearnedSkillsSaveJournalSchemaVersion && wire.SchemaVersion != ClasslessSaveJournalSchemaVersion && wire.SchemaVersion != ItemInstanceSaveJournalSchemaVersion && wire.SchemaVersion != PrimaryStatsSaveJournalSchemaVersion && wire.SchemaVersion != SixPrimaryStatsSaveJournalSchemaVersion) || wire.RecordID == 0 || wire.IntentID == 0 || wire.ExpectedRevision == ^uint64(0) {
 		return 0, 0, SaveIntent{}, fmt.Errorf("%w: invalid record header", ErrCorruptSaveJournal)
 	}
 	identity, err := characteridentity.NewTrusted(wire.CharacterID); if err != nil { return 0, 0, SaveIntent{}, fmt.Errorf("%w: character identity: %v", ErrCorruptSaveJournal, err) }
@@ -323,7 +323,7 @@ func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated,
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
 		Inventory: snapshot.Inventory, CombatLoadout: combatLoadoutToWire(snapshot.CombatLoadout), LearnedSkills: learnedSkillsToWire(snapshot.LearnedSkills),
-		PrimaryStats: &wirePrimaryStats{Strength: snapshot.PrimaryStats.Strength, Agility: snapshot.PrimaryStats.Agility},
+		PrimaryStats: primaryStatsToWire(snapshot.PrimaryStats),
 	}
 	if snapshot.Defeated {
 		respawn := snapshot.Respawn
@@ -338,6 +338,8 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 	if schemaVersion < ItemInstanceSaveJournalSchemaVersion && wire.Inventory.HasItemInstances() { return Snapshot{}, ErrInvalidSnapshot }
 	if schemaVersion < PrimaryStatsSaveJournalSchemaVersion && wire.PrimaryStats != nil { return Snapshot{}, ErrInvalidSnapshot }
 	if schemaVersion >= PrimaryStatsSaveJournalSchemaVersion && wire.PrimaryStats == nil { return Snapshot{}, ErrInvalidSnapshot }
+	if schemaVersion == PrimaryStatsSaveJournalSchemaVersion && hasSixPrimaryWireFields(wire.PrimaryStats) { return Snapshot{}, ErrInvalidSnapshot }
+	if schemaVersion >= SixPrimaryStatsSaveJournalSchemaVersion && !hasSixPrimaryWireFields(wire.PrimaryStats) { return Snapshot{}, ErrInvalidSnapshot }
 	if schemaVersion >= ClassSaveJournalSchemaVersion && schemaVersion < ClasslessSaveJournalSchemaVersion && wire.ClassID != "" {
 		if _, ok := classid.Parse(wire.ClassID); !ok { return Snapshot{}, ErrInvalidSnapshot }
 	}
@@ -348,8 +350,17 @@ func saveJournalWireToSnapshot(schemaVersion uint16, wire saveJournalWireSnapsho
 	if schemaVersion >= LoadoutSaveJournalSchemaVersion { var err error; combatLoadout, err = combatLoadoutFromWire(wire.CombatLoadout); if err != nil { return Snapshot{}, err } }
 	learnedSkills := learnedskills.Set{}
 	if schemaVersion >= LearnedSkillsSaveJournalSchemaVersion { var err error; learnedSkills, err = learnedSkillsFromWire(wire.LearnedSkills); if err != nil { return Snapshot{}, err } }
-	primaryStats := characterstats.Primary{}
-	if wire.PrimaryStats != nil { primaryStats = characterstats.Primary{Strength: wire.PrimaryStats.Strength, Agility: wire.PrimaryStats.Agility} }
+	storeSchema := uint16(0)
+	switch {
+	case schemaVersion < PrimaryStatsSaveJournalSchemaVersion:
+		storeSchema = ItemInstanceSchemaVersion
+	case schemaVersion == PrimaryStatsSaveJournalSchemaVersion:
+		storeSchema = PrimaryStatsSchemaVersion
+	default:
+		storeSchema = SixPrimaryStatsSchemaVersion
+	}
+	primaryStats, err := primaryStatsFromWire(storeSchema, wire.PrimaryStats)
+	if err != nil { return Snapshot{}, err }
 	snapshot := Snapshot{
 		World: WorldRef{WorldID: wire.WorldID, Revision: wire.WorldRevision, GameplaySHA256: wire.GameplaySHA256},
 		HP: wire.HP, MaxHP: wire.MaxHP, MP: mp, MaxMP: maxMP, Defeated: wire.Defeated,
@@ -366,14 +377,13 @@ func validateNewSaveIntent(intent SaveIntent) error {
 	if intent.IntentID == 0 { return ErrUnknownSaveIntent }
 	if err := validateTrustedIdentity(intent.Identity); err != nil { return err }
 	if !intent.Snapshot.Inventory.Initialized { return ErrInvalidSnapshot }
-	return validateSnapshotV11(intent.Snapshot)
+	return validateSnapshotV12(intent.Snapshot)
 }
 
 func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
 	if intent.IntentID == 0 { return ErrUnknownSaveIntent }
 	if err := validateTrustedIdentity(intent.Identity); err != nil { return err }
 	if schemaVersion < ItemInstanceSaveJournalSchemaVersion && intent.Snapshot.Inventory.HasItemInstances() { return ErrInvalidSnapshot }
-	if schemaVersion < PrimaryStatsSaveJournalSchemaVersion && intent.Snapshot.PrimaryStats != (characterstats.Primary{}) { return ErrInvalidSnapshot }
 	if err := validateSnapshotV5(intent.Snapshot); err != nil { return err }
 	switch schemaVersion {
 	case LegacySaveJournalSchemaVersion, ResourceSaveJournalSchemaVersion:
@@ -400,6 +410,9 @@ func validateDecodedSaveIntent(schemaVersion uint16, intent SaveIntent) error {
 	case PrimaryStatsSaveJournalSchemaVersion:
 		if !intent.Snapshot.Inventory.Initialized { return ErrInvalidSnapshot }
 		if err := validateSnapshotV11(intent.Snapshot); err != nil { return err }
+	case SixPrimaryStatsSaveJournalSchemaVersion:
+		if !intent.Snapshot.Inventory.Initialized { return ErrInvalidSnapshot }
+		if err := validateSnapshotV12(intent.Snapshot); err != nil { return err }
 	default:
 		return ErrInvalidSnapshot
 	}
