@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
@@ -17,18 +18,21 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testing.T) {
+func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingAndStrengthScaling(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
 	weaponAccuracyRoll = func() uint32 { return 0 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
 
-	// This interval is a test fixture, not production content. It proves that runtime cadence is
-	// resolved from WeaponType while the item itself carries only classification and damage data.
+	// This interval is a test fixture, not production content. It proves that runtime cadence and
+	// physical-damage attribute scaling are resolved from WeaponType while the item itself carries
+	// only classification and damage data.
 	interval := uint32(1200)
 	catalog, err := equipmentcatalog.New(equipmentcatalog.CatalogDefinition{
 		Revision: "test-only-weapon-type-cadence",
 		WeaponTypes: []equipmentcatalog.WeaponTypeDefinition{{
-			WeaponType: equipmentcatalog.WeaponTypeOneHandAxe, BasicAttackIntervalMS: &interval,
+			WeaponType:                 equipmentcatalog.WeaponTypeOneHandAxe,
+			BasicAttackIntervalMS:      &interval,
+			BasicAttackDamageAttribute: characterstats.Strength,
 		}},
 		Items: []equipmentcatalog.Definition{{
 			ItemArchetypeID: "item_militia_battle_axe", Kind: equipmentcatalog.KindWeapon, Slot: equipmentcatalog.SlotMainHand,
@@ -108,6 +112,17 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageAndTiming(t *te
 		t.Fatalf("join errors: %#v", report.CommandErrors)
 	}
 
+	actorState, ok := rt.characters.State(s.EntityID)
+	if !ok {
+		t.Fatal("player character state missing")
+	}
+	actorState.PrimaryStats = characterstats.DefaultPrimary()
+	actorState.PrimaryStats.Strength = 20 // formal melee bonus = floor((20-10)/2) = +5.
+	rt.characters.Remove(s.EntityID)
+	if err := rt.characters.RegisterState(actorState); err != nil {
+		t.Fatal(err)
+	}
+
 	inv := rt.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
 		t.Fatal("inventory missing")
@@ -138,8 +153,8 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageAndTiming(t *te
 	if firstEvent.ActorEntityID != s.EntityID || firstEvent.TargetEntityID != monsterID || firstEvent.Result != protocol.CombatEventHit {
 		t.Fatalf("first event=%#v", firstEvent)
 	}
-	if firstEvent.Damage < 8 || firstEvent.Damage > 12 {
-		t.Fatalf("large-target axe damage=%d, want 8..12", firstEvent.Damage)
+	if firstEvent.Damage < 13 || firstEvent.Damage > 17 {
+		t.Fatalf("large-target axe damage=%d, want weapon 8..12 + Strength bonus 5 => 13..17", firstEvent.Damage)
 	}
 	if firstEvent.CooldownReadyTick != 27 {
 		t.Fatalf("type cadence ready tick=%d, want 27", firstEvent.CooldownReadyTick)
@@ -172,8 +187,8 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageAndTiming(t *te
 		t.Fatalf("ready attack report=%#v", report)
 	}
 	secondEvent := waitForCombatEvent(t, conn)
-	if secondEvent.Damage < 8 || secondEvent.Damage > 12 {
-		t.Fatalf("second large-target axe damage=%d, want 8..12", secondEvent.Damage)
+	if secondEvent.Damage < 13 || secondEvent.Damage > 17 {
+		t.Fatalf("second large-target axe damage=%d, want weapon 8..12 + Strength bonus 5 => 13..17", secondEvent.Damage)
 	}
 	monster, ok = rt.combatantState(monsterID)
 	if !ok || monster.HP != firstHP-secondEvent.Damage {
