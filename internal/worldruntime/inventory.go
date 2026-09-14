@@ -198,6 +198,14 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentEnvelope.Delivery, MessageType: equipmentMessage.Type(), Err: err}) }
 			continue
 		}
+
+		appearanceMessage := r.appearanceSnapshotForSession(s)
+		appearanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: appearanceMessage}
+		report.Metrics.OutboundMessages++
+		if err := s.Connection().TrySend(appearanceEnvelope); err != nil {
+			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: appearanceEnvelope.Delivery, MessageType: appearanceMessage.Type(), Err: err}) }
+			continue
+		}
 		delete(r.sessionInventoryPending, s.ID)
 	}
 	for id := range r.sessionInventoryPending { if _, ok := r.sessions.Get(id); !ok { delete(r.sessionInventoryPending, id) } }
