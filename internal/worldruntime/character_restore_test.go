@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/characterstats"
@@ -40,6 +41,7 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 		HP: 640, MaxHP: 1200,
 		MP: 45, MaxMP: 100,
 		PrimaryStats: primary,
+		SkinID: appearance.PeasantGirl,
 		Transform: world.Transform{Position: world.Position{X: 21, Y: 0, Z: -8, Layer: 4}, Yaw: 1.5},
 	}
 	bootstrap := world.EntityState{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: -50, Layer: 4}}}
@@ -53,6 +55,16 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 	entity, ok := rt.world.Entity(1)
 	if !ok || entity.Transform != restore.Transform { t.Fatalf("entity=%#v ok=%v", entity, ok) }
 	if got, ok := rt.sessions.Get(1); !ok || got != sess { t.Fatalf("session=%#v ok=%v", got, ok) }
+	if got := rt.characterSkills.appearanceID(1); got != appearance.PeasantGirl {
+		t.Fatalf("runtime skin=%q want=%q", got, appearance.PeasantGirl)
+	}
+	binding, snapshot, ok := rt.captureCharacterStateSnapshot(sess.ID, sess.EntityID, nil)
+	if !ok {
+		t.Fatal("capture restored character state failed")
+	}
+	if binding.ID != identity.ID || snapshot.SkinID != appearance.PeasantGirl {
+		t.Fatalf("captured binding=%#v skin=%q want binding=%q skin=%q", binding, snapshot.SkinID, identity.ID, appearance.PeasantGirl)
+	}
 }
 
 func TestJoinRejectsRestoreWorldMismatchBeforeSpawn(t *testing.T) {
