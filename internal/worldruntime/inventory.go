@@ -173,10 +173,14 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 	r.pruneItemUseCooldowns(tick)
 	r.retryPendingItemUseResults(tick, report)
 	if len(r.sessionInventoryPending) == 0 { return }
-	for _, s := range r.sessions.List() {
-		if _, pending := r.sessionInventoryPending[s.ID]; !pending { continue }
+
+	// Cross-session ordering has no Protocol meaning here: each session owns an independent
+	// ReliableOrdered sequence and receives the same five-message owner-state group below.
+	// Avoid allocating and sorting a full Session mirror on burst joins/churn.
+	r.sessions.RangeUnordered(func(s *session.Session) bool {
+		if _, pending := r.sessionInventoryPending[s.ID]; !pending { return true }
 		inv := r.inventories[s.CharacterIdentity.ID]
-		if inv == nil { delete(r.sessionInventoryPending, s.ID); continue }
+		if inv == nil { delete(r.sessionInventoryPending, s.ID); return true }
 
 		// Build/validate both unique-instance supplements before sending any part of this complete
 		// owner-state group. If authoritative instance state is corrupt, fail closed and keep pending
@@ -185,12 +189,12 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		inventoryInstanceMessage, err := buildInventoryInstanceSnapshot(inv)
 		if err != nil {
 			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageInventoryInstanceSnapshot, Err: err})
-			continue
+			return true
 		}
 		equipmentInstanceMessage, err := buildEquipmentInstanceSnapshot(inv)
 		if err != nil {
 			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageEquipmentInstanceSnapshot, Err: err})
-			continue
+			return true
 		}
 
 		stacks := inv.Snapshot()
@@ -201,14 +205,14 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		report.Metrics.OutboundMessages++
 		if err := s.Connection().TrySend(inventoryEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: inventoryEnvelope.Delivery, MessageType: inventoryMessage.Type(), Err: err}) }
-			continue
+			return true
 		}
 
 		inventoryInstanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: inventoryInstanceMessage}
 		report.Metrics.OutboundMessages++
 		if err := s.Connection().TrySend(inventoryInstanceEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: inventoryInstanceEnvelope.Delivery, MessageType: inventoryInstanceMessage.Type(), Err: err}) }
-			continue
+			return true
 		}
 
 		slots := make([]protocol.EquipmentSlotState, 0, 2)
@@ -219,14 +223,14 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		report.Metrics.OutboundMessages++
 		if err := s.Connection().TrySend(equipmentEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentEnvelope.Delivery, MessageType: equipmentMessage.Type(), Err: err}) }
-			continue
+			return true
 		}
 
 		equipmentInstanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: equipmentInstanceMessage}
 		report.Metrics.OutboundMessages++
 		if err := s.Connection().TrySend(equipmentInstanceEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentInstanceEnvelope.Delivery, MessageType: equipmentInstanceMessage.Type(), Err: err}) }
-			continue
+			return true
 		}
 
 		appearanceMessage := r.appearanceSnapshotForSession(s)
@@ -234,9 +238,10 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		report.Metrics.OutboundMessages++
 		if err := s.Connection().TrySend(appearanceEnvelope); err != nil {
 			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: appearanceEnvelope.Delivery, MessageType: appearanceMessage.Type(), Err: err}) }
-			continue
+			return true
 		}
 		delete(r.sessionInventoryPending, s.ID)
-	}
+		return true
+	})
 	for id := range r.sessionInventoryPending { if _, ok := r.sessions.Get(id); !ok { delete(r.sessionInventoryPending, id) } }
 }
