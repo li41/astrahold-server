@@ -19,6 +19,10 @@ type fencedEquipmentSink interface {
 	EnqueueFencedEquipmentCommand(worldruntime.SessionOwnershipFence, uint32, protocol.ClientEquipmentCommand) error
 }
 
+type fencedEquipmentInstanceSink interface {
+	EnqueueFencedEquipmentInstanceCommand(worldruntime.SessionOwnershipFence, uint32, protocol.ClientEquipmentInstanceCommand) error
+}
+
 type fencedPickupSink interface {
 	EnqueueFencedPickupItem(worldruntime.SessionOwnershipFence, uint32, protocol.ClientPickupItem) error
 }
@@ -66,6 +70,17 @@ func (s ownedCommandSink) EnqueueEquipmentCommand(id session.ID, sequence uint32
 		return gateway.ErrUnsupportedClientMessage
 	}
 	return sink.EnqueueFencedEquipmentCommand(s.ownership, sequence, command)
+}
+
+func (s ownedCommandSink) EnqueueEquipmentInstanceCommand(id session.ID, sequence uint32, command protocol.ClientEquipmentInstanceCommand) error {
+	if !s.validSession(id) {
+		return worldruntime.ErrCharacterOwnershipFenceInvalid
+	}
+	sink, ok := s.runtime.(fencedEquipmentInstanceSink)
+	if !ok {
+		return gateway.ErrUnsupportedClientMessage
+	}
+	return sink.EnqueueFencedEquipmentInstanceCommand(s.ownership, sequence, command)
 }
 
 func (s ownedCommandSink) EnqueuePickupItem(id session.ID, sequence uint32, intent protocol.ClientPickupItem) error {
@@ -124,12 +139,13 @@ func (s ownedCommandSink) EnqueueRespawnRequest(id session.ID, sequence uint32, 
 }
 
 var (
-	_ gateway.MoveCommandSink      = ownedCommandSink{}
-	_ gateway.ActionCommandSink    = ownedCommandSink{}
-	_ gateway.EquipmentCommandSink = ownedCommandSink{}
-	_ gateway.PickupCommandSink    = ownedCommandSink{}
-	_ gateway.ItemUseCommandSink   = ownedCommandSink{}
-	_ gateway.NPCCommandSink       = ownedCommandSink{}
-	_ gateway.ShopCommandSink      = ownedCommandSink{}
-	_ gateway.RespawnCommandSink   = ownedCommandSink{}
+	_ gateway.MoveCommandSink              = ownedCommandSink{}
+	_ gateway.ActionCommandSink            = ownedCommandSink{}
+	_ gateway.EquipmentCommandSink         = ownedCommandSink{}
+	_ gateway.EquipmentInstanceCommandSink = ownedCommandSink{}
+	_ gateway.PickupCommandSink            = ownedCommandSink{}
+	_ gateway.ItemUseCommandSink           = ownedCommandSink{}
+	_ gateway.NPCCommandSink               = ownedCommandSink{}
+	_ gateway.ShopCommandSink              = ownedCommandSink{}
+	_ gateway.RespawnCommandSink           = ownedCommandSink{}
 )
