@@ -126,6 +126,7 @@ func TestSaveJournalV5MigratesToEmptyCombatLoadout(t *testing.T) {
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
 	wireSnapshot.CombatLoadout = nil
 	wireSnapshot.LearnedSkills = nil
+	wireSnapshot.PrimaryStats = nil
 	wire := saveJournalWireRecord{
 		SchemaVersion: ClassSaveJournalSchemaVersion,
 		RecordID: 1, ExpectedRevision: 0, IntentID: 1,
@@ -153,6 +154,7 @@ func TestSaveJournalRejectsCombatLoadoutThatDoesNotMatchSchema(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := testSnapshot()
 			wireSnapshot := snapshotToSaveJournalWire(snapshot)
+			wireSnapshot.PrimaryStats = nil
 			wireSnapshot.LearnedSkills = nil
 			wireSnapshot.CombatLoadout = tc.ids
 			wire := saveJournalWireRecord{
