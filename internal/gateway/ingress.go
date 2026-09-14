@@ -25,6 +25,9 @@ type ActionCommandSink interface {
 type EquipmentCommandSink interface {
 	EnqueueEquipmentCommand(session.ID, uint32, protocol.ClientEquipmentCommand) error
 }
+type EquipmentInstanceCommandSink interface {
+	EnqueueEquipmentInstanceCommand(session.ID, uint32, protocol.ClientEquipmentInstanceCommand) error
+}
 type PickupCommandSink interface {
 	EnqueuePickupItem(session.ID, uint32, protocol.ClientPickupItem) error
 }
@@ -51,8 +54,8 @@ func NewIngress(sink MoveCommandSink) *Ingress {
 }
 
 // Handle validates the client-owned message/delivery boundary before entering the bounded runtime queue.
-// Fixed-class selection is intentionally unsupported by the production ingress. The v27 wire type may
-// remain decodable for compatibility, but class/profession selection is no longer a gameplay command.
+// Fixed-class selection is intentionally unsupported by production ingress. Its compatibility wire
+// type may remain decodable, but class/profession selection is no longer a gameplay command.
 func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error {
 	if sessionID == 0 || envelope.Sequence == 0 || envelope.Message == nil {
 		return ErrInvalidClientEnvelope
@@ -82,6 +85,14 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil || !validEquipmentCommand(*message) { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueEquipmentCommand(sessionID, envelope.Sequence, *message)
+	case protocol.ClientEquipmentInstanceCommand:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if !validEquipmentInstanceCommand(message) { return ErrInvalidClientEnvelope }
+		return g.enqueueEquipmentInstanceCommand(sessionID, envelope.Sequence, message)
+	case *protocol.ClientEquipmentInstanceCommand:
+		if message == nil || !validEquipmentInstanceCommand(*message) { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		return g.enqueueEquipmentInstanceCommand(sessionID, envelope.Sequence, *message)
 	case protocol.ClientPickupItem:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		if message.DropEntityID == 0 { return ErrInvalidClientEnvelope }
@@ -151,6 +162,23 @@ func validEquipmentCommand(command protocol.ClientEquipmentCommand) bool {
 	}
 }
 
+func validEquipmentInstanceCommand(command protocol.ClientEquipmentInstanceCommand) bool {
+	switch command.Slot {
+	case protocol.EquipmentSlotMainHand, protocol.EquipmentSlotOffHand:
+	default:
+		return false
+	}
+	instanceID := strings.TrimSpace(command.ItemInstanceID)
+	switch command.Operation {
+	case protocol.EquipmentOperationEquip:
+		return instanceID != "" && instanceID == command.ItemInstanceID
+	case protocol.EquipmentOperationUnequip:
+		return command.ItemInstanceID == ""
+	default:
+		return false
+	}
+}
+
 func validShopCommand(command protocol.ClientShopCommand) bool {
 	if command.NPCEntityID == 0 { return false }
 	switch command.Operation {
@@ -174,6 +202,10 @@ func (g *Ingress) enqueueUseAction(sessionID session.ID, sequence uint32, action
 func (g *Ingress) enqueueEquipmentCommand(sessionID session.ID, sequence uint32, command protocol.ClientEquipmentCommand) error {
 	sink, ok := g.sink.(EquipmentCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueEquipmentCommand(sessionID, sequence, command)
+}
+func (g *Ingress) enqueueEquipmentInstanceCommand(sessionID session.ID, sequence uint32, command protocol.ClientEquipmentInstanceCommand) error {
+	sink, ok := g.sink.(EquipmentInstanceCommandSink); if !ok { return ErrUnsupportedClientMessage }
+	return sink.EnqueueEquipmentInstanceCommand(sessionID, sequence, command)
 }
 func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, intent protocol.ClientPickupItem) error {
 	sink, ok := g.sink.(PickupCommandSink); if !ok { return ErrUnsupportedClientMessage }
