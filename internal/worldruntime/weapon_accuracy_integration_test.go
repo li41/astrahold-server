@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
@@ -16,9 +17,11 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestLowTierWeaponMissIsAuthoritativeOutcomeAndCommitsCooldown(t *testing.T) {
+func TestAgilityEvasionMakesLowTierWeaponMissAndCommitsCooldown(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
-	weaponAccuracyRoll = func() uint32 { return 9100 } // +2 rating => 91.0%; boundary is a miss.
+	// Light guard sword is +2 rating: baseline chance is 91.0%. Target AGI 14 contributes
+	// +2 evasion rating, reducing the authoritative chance to 90.0%; the boundary roll misses.
+	weaponAccuracyRoll = func() uint32 { return 9000 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
 
 	definition := gameplayworld.Definition{
@@ -64,7 +67,14 @@ func TestLowTierWeaponMissIsAuthoritativeOutcomeAndCommitsCooldown(t *testing.T)
 	cfg := DefaultConfig()
 	cfg.SnapshotEveryTicks = 1000
 	rt := New(sim, cfg, WithDynamicWorld(nav), WithCombatService(combatService))
-	if err := rt.characters.RegisterState(character.State{EntityID: monsterID, HP: 200, MaxHP: 200, MP: 100, MaxMP: 100}); err != nil {
+	targetPrimary := characterstats.DefaultPrimary()
+	targetPrimary.Agility = 14
+	if err := rt.characters.RegisterState(character.State{
+		EntityID: monsterID,
+		HP: 200, MaxHP: 200,
+		MP: 100, MaxMP: 100,
+		PrimaryStats: targetPrimary,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,6 +154,6 @@ func TestLowTierWeaponMissIsAuthoritativeOutcomeAndCommitsCooldown(t *testing.T)
 	}
 	monster, ok = rt.combatantState(monsterID)
 	if !ok || monster.HP != 200 {
-		t.Fatalf("cooldown rejection after miss changed HP: %+v ok=%v", monster, ok)
+		t.Fatalf("cooldown rejection after miss changed HP: %+v ok=%v want=200", monster, ok)
 	}
 }
