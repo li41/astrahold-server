@@ -42,6 +42,12 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	if decoded.SchemaVersion < ItemInstanceSaveJournalSchemaVersion && decoded.Snapshot.Inventory.HasItemInstances() {
 		return fmt.Errorf("item instances require save journal schema %d", ItemInstanceSaveJournalSchemaVersion)
 	}
+	if decoded.SchemaVersion < PrimaryStatsSaveJournalSchemaVersion && decoded.Snapshot.PrimaryStats != nil {
+		return fmt.Errorf("primary stats require save journal schema %d", PrimaryStatsSaveJournalSchemaVersion)
+	}
+	if decoded.SchemaVersion >= PrimaryStatsSaveJournalSchemaVersion && decoded.Snapshot.PrimaryStats == nil {
+		return fmt.Errorf("primary stats missing for save journal schema %d", PrimaryStatsSaveJournalSchemaVersion)
+	}
 
 	if decoded.SchemaVersion == LoadoutSaveJournalSchemaVersion {
 		decoded.Snapshot.LearnedSkills = append([]string(nil), decoded.Snapshot.CombatLoadout...)
