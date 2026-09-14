@@ -2,7 +2,8 @@ package protocol
 
 import "github.com/li41/astrahold-server/internal/appearance"
 
-// 119-121 are reserved by the staged unique-equipment contract in item_instance.go.
+// Protocol v28 reserves 119-121 for the active unique-equipment contract in item_instance.go;
+// AppearanceSnapshot therefore uses the next stable message ID.
 const MessageAppearanceSnapshot MessageType = 122
 
 // AppearanceSnapshot is the owning character's complete Server-authoritative appearance gameplay
