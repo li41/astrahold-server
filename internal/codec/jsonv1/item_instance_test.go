@@ -7,9 +7,9 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
-func TestUniqueItemInstanceContractRemainsStagedBehindV27(t *testing.T) {
-	if protocol.Version != 27 {
-		t.Fatalf("protocol version=%d, staged item-instance contract must not activate a new version", protocol.Version)
+func TestUniqueItemInstanceContractRemainsStagedThroughV28(t *testing.T) {
+	if protocol.Version != 28 {
+		t.Fatalf("protocol version=%d, appearance cutover should be v28 while item-instance messages remain staged", protocol.Version)
 	}
 	if protocol.MessageClientEquipmentInstanceCommand != 119 || protocol.MessageInventoryInstanceSnapshot != 120 || protocol.MessageEquipmentInstanceSnapshot != 121 {
 		t.Fatalf("unexpected staged message ids: equip=%d inventory=%d equipment=%d",
@@ -17,6 +17,9 @@ func TestUniqueItemInstanceContractRemainsStagedBehindV27(t *testing.T) {
 			protocol.MessageInventoryInstanceSnapshot,
 			protocol.MessageEquipmentInstanceSnapshot,
 		)
+	}
+	if protocol.MessageAppearanceSnapshot != 122 {
+		t.Fatalf("appearance message id=%d want=122 after reserved item-instance ids", protocol.MessageAppearanceSnapshot)
 	}
 }
 
