@@ -103,6 +103,7 @@ type CatalogDefinition struct {
 type Catalog struct {
 	revision    string
 	byItem      map[string]Definition
+	armorByItem map[string]Definition
 	weaponTypes map[WeaponType]WeaponTypeDefinition
 }
 
@@ -113,9 +114,9 @@ func Default() (*Catalog, error) {
 	if err := decoder.Decode(&def); err != nil {
 		return nil, err
 	}
-	// Keep the authored weapon progression revision stable. Protocol v29 owns the seven-slot
-	// compatibility fence; the appended armor definitions extend this Server catalog without
-	// rewriting the historical weapon-data revision identifier.
+	// The historical revision identifies the authored weapon progression in default.json. Protocol
+	// v29 is the compatibility fence for the seven-slot model, so adding armor does not rewrite that
+	// weapon-data revision string.
 	def.Items = append(def.Items, defaultLowTierArmor()...)
 	return New(def)
 }
@@ -138,6 +139,7 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	catalog := &Catalog{
 		revision:    def.Revision,
 		byItem:      make(map[string]Definition, len(def.Items)),
+		armorByItem: make(map[string]Definition),
 		weaponTypes: make(map[WeaponType]WeaponTypeDefinition, len(def.WeaponTypes)),
 	}
 	for _, authored := range def.WeaponTypes {
@@ -175,6 +177,9 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {
 			return nil, ErrInvalidCatalog
 		}
+		if _, exists := catalog.armorByItem[item.ItemArchetypeID]; exists {
+			return nil, ErrInvalidCatalog
+		}
 		staticModifiers, err := canonicalStaticModifiers(item.StaticModifiers)
 		if err != nil {
 			return nil, ErrInvalidCatalog
@@ -194,20 +199,22 @@ func New(def CatalogDefinition) (*Catalog, error) {
 				return nil, ErrInvalidCatalog
 			}
 			item.Weapon = &weapon
+			catalog.byItem[item.ItemArchetypeID] = item
 		case KindShield:
 			if item.Slot != SlotOffHand || item.Shield == nil || item.Weapon != nil || item.ArmorClass != "" || !validShield(*item.Shield) {
 				return nil, ErrInvalidCatalog
 			}
 			shield := *item.Shield
 			item.Shield = &shield
+			catalog.byItem[item.ItemArchetypeID] = item
 		case KindArmor:
 			if !validArmorSlot(item.Slot) || !validArmorClass(item.ArmorClass) || item.Weapon != nil || item.Shield != nil {
 				return nil, ErrInvalidCatalog
 			}
+			catalog.armorByItem[item.ItemArchetypeID] = item
 		default:
 			return nil, ErrInvalidCatalog
 		}
-		catalog.byItem[item.ItemArchetypeID] = item
 	}
 	return catalog, nil
 }
@@ -274,7 +281,11 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 	if c == nil {
 		return Definition{}, false
 	}
-	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	id := strings.TrimSpace(itemArchetypeID)
+	item, ok := c.byItem[id]
+	if !ok {
+		item, ok = c.armorByItem[id]
+	}
 	if !ok {
 		return Definition{}, false
 	}
@@ -339,8 +350,11 @@ func (c *Catalog) UnitWeights() map[string]uint32 {
 	if c == nil {
 		return nil
 	}
-	weights := make(map[string]uint32, len(c.byItem))
+	weights := make(map[string]uint32, len(c.byItem)+len(c.armorByItem))
 	for id, item := range c.byItem {
+		weights[id] = item.Weight
+	}
+	for id, item := range c.armorByItem {
 		weights[id] = item.Weight
 	}
 	return weights
