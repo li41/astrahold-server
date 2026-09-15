@@ -53,5 +53,9 @@ func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.
 	}
 	r.applyEquippedBasicAttackTiming(&prepared, sourceSessionID)
 	r.applyEquippedBasicAttackRange(&prepared, sourceSessionID)
+	if err := r.validateBasicAttackAmmunition(prepared, sourceSessionID); err != nil {
+		r.rejectClientAction(name, sourceSessionID, clientActionSequence, prepared.ActorEntityID, prepared.Definition.ID, protocol.ActionTargetKind(prepared.Target.Kind), err, tick, report)
+		return
+	}
 	r.dispatchPreparedAction(name, sourceSessionID, clientActionSequence, prepared, tick, delta, report)
 }

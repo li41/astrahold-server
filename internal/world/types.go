@@ -52,6 +52,23 @@ const (
 	EntityBodySizeGiant EntityBodySize = "giant"
 )
 
+// EntityClassification is stable Server-authored gameplay metadata. It must never be inferred from
+// Client meshes, names, VFX or other presentation data. Empty means no special classification.
+type EntityClassification string
+
+const (
+	EntityClassificationUndead EntityClassification = "undead"
+)
+
+func (classification EntityClassification) Valid() bool {
+	switch classification {
+	case "", EntityClassificationUndead:
+		return true
+	default:
+		return false
+	}
+}
+
 // Transform 是同步給其他系統的最小空間狀態。
 type Transform struct {
 	Position Position
@@ -60,13 +77,14 @@ type Transform struct {
 
 // EntityState 是世界層需要知道的最小實體狀態。
 // ArchetypeID 只引用 immutable authored content identity；它不包含 model path、AI runtime 或 HP truth。
-// BodySize 是 Server gameplay metadata，不是 Client presentation scale。
+// BodySize 與 Classification 都是 Server gameplay metadata，不是 Client presentation data。
 type EntityState struct {
-	ID          EntityID
-	Kind        EntityKind
-	ArchetypeID string
-	BodySize    EntityBodySize
-	Transform   Transform
+	ID             EntityID
+	Kind           EntityKind
+	ArchetypeID    string
+	BodySize       EntityBodySize
+	Classification EntityClassification
+	Transform      Transform
 }
 
 // Add 將位移向量加到 Position；Layer 不變。

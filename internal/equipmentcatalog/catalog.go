@@ -52,6 +52,7 @@ const (
 	WeaponTypeOneHandSword WeaponType = "one_hand_sword"
 	WeaponTypeOneHandAxe   WeaponType = "one_hand_axe"
 	WeaponTypeMace         WeaponType = "mace"
+	WeaponTypeBow          WeaponType = "bow"
 )
 
 type DamageRange struct {
@@ -87,7 +88,7 @@ type Definition struct {
 	Slot             Slot                  `json:"slot"`
 	Tier             Tier                  `json:"tier"`
 	Weight           uint32                `json:"weight"`
-	Material         string                `json:"material"`
+	Material         MaterialID            `json:"material"`
 	ArmorClass       ArmorClass            `json:"armor_class,omitempty"`
 	SetID            SetID                 `json:"set_id,omitempty"`
 	BaseRequirements []BaseStatRequirement `json:"base_requirements,omitempty"`
@@ -124,6 +125,12 @@ func Default() (*Catalog, error) {
 	def.Items = append(def.Items, defaultLowTierArmor()...)
 	def.Items = append(def.Items, defaultRemainingArmor()...)
 	def.Sets = append(def.Sets, defaultArmorSets()...)
+	if err := applyDefaultProductionMaterials(def.Items); err != nil {
+		return nil, err
+	}
+	if err := applyDefaultBowAmmunitionBalance(def.Items); err != nil {
+		return nil, err
+	}
 	return New(def)
 }
 
@@ -180,10 +187,10 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	}
 	for _, item := range def.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
-		item.Material = strings.TrimSpace(item.Material)
+		item.Material = canonicalMaterialID(item.Material)
 		item.ArmorClass = ArmorClass(strings.TrimSpace(string(item.ArmorClass)))
 		item.SetID = SetID(strings.TrimSpace(string(item.SetID)))
-		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) {
+		if item.ItemArchetypeID == "" || !item.Material.Valid() || item.Weight == 0 || !validTier(item.Tier) {
 			return nil, ErrInvalidCatalog
 		}
 		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {

@@ -67,7 +67,7 @@ func NewWithWeightPolicy(maxStacks int, policy WeightPolicy) *Inventory {
 	weights := make(map[string]uint32, len(policy.UnitWeights))
 	for archetypeID, weight := range policy.UnitWeights {
 		archetypeID = strings.TrimSpace(archetypeID)
-		if archetypeID == "" || weight == 0 { continue }
+		if archetypeID == "" { continue }
 		weights[archetypeID] = weight
 	}
 	return &Inventory{
@@ -226,6 +226,6 @@ func (i *Inventory) unequippedEntryCount() int {
 func (i *Inventory) weightFor(archetypeID string, quantity uint32) uint64 {
 	if i == nil || i.maxWeight == 0 || quantity == 0 { return 0 }
 	unitWeight := i.defaultUnitWeight
-	if override := i.unitWeights[archetypeID]; override > 0 { unitWeight = override }
+	if override, ok := i.unitWeights[archetypeID]; ok { unitWeight = override }
 	return uint64(unitWeight) * uint64(quantity)
 }
