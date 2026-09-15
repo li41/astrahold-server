@@ -9,10 +9,9 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-// This is a product-route regression, not just a short movement unit test. A fresh PvE
-// character in the canonical castle-sandbox must be able to travel from the Server-owned
-// default spawn to the closed main-gate approach using only authoritative navigation.
-func TestCastleSandboxFreshSpawnCanReachMainGateApproach(t *testing.T) {
+// This is a product-route regression. A fresh PvE character must be able to travel from
+// the Server-owned World Master newcomer spawn to Emberwatch village using authoritative navigation.
+func TestFirstContinentNewcomerSpawnCanReachEmberwatchVillageCenter(t *testing.T) {
 	gameplay, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
 	if err != nil {
 		t.Fatal(err)
@@ -53,36 +52,33 @@ func TestCastleSandboxFreshSpawnCanReachMainGateApproach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := Agent{
-		Radius:        gameplay.Definition.Agent.Radius,
-		MaxStepHeight: gameplay.Definition.Agent.MaxStepHeight,
-	}
+	agent := Agent{Radius: gameplay.Definition.Agent.Radius, MaxStepHeight: gameplay.Definition.Agent.MaxStepHeight}
 
 	start := spawn.Position()
 	pos := start
-	const approachZ float32 = 8.0
-	for stepIndex := 0; stepIndex < 200 && pos.Z < approachZ-0.001; stepIndex++ {
+	const villageCenterZ float32 = 0
+	for stepIndex := 0; stepIndex < 500 && pos.Z < villageCenterZ-0.001; stepIndex++ {
 		stepZ := float32(0.5)
-		if remaining := approachZ - pos.Z; remaining < stepZ {
+		if remaining := villageCenterZ - pos.Z; remaining < stepZ {
 			stepZ = remaining
 		}
 		next, moveErr := nav.ResolveMove(pos, world.Vec3{Z: stepZ}, agent)
 		if moveErr != nil {
-			t.Fatalf("fresh-spawn route blocked step=%d pos=%+v err=%v", stepIndex, pos, moveErr)
+			t.Fatalf("newcomer route blocked step=%d pos=%+v err=%v", stepIndex, pos, moveErr)
 		}
 		if next.Z <= pos.Z+0.001 {
-			t.Fatalf("fresh-spawn route made no forward progress step=%d pos=%+v next=%+v", stepIndex, pos, next)
+			t.Fatalf("newcomer route made no forward progress step=%d pos=%+v next=%+v", stepIndex, pos, next)
 		}
 		pos = next
 	}
 
 	if pos.Layer != 0 {
-		t.Fatalf("gate approach layer=%d, want ground layer 0", pos.Layer)
+		t.Fatalf("Emberwatch center layer=%d, want ground layer 0", pos.Layer)
 	}
-	if math.Abs(float64(pos.Z-approachZ)) > 0.01 {
-		t.Fatalf("gate approach z=%g, want %g", pos.Z, approachZ)
+	if math.Abs(float64(pos.Z-villageCenterZ)) > 0.01 {
+		t.Fatalf("Emberwatch center z=%g, want %g", pos.Z, villageCenterZ)
 	}
-	if traveled := pos.Z - start.Z; traveled < 40 {
-		t.Fatalf("fresh-spawn route traveled only %gm; expected full castle approach from spawn=%+v to pos=%+v", traveled, start, pos)
+	if traveled := pos.Z - start.Z; traveled < 200 {
+		t.Fatalf("newcomer route traveled only %gm; expected World Master route from spawn=%+v to pos=%+v", traveled, start, pos)
 	}
 }
