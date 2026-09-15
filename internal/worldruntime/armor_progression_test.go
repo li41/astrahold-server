@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/equipmentaffix"
 	"github.com/li41/astrahold-server/internal/inventory"
@@ -37,6 +39,58 @@ func TestHighArmorRequirementUsesBaseStatOnly(t *testing.T) {
 	base.Constitution = 18
 	if err := validateEquipmentInstanceBaseRequirements(inv, instance.ID, base); err != nil {
 		t.Fatalf("base constitution 18 err=%v", err)
+	}
+}
+
+func TestDurableRestoreRevalidatesHighArmorRequirementAgainstBaseStat(t *testing.T) {
+	instance := iteminstance.Instance{
+		ID:              "item-instance:starforged-restore",
+		ItemArchetypeID: "item_starforged_bastion_helm",
+		Affixes: []equipmentaffix.Affix{
+			{ID: equipmentaffix.AffixConstitution, Strength: 1, Value: 1},
+			{ID: equipmentaffix.AffixPhysicalDefense, Strength: 1, Value: 1},
+		},
+	}
+	definition, ok := defaultEquipmentCatalog.Resolve(instance.ItemArchetypeID)
+	if !ok {
+		t.Fatal("starforged helm missing")
+	}
+	if err := iteminstance.Validate(instance, definition); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := iteminstance.CanonicalShapeJSON(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventoryState, err := characterstate.NewInventoryStateWithSlots(nil, nil, nil, []characterstate.EquipmentInstanceSlotState{{
+		Slot:             "helmet",
+		ItemInstanceJSON: string(encoded),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := characteridentity.NewTrusted("character:starforged-restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := CharacterRestore{
+		SchemaVersion: characterstate.SchemaVersion,
+		CharacterID:   identity.ID,
+		Revision:      1,
+		World:         characterRestoreWorld,
+		HP:            1000,
+		MaxHP:         1000,
+		MP:            100,
+		MaxMP:         100,
+		Inventory:     inventoryState,
+		PrimaryStats:  characterstats.DefaultPrimary(),
+	}
+	if err := ValidateCharacterRestore(identity, restore, characterRestoreWorld); !errors.Is(err, ErrEquipmentRequirementsNotMet) {
+		t.Fatalf("base constitution 10 restore err=%v want requirement rejection", err)
+	}
+	restore.PrimaryStats.Constitution = 18
+	if err := ValidateCharacterRestore(identity, restore, characterRestoreWorld); err != nil {
+		t.Fatalf("base constitution 18 restore err=%v", err)
 	}
 }
 
