@@ -26,8 +26,12 @@ func TestE2ECharacterRestoreMatchesCurrentContract(t *testing.T) {
 	if restore.PrimaryStats != characterstats.DefaultPrimary() {
 		t.Fatalf("primary stats=%+v, want neutral current-schema stats=%+v", restore.PrimaryStats, characterstats.DefaultPrimary())
 	}
-	if !restore.Inventory.Initialized || restore.Inventory.MainHand != e2eBasicAttackWeaponID {
-		t.Fatalf("inventory=%+v, want equipped main hand %q", restore.Inventory, e2eBasicAttackWeaponID)
+	equipment, err := restore.Inventory.Equipment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restore.Inventory.Initialized || len(equipment) != 1 || equipment[0].Slot != "main_hand" || equipment[0].ItemArchetypeID != e2eBasicAttackWeaponID {
+		t.Fatalf("inventory=%+v equipment=%+v, want equipped main hand %q", restore.Inventory, equipment, e2eBasicAttackWeaponID)
 	}
 }
 
