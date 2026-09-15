@@ -110,6 +110,9 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		if err != nil || canonical != restore.Inventory {
 			return ErrCharacterRestoreInvalid
 		}
+		if err := validateRestoredEquipmentBaseRequirements(restore.Inventory, restore.PrimaryStats); err != nil {
+			return err
+		}
 	} else if restore.Inventory != (characterstate.InventoryState{}) {
 		return ErrCharacterRestoreInvalid
 	}
