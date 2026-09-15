@@ -22,8 +22,10 @@ func TestStoreV4InventoryRoundTripPreservesStacksAndMainHand(t *testing.T) {
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
 	if loaded != saved { t.Fatalf("loaded=%#v saved=%#v", loaded, saved) }
-	if !loaded.Snapshot.Inventory.Initialized || loaded.Snapshot.Inventory.MainHand != "item_training_blade" {
-		t.Fatalf("inventory=%#v", loaded.Snapshot.Inventory)
+	equipment, err := loaded.Snapshot.Inventory.Equipment()
+	if err != nil { t.Fatal(err) }
+	if !loaded.Snapshot.Inventory.Initialized || len(equipment) != 1 || equipment[0].Slot != "main_hand" || equipment[0].ItemArchetypeID != "item_training_blade" {
+		t.Fatalf("inventory=%#v equipment=%#v", loaded.Snapshot.Inventory, equipment)
 	}
 	stacks, err := loaded.Snapshot.Inventory.Stacks()
 	if err != nil { t.Fatal(err) }
