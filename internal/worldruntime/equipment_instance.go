@@ -119,10 +119,16 @@ func (r *Runtime) applyEquipInstance(inv *inventory.Inventory, slot protocol.Equ
 		if !equipmentDefinitionAllowed(definition, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand) {
 			return ErrEquipmentItemNotAllowed
 		}
+		if err := validateMainHandEquipmentCompatibility(inv, instance.ItemArchetypeID); err != nil {
+			return err
+		}
 		return inv.EquipMainHandInstance(instanceID)
 	case protocol.EquipmentSlotOffHand:
 		if !equipmentDefinitionAllowed(definition, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand) {
 			return ErrEquipmentItemNotAllowed
+		}
+		if err := validateOffHandEquipmentCompatibility(inv); err != nil {
+			return err
 		}
 		return inv.EquipOffHandInstance(instanceID)
 	default:

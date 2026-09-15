@@ -128,11 +128,7 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 	case protocol.EquipmentSlotMainHand:
 		switch request.Operation {
 		case protocol.EquipmentOperationEquip:
-			if !mainHandItemAllowed(request.ItemArchetypeID) {
-				err = ErrEquipmentItemNotAllowed
-			} else {
-				err = inv.EquipMainHand(request.ItemArchetypeID)
-			}
+			err = applyEquipArchetype(inv, request.Slot, request.ItemArchetypeID)
 		case protocol.EquipmentOperationUnequip:
 			if _, instanceEquipped := inv.MainHandInstance(); instanceEquipped {
 				_, err = inv.UnequipMainHandInstance()
@@ -143,11 +139,7 @@ func (r *Runtime) applyEquipmentCommand(name string, command equipmentCommand, r
 	case protocol.EquipmentSlotOffHand:
 		switch request.Operation {
 		case protocol.EquipmentOperationEquip:
-			if !offHandItemAllowed(request.ItemArchetypeID) {
-				err = ErrEquipmentItemNotAllowed
-			} else {
-				err = inv.EquipOffHand(request.ItemArchetypeID)
-			}
+			err = applyEquipArchetype(inv, request.Slot, request.ItemArchetypeID)
 		case protocol.EquipmentOperationUnequip:
 			if _, instanceEquipped := inv.OffHandInstance(); instanceEquipped {
 				_, err = inv.UnequipOffHandInstance()
