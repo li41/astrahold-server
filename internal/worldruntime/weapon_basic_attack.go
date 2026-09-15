@@ -31,7 +31,11 @@ func (r *Runtime) equippedCatalogWeapon(actorID world.EntityID, sourceSessionID 
 	if inv == nil {
 		return equipmentcatalog.Definition{}, false
 	}
-	definition, ok := defaultEquipmentCatalog.Resolve(inv.MainHand())
+	itemArchetypeID := inv.MainHand()
+	if instance, equipped := inv.MainHandInstance(); equipped {
+		itemArchetypeID = instance.ItemArchetypeID
+	}
+	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID)
 	if !ok || definition.Kind != equipmentcatalog.KindWeapon || definition.Weapon == nil {
 		return equipmentcatalog.Definition{}, false
 	}
