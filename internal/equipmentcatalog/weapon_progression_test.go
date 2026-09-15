@@ -16,7 +16,7 @@ func TestDefaultCatalogLocksThreeTierWeaponProgression(t *testing.T) {
 	catalog, err := Default()
 	if err != nil { t.Fatal(err) }
 	if got := catalog.Revision(); got != "weapon-progression-v1" { t.Fatalf("revision=%q", got) }
-	if got := len(catalog.byItem); got != 56 { t.Fatalf("catalog item count=%d want=56", got) }
+	if got := len(catalog.byItem); got != 62 { t.Fatalf("catalog item count=%d want=62", got) }
 
 	cases := []weaponTierExpectation{
 		{WeaponTypeOneHandSword, 7, "iron", 0, DamageRange{9,12}, DamageRange{9,11}, DamageRange{12,15}, DamageRange{11,14}, 0, 0},
