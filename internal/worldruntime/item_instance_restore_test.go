@@ -59,8 +59,13 @@ func TestDurableInventoryRestoresSameUniqueAffixInstance(t *testing.T) {
 
 	durable, err := durableInventoryState(inv)
 	if err != nil { t.Fatal(err) }
-	if !durable.HasItemInstances() || durable.MainHand != "" || durable.MainHandInstanceJSON == "" {
-		t.Fatalf("durable state lost unique main hand: %#v", durable)
+	if !durable.HasItemInstances() || durable.MainHand != "" || durable.MainHandInstanceJSON != "" {
+		t.Fatalf("legacy unique main-hand fields must stay empty after generic persistence migration: %#v", durable)
+	}
+	equipped, err := durable.EquipmentInstances()
+	if err != nil { t.Fatal(err) }
+	if len(equipped) != 1 || equipped[0].Slot != "main_hand" || equipped[0].ItemInstanceJSON == "" {
+		t.Fatalf("generic durable state lost unique main hand: %#v", durable)
 	}
 
 	restored, err := restoreCharacterInventory(16, durable)
