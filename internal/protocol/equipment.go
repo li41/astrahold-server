@@ -17,10 +17,27 @@ type EquipmentSlot string
 const (
 	EquipmentSlotMainHand EquipmentSlot = "main_hand"
 	EquipmentSlotOffHand  EquipmentSlot = "off_hand"
+	EquipmentSlotHelmet   EquipmentSlot = "helmet"
+	EquipmentSlotChest    EquipmentSlot = "chest"
+	EquipmentSlotGloves   EquipmentSlot = "gloves"
+	EquipmentSlotLegs     EquipmentSlot = "legs"
+	EquipmentSlotBoots    EquipmentSlot = "boots"
 )
 
-// ClientEquipmentCommand is intent only. The Server validates inventory ownership,
-// slot legality and the resulting authoritative transaction.
+// EquipmentSlots returns the formal Protocol v29 equipment-slot order. The order is stable wire
+// presentation policy only; gameplay legality remains Server-owned and is validated per item.
+func EquipmentSlots() []EquipmentSlot {
+	return []EquipmentSlot{
+		EquipmentSlotMainHand,
+		EquipmentSlotOffHand,
+		EquipmentSlotHelmet,
+		EquipmentSlotChest,
+		EquipmentSlotGloves,
+		EquipmentSlotLegs,
+		EquipmentSlotBoots,
+	}
+}
+
 type ClientEquipmentCommand struct {
 	Operation       EquipmentOperation
 	Slot            EquipmentSlot
@@ -34,7 +51,6 @@ type EquipmentSlotState struct {
 	ItemArchetypeID string
 }
 
-// EquipmentSnapshot is the owning character's complete authoritative equipment view.
 type EquipmentSnapshot struct {
 	Revision uint64
 	Slots    []EquipmentSlotState

@@ -6,99 +6,41 @@ import (
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/inventory"
-	"github.com/li41/astrahold-server/internal/protocol"
+	"github.com/li41/astrahold-server/internal/iteminstance"
 )
 
 var ErrEquipmentHandConflict = errors.New("worldruntime: equipment hand requirement conflict")
 
 func equipmentHandRequirement(itemArchetypeID string) (equipmentcatalog.HandRequirement, bool) {
-	if itemArchetypeID == trainingBladeArchetypeID {
-		return equipmentcatalog.HandRequirementOneHand, true
-	}
+	if itemArchetypeID == trainingBladeArchetypeID { return equipmentcatalog.HandRequirementOneHand, true }
 	return defaultEquipmentCatalog.HandRequirementForItem(itemArchetypeID)
 }
-
-func equippedMainHandArchetypeID(inv *inventory.Inventory) string {
-	if inv == nil {
-		return ""
-	}
-	if instance, ok := inv.MainHandInstance(); ok {
-		return instance.ItemArchetypeID
-	}
-	return inv.MainHand()
-}
-
-func equippedOffHandArchetypeID(inv *inventory.Inventory) string {
-	if inv == nil {
-		return ""
-	}
-	if instance, ok := inv.OffHandInstance(); ok {
-		return instance.ItemArchetypeID
-	}
-	return inv.OffHand()
-}
-
+func equippedMainHandArchetypeID(inv *inventory.Inventory) string { if inv == nil { return "" }; return inv.MainHand() }
+func equippedOffHandArchetypeID(inv *inventory.Inventory) string { if inv == nil { return "" }; return inv.OffHand() }
 func validateEquipmentHandCombination(mainHandItemArchetypeID, offHandItemArchetypeID string) error {
-	if mainHandItemArchetypeID == "" || offHandItemArchetypeID == "" {
-		return nil
-	}
-	requirement, ok := equipmentHandRequirement(mainHandItemArchetypeID)
-	if !ok {
-		return ErrEquipmentItemNotAllowed
-	}
-	if requirement == equipmentcatalog.HandRequirementTwoHand {
-		return ErrEquipmentHandConflict
-	}
+	if mainHandItemArchetypeID == "" || offHandItemArchetypeID == "" { return nil }
+	requirement, ok := equipmentHandRequirement(mainHandItemArchetypeID); if !ok { return ErrEquipmentItemNotAllowed }
+	if requirement == equipmentcatalog.HandRequirementTwoHand { return ErrEquipmentHandConflict }
 	return nil
 }
-
-func validateInventoryHandCombination(inv *inventory.Inventory) error {
-	return validateEquipmentHandCombination(equippedMainHandArchetypeID(inv), equippedOffHandArchetypeID(inv))
-}
-
+func validateInventoryHandCombination(inv *inventory.Inventory) error { return validateEquipmentHandCombination(equippedMainHandArchetypeID(inv), equippedOffHandArchetypeID(inv)) }
 func validateInventoryStateHandCombination(state characterstate.InventoryState) error {
-	mainHand := state.MainHand
-	if instance, ok, err := state.MainHandInstance(); err != nil {
-		return err
-	} else if ok {
-		mainHand = instance.ItemArchetypeID
-	}
-	offHand := state.OffHand
-	if instance, ok, err := state.OffHandInstance(); err != nil {
-		return err
-	} else if ok {
-		offHand = instance.ItemArchetypeID
+	equipment, err := state.Equipment(); if err != nil { return err }
+	mainHand, offHand := "", ""
+	for _, item := range equipment { if item.Slot == "main_hand" { mainHand = item.ItemArchetypeID }; if item.Slot == "off_hand" { offHand = item.ItemArchetypeID } }
+	instances, err := state.EquipmentInstances(); if err != nil { return err }
+	for _, item := range instances {
+		instance, err := iteminstance.DecodeCanonicalShapeJSON([]byte(item.ItemInstanceJSON)); if err != nil { return err }
+		if item.Slot == "main_hand" { mainHand = instance.ItemArchetypeID }; if item.Slot == "off_hand" { offHand = instance.ItemArchetypeID }
 	}
 	return validateEquipmentHandCombination(mainHand, offHand)
 }
+func validateMainHandEquipmentCompatibility(inv *inventory.Inventory, itemArchetypeID string) error { return validateEquipmentHandCombination(itemArchetypeID, equippedOffHandArchetypeID(inv)) }
+func validateOffHandEquipmentCompatibility(inv *inventory.Inventory) error { return validateEquipmentHandCombination(equippedMainHandArchetypeID(inv), "occupied") }
 
-func validateMainHandEquipmentCompatibility(inv *inventory.Inventory, itemArchetypeID string) error {
-	return validateEquipmentHandCombination(itemArchetypeID, equippedOffHandArchetypeID(inv))
-}
-
-func validateOffHandEquipmentCompatibility(inv *inventory.Inventory) error {
-	return validateEquipmentHandCombination(equippedMainHandArchetypeID(inv), "occupied")
-}
-
-func applyEquipArchetype(inv *inventory.Inventory, slot protocol.EquipmentSlot, itemArchetypeID string) error {
-	switch slot {
-	case protocol.EquipmentSlotMainHand:
-		if !mainHandItemAllowed(itemArchetypeID) {
-			return ErrEquipmentItemNotAllowed
-		}
-		if err := validateMainHandEquipmentCompatibility(inv, itemArchetypeID); err != nil {
-			return err
-		}
-		return inv.EquipMainHand(itemArchetypeID)
-	case protocol.EquipmentSlotOffHand:
-		if !offHandItemAllowed(itemArchetypeID) {
-			return ErrEquipmentItemNotAllowed
-		}
-		if err := validateOffHandEquipmentCompatibility(inv); err != nil {
-			return err
-		}
-		return inv.EquipOffHand(itemArchetypeID)
-	default:
-		return errors.New("worldruntime: invalid equipment slot")
-	}
+func applyEquipArchetype(inv *inventory.Inventory, slot inventory.EquipmentSlot, itemArchetypeID string) error {
+	if !lowTierEquipmentAllowed(slot, itemArchetypeID) { return ErrEquipmentItemNotAllowed }
+	if slot == inventory.SlotMainHand { if err := validateMainHandEquipmentCompatibility(inv, itemArchetypeID); err != nil { return err } }
+	if slot == inventory.SlotOffHand { if err := validateOffHandEquipmentCompatibility(inv); err != nil { return err } }
+	return inv.Equip(slot, itemArchetypeID)
 }

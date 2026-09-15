@@ -13,237 +13,88 @@ import (
 )
 
 const defaultInventoryCarryCapacity = uint64(100)
-
 var defaultInventoryUnitWeights = mustDefaultInventoryUnitWeights()
 
 func mustDefaultInventoryUnitWeights() map[string]uint32 {
-	weights := map[string]uint32{
-		"item_minor_healing_potion": 1,
-		"item_minor_mana_potion":    1,
-		"item_training_blade":       8,
-		"item_gray_wolf_pelt":       2,
-	}
-	for itemArchetypeID, weight := range defaultEquipmentCatalog.UnitWeights() {
-		if itemArchetypeID == "" || weight == 0 { panic("worldruntime: invalid equipment catalog weight") }
-		if _, exists := weights[itemArchetypeID]; exists { panic("worldruntime: equipment catalog collides with base inventory weight") }
-		weights[itemArchetypeID] = weight
-	}
+	weights := map[string]uint32{"item_minor_healing_potion":1,"item_minor_mana_potion":1,"item_training_blade":8,"item_gray_wolf_pelt":2}
+	for id, weight := range defaultEquipmentCatalog.UnitWeights() { if id == "" || weight == 0 { panic("worldruntime: invalid equipment catalog weight") }; if _, exists := weights[id]; exists { panic("worldruntime: equipment catalog collides with base inventory weight") }; weights[id] = weight }
 	return weights
 }
-
-func newCharacterInventory(maxStacks int) *inventory.Inventory {
-	return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{MaxWeight: defaultInventoryCarryCapacity, DefaultUnitWeight: 1, UnitWeights: defaultInventoryUnitWeights})
-}
-
-func validateStarterInventory(maxStacks int, stacks []inventory.Stack) error {
-	inv := newCharacterInventory(maxStacks)
-	for _, stack := range stacks { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { return err } }
-	return nil
-}
+func newCharacterInventory(maxStacks int) *inventory.Inventory { return inventory.NewWithWeightPolicy(maxStacks, inventory.WeightPolicy{MaxWeight:defaultInventoryCarryCapacity, DefaultUnitWeight:1, UnitWeights:defaultInventoryUnitWeights}) }
+func validateStarterInventory(maxStacks int, stacks []inventory.Stack) error { inv := newCharacterInventory(maxStacks); for _, stack := range stacks { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { return err } }; return nil }
 
 func validateDurableEquipmentInstance(instance iteminstance.Instance, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot) error {
-	definition, ok := defaultEquipmentCatalog.Resolve(instance.ItemArchetypeID)
-	if !ok {
-		return ErrEquipmentItemNotAllowed
-	}
-	if kind != "" && !equipmentDefinitionAllowed(definition, kind, slot) {
-		return ErrEquipmentItemNotAllowed
-	}
+	definition, ok := defaultEquipmentCatalog.Resolve(instance.ItemArchetypeID); if !ok { return ErrEquipmentItemNotAllowed }
+	if kind != "" && !equipmentDefinitionAllowed(definition, kind, slot) { return ErrEquipmentItemNotAllowed }
 	return iteminstance.Validate(instance, definition)
 }
-
-// Legacy archetype-only equipment is intentionally restricted to low-tier equipment. Mid/high
-// equipment must be a unique instance because its Server-rolled affixes are gameplay truth.
 func legacyEquipmentArchetypeAllowed(itemArchetypeID string, kind equipmentcatalog.Kind, slot equipmentcatalog.Slot) bool {
-	if kind == equipmentcatalog.KindWeapon && slot == equipmentcatalog.SlotMainHand && itemArchetypeID == trainingBladeArchetypeID {
-		return true
-	}
-	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID)
-	return ok && definition.Tier == equipmentcatalog.TierLow && equipmentDefinitionAllowed(definition, kind, slot)
+	if kind == equipmentcatalog.KindWeapon && slot == equipmentcatalog.SlotMainHand && itemArchetypeID == trainingBladeArchetypeID { return true }
+	definition, ok := defaultEquipmentCatalog.Resolve(itemArchetypeID); return ok && definition.Tier == equipmentcatalog.TierLow && equipmentDefinitionAllowed(definition, kind, slot)
 }
 
 func durableInventoryState(inv *inventory.Inventory) (characterstate.InventoryState, error) {
 	if inv == nil { return characterstate.InventoryState{}, errors.New("worldruntime: inventory unavailable") }
 	if err := validateInventoryHandCombination(inv); err != nil { return characterstate.InventoryState{}, err }
-
-	stacks := inv.Snapshot()
-	durableStacks := make([]characterstate.InventoryStack, 0, len(stacks))
-	for _, stack := range stacks {
-		if definition, ok := defaultEquipmentCatalog.Resolve(stack.ArchetypeID); ok && definition.Tier != equipmentcatalog.TierLow {
-			return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed
-		}
-		durableStacks = append(durableStacks, characterstate.InventoryStack{ItemArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity})
+	stacks := inv.Snapshot(); durableStacks := make([]characterstate.InventoryStack, 0, len(stacks))
+	for _, stack := range stacks { if definition, ok := defaultEquipmentCatalog.Resolve(stack.ArchetypeID); ok && definition.Tier != equipmentcatalog.TierLow { return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed }; durableStacks = append(durableStacks, characterstate.InventoryStack{ItemArchetypeID:stack.ArchetypeID, Quantity:stack.Quantity}) }
+	instances := inv.InstanceSnapshot(); for _, instance := range instances { if err := validateDurableEquipmentInstance(instance, "", ""); err != nil { return characterstate.InventoryState{}, err } }
+	equipment := make([]characterstate.EquipmentSlotState, 0, 7)
+	for _, item := range inv.EquippedArchetypeSnapshot() {
+		kind, ok := expectedEquipmentKind(item.Slot); if !ok { return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed }
+		catalogSlot, ok := catalogEquipmentSlot(item.Slot); if !ok || !legacyEquipmentArchetypeAllowed(item.ArchetypeID, kind, catalogSlot) { return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed }
+		equipment = append(equipment, characterstate.EquipmentSlotState{Slot:string(item.Slot), ItemArchetypeID:item.ArchetypeID})
 	}
-
-	instances := inv.InstanceSnapshot()
-	for _, instance := range instances {
-		if err := validateDurableEquipmentInstance(instance, "", ""); err != nil { return characterstate.InventoryState{}, err }
+	equippedInstances := make([]characterstate.EquipmentInstanceSlotState, 0, 7)
+	for _, equipped := range inv.EquippedInstanceSnapshot() {
+		kind, ok := expectedEquipmentKind(equipped.Slot); if !ok { return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed }
+		catalogSlot, ok := catalogEquipmentSlot(equipped.Slot); if !ok { return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed }
+		if err := validateDurableEquipmentInstance(equipped.Item, kind, catalogSlot); err != nil { return characterstate.InventoryState{}, err }
+		data, err := iteminstance.CanonicalShapeJSON(equipped.Item); if err != nil { return characterstate.InventoryState{}, err }
+		equippedInstances = append(equippedInstances, characterstate.EquipmentInstanceSlotState{Slot:string(equipped.Slot), ItemInstanceJSON:string(data)})
 	}
-
-	mainHand := inv.MainHand()
-	var mainHandInstance *iteminstance.Instance
-	if instance, ok := inv.MainHandInstance(); ok {
-		if err := validateDurableEquipmentInstance(instance, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand); err != nil { return characterstate.InventoryState{}, err }
-		mainHand = ""
-		mainHandInstance = &instance
-	} else if mainHand != "" && !legacyEquipmentArchetypeAllowed(mainHand, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand) {
-		return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed
-	}
-
-	offHand := inv.OffHand()
-	var offHandInstance *iteminstance.Instance
-	if instance, ok := inv.OffHandInstance(); ok {
-		if err := validateDurableEquipmentInstance(instance, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand); err != nil { return characterstate.InventoryState{}, err }
-		offHand = ""
-		offHandInstance = &instance
-	} else if offHand != "" && !legacyEquipmentArchetypeAllowed(offHand, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand) {
-		return characterstate.InventoryState{}, ErrEquipmentItemNotAllowed
-	}
-
-	return characterstate.NewInventoryStateWithInstances(durableStacks, instances, mainHand, offHand, mainHandInstance, offHandInstance)
+	return characterstate.NewInventoryStateWithSlots(durableStacks, instances, equipment, equippedInstances)
 }
 
-// restoreCharacterInventory restores classless durable inventory/equipment truth. Equipment
-// legality depends only on the actual item and slot; retired ClassID never participates. Unique
-// instances are restored exactly as persisted and are never sent through an affix roller.
 func restoreCharacterInventory(maxStacks int, state characterstate.InventoryState) (*inventory.Inventory, error) {
 	if !state.Initialized { return nil, nil }
-	canonical, err := characterstate.CanonicalInventoryState(state)
-	if err != nil || canonical != state { return nil, characterstate.ErrInvalidSnapshot }
+	canonical, err := characterstate.CanonicalInventoryState(state); if err != nil { return nil, characterstate.ErrInvalidSnapshot }; state = canonical
 	if err := validateInventoryStateHandCombination(state); err != nil { return nil, err }
-
-	stacks, err := state.Stacks(); if err != nil { return nil, err }
-	instances, err := state.Instances(); if err != nil { return nil, err }
-	mainHandInstance, hasMainHandInstance, err := state.MainHandInstance(); if err != nil { return nil, err }
-	offHandInstance, hasOffHandInstance, err := state.OffHandInstance(); if err != nil { return nil, err }
-
+	stacks, err := state.Stacks(); if err != nil { return nil, err }; instances, err := state.Instances(); if err != nil { return nil, err }; equipment, err := state.Equipment(); if err != nil { return nil, err }; equippedInstances, err := state.EquipmentInstances(); if err != nil { return nil, err }
 	inv := newCharacterInventory(maxStacks)
-	if state.MainHand != "" {
-		if !legacyEquipmentArchetypeAllowed(state.MainHand, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand) { return nil, ErrEquipmentItemNotAllowed }
-		if err := inv.Add(state.MainHand, 1); err != nil { return nil, err }
-		if err := inv.EquipMainHand(state.MainHand); err != nil { return nil, err }
+	for _, item := range equipment {
+		slot := inventory.EquipmentSlot(item.Slot); kind, ok := expectedEquipmentKind(slot); if !ok { return nil, ErrEquipmentItemNotAllowed }; catalogSlot, ok := catalogEquipmentSlot(slot); if !ok || !legacyEquipmentArchetypeAllowed(item.ItemArchetypeID, kind, catalogSlot) { return nil, ErrEquipmentItemNotAllowed }
+		if err := inv.Add(item.ItemArchetypeID, 1); err != nil { return nil, err }; if err := inv.Equip(slot, item.ItemArchetypeID); err != nil { return nil, err }
 	}
-	if hasMainHandInstance {
-		if err := validateDurableEquipmentInstance(mainHandInstance, equipmentcatalog.KindWeapon, equipmentcatalog.SlotMainHand); err != nil { return nil, err }
-		if err := inv.AddInstance(mainHandInstance); err != nil { return nil, err }
-		if err := inv.EquipMainHandInstance(mainHandInstance.ID); err != nil { return nil, err }
+	for _, item := range equippedInstances {
+		slot := inventory.EquipmentSlot(item.Slot); kind, ok := expectedEquipmentKind(slot); if !ok { return nil, ErrEquipmentItemNotAllowed }; catalogSlot, ok := catalogEquipmentSlot(slot); if !ok { return nil, ErrEquipmentItemNotAllowed }
+		instance, err := iteminstance.DecodeCanonicalShapeJSON([]byte(item.ItemInstanceJSON)); if err != nil { return nil, err }; if err := validateDurableEquipmentInstance(instance, kind, catalogSlot); err != nil { return nil, err }; if err := inv.AddInstance(instance); err != nil { return nil, err }; if err := inv.EquipInstance(slot, instance.ID); err != nil { return nil, err }
 	}
-	if state.OffHand != "" {
-		if !legacyEquipmentArchetypeAllowed(state.OffHand, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand) { return nil, ErrEquipmentItemNotAllowed }
-		if err := inv.Add(state.OffHand, 1); err != nil { return nil, err }
-		if err := inv.EquipOffHand(state.OffHand); err != nil { return nil, err }
-	}
-	if hasOffHandInstance {
-		if err := validateDurableEquipmentInstance(offHandInstance, equipmentcatalog.KindShield, equipmentcatalog.SlotOffHand); err != nil { return nil, err }
-		if err := inv.AddInstance(offHandInstance); err != nil { return nil, err }
-		if err := inv.EquipOffHandInstance(offHandInstance.ID); err != nil { return nil, err }
-	}
-	for _, instance := range instances {
-		if err := validateDurableEquipmentInstance(instance, "", ""); err != nil { return nil, err }
-		if err := inv.AddInstance(instance); err != nil { return nil, err }
-	}
-	for _, stack := range stacks {
-		if definition, ok := defaultEquipmentCatalog.Resolve(stack.ItemArchetypeID); ok && definition.Tier != equipmentcatalog.TierLow {
-			return nil, ErrEquipmentItemNotAllowed
-		}
-		if err := inv.Add(stack.ItemArchetypeID, stack.Quantity); err != nil { return nil, err }
-	}
+	for _, instance := range instances { if err := validateDurableEquipmentInstance(instance, "", ""); err != nil { return nil, err }; if err := inv.AddInstance(instance); err != nil { return nil, err } }
+	for _, stack := range stacks { if definition, ok := defaultEquipmentCatalog.Resolve(stack.ItemArchetypeID); ok && definition.Tier != equipmentcatalog.TierLow { return nil, ErrEquipmentItemNotAllowed }; if err := inv.Add(stack.ItemArchetypeID, stack.Quantity); err != nil { return nil, err } }
 	return inv, nil
 }
 
 func (r *Runtime) ensureSessionInventory(s *session.Session) {
-	if s == nil { return }
-	identity := s.CharacterIdentity.ID
-	if _, ok := r.inventories[identity]; !ok {
-		inv := newCharacterInventory(r.config.InventoryMaxStacks)
-		for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }
-		r.inventories[identity] = inv
-	}
-	// Trusted sessions receive the current Server-owned action resource when one exists. Type117
-	// remains a compatibility presentation lane; no fixed profession identity is restored.
-	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
-		r.queueCurrentActionResourceState(s)
-	}
+	if s == nil { return }; identity := s.CharacterIdentity.ID
+	if _, ok := r.inventories[identity]; !ok { inv := newCharacterInventory(r.config.InventoryMaxStacks); for _, stack := range r.config.StarterInventory { if err := inv.Add(stack.ArchetypeID, stack.Quantity); err != nil { panic(err) } }; r.inventories[identity] = inv }
+	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted { r.queueCurrentActionResourceState(s) }
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
-
 func (r *Runtime) removeSessionInventoryDelivery(id session.ID) { delete(r.sessionInventoryPending, id) }
 
 func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
-	// Resource feedback is retried once at the beginning of Runtime.Step, before current commands
-	// can append newer states. Do not retry it again here in the same tick.
-	r.pruneItemUseCooldowns(tick)
-	r.retryPendingItemUseResults(tick, report)
-	if len(r.sessionInventoryPending) == 0 { return }
-
-	// Cross-session ordering has no Protocol meaning here: each session owns an independent
-	// ReliableOrdered sequence and receives the same five-message owner-state group below.
-	// Avoid allocating and sorting a full Session mirror on burst joins/churn.
+	r.pruneItemUseCooldowns(tick); r.retryPendingItemUseResults(tick, report); if len(r.sessionInventoryPending) == 0 { return }
 	r.sessions.RangeUnordered(func(s *session.Session) bool {
-		if _, pending := r.sessionInventoryPending[s.ID]; !pending { return true }
-		inv := r.inventories[s.CharacterIdentity.ID]
-		if inv == nil { delete(r.sessionInventoryPending, s.ID); return true }
-
-		// Build/validate both unique-instance supplements before sending any part of this complete
-		// owner-state group. If authoritative instance state is corrupt, fail closed and keep pending
-		// so a later step can retry after the underlying state is corrected instead of publishing a
-		// partial mixed-generation inventory/equipment view.
-		inventoryInstanceMessage, err := buildInventoryInstanceSnapshot(inv)
-		if err != nil {
-			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageInventoryInstanceSnapshot, Err: err})
-			return true
-		}
-		equipmentInstanceMessage, err := buildEquipmentInstanceSnapshot(inv)
-		if err != nil {
-			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: protocol.MessageEquipmentInstanceSnapshot, Err: err})
-			return true
-		}
-
-		stacks := inv.Snapshot()
-		items := make([]protocol.InventoryItemStack, 0, len(stacks))
-		for _, stack := range stacks { items = append(items, protocol.InventoryItemStack{ArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity}) }
-		inventoryMessage := protocol.InventorySnapshot{Revision: inv.Revision(), CurrentCarryWeight: inv.CurrentWeight(), MaxCarryWeight: inv.MaxWeight(), Items: items}
-		inventoryEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: inventoryMessage}
-		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(inventoryEnvelope); err != nil {
-			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: inventoryEnvelope.Delivery, MessageType: inventoryMessage.Type(), Err: err}) }
-			return true
-		}
-
-		inventoryInstanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: inventoryInstanceMessage}
-		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(inventoryInstanceEnvelope); err != nil {
-			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: inventoryInstanceEnvelope.Delivery, MessageType: inventoryInstanceMessage.Type(), Err: err}) }
-			return true
-		}
-
-		slots := make([]protocol.EquipmentSlotState, 0, 2)
-		if mainHand := inv.MainHand(); mainHand != "" { slots = append(slots, protocol.EquipmentSlotState{Slot: protocol.EquipmentSlotMainHand, ItemArchetypeID: mainHand}) }
-		if offHand := inv.OffHand(); offHand != "" { slots = append(slots, protocol.EquipmentSlotState{Slot: protocol.EquipmentSlotOffHand, ItemArchetypeID: offHand}) }
-		equipmentMessage := protocol.EquipmentSnapshot{Revision: inv.EquipmentRevision(), Slots: slots}
-		equipmentEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: equipmentMessage}
-		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(equipmentEnvelope); err != nil {
-			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentEnvelope.Delivery, MessageType: equipmentMessage.Type(), Err: err}) }
-			return true
-		}
-
-		equipmentInstanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: equipmentInstanceMessage}
-		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(equipmentInstanceEnvelope); err != nil {
-			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: equipmentInstanceEnvelope.Delivery, MessageType: equipmentInstanceMessage.Type(), Err: err}) }
-			return true
-		}
-
-		appearanceMessage := r.appearanceSnapshotForSession(s)
-		appearanceEnvelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: appearanceMessage}
-		report.Metrics.OutboundMessages++
-		if err := s.Connection().TrySend(appearanceEnvelope); err != nil {
-			if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: appearanceEnvelope.Delivery, MessageType: appearanceMessage.Type(), Err: err}) }
-			return true
-		}
-		delete(r.sessionInventoryPending, s.ID)
-		return true
+		if _, pending := r.sessionInventoryPending[s.ID]; !pending { return true }; inv := r.inventories[s.CharacterIdentity.ID]; if inv == nil { delete(r.sessionInventoryPending, s.ID); return true }
+		inventoryInstanceMessage, err := buildInventoryInstanceSnapshot(inv); if err != nil { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID, Delivery:protocol.DeliveryReliableOrdered, MessageType:protocol.MessageInventoryInstanceSnapshot, Err:err}); return true }
+		equipmentInstanceMessage, err := buildEquipmentInstanceSnapshot(inv); if err != nil { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID, Delivery:protocol.DeliveryReliableOrdered, MessageType:protocol.MessageEquipmentInstanceSnapshot, Err:err}); return true }
+		stacks := inv.Snapshot(); items := make([]protocol.InventoryItemStack, 0, len(stacks)); for _, stack := range stacks { items = append(items, protocol.InventoryItemStack{ArchetypeID:stack.ArchetypeID, Quantity:stack.Quantity}) }
+		messages := []protocol.Message{protocol.InventorySnapshot{Revision:inv.Revision(), CurrentCarryWeight:inv.CurrentWeight(), MaxCarryWeight:inv.MaxWeight(), Items:items}, inventoryInstanceMessage}
+		slots := make([]protocol.EquipmentSlotState, 0, 7); for _, item := range inv.EquippedArchetypeSnapshot() { slot, ok := protocolEquipmentSlot(item.Slot); if !ok { continue }; slots = append(slots, protocol.EquipmentSlotState{Slot:slot, ItemArchetypeID:item.ArchetypeID}) }
+		messages = append(messages, protocol.EquipmentSnapshot{Revision:inv.EquipmentRevision(), Slots:slots}, equipmentInstanceMessage, r.appearanceSnapshotForSession(s))
+		for _, message := range messages { envelope := protocol.Envelope{Delivery:protocol.DeliveryReliableOrdered, Sequence:s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick:tick, Message:message}; report.Metrics.OutboundMessages++; if err := s.Connection().TrySend(envelope); err != nil { if !errors.Is(err, session.ErrBackpressure) { report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID, Delivery:envelope.Delivery, MessageType:message.Type(), Err:err}) }; return true } }
+		delete(r.sessionInventoryPending, s.ID); return true
 	})
 	for id := range r.sessionInventoryPending { if _, ok := r.sessions.Get(id); !ok { delete(r.sessionInventoryPending, id) } }
 }
