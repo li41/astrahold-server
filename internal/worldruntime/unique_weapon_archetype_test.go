@@ -23,7 +23,9 @@ func TestUniqueMainHandResolvesWeaponArchetypeForBasicAttackRules(t *testing.T) 
 	if inv == nil { t.Fatal("inventory missing") }
 	if err := inv.AddInstance(instance); err != nil { t.Fatal(err) }
 	if err := inv.EquipMainHandInstance(instance.ID); err != nil { t.Fatal(err) }
-	if inv.MainHand() != "" { t.Fatalf("unique main hand unexpectedly populated legacy archetype slot: %q", inv.MainHand()) }
+	if got := inv.MainHand(); got != "item_mid_bow" {
+		t.Fatalf("unique main hand archetype=%q want=item_mid_bow", got)
+	}
 
 	resolved, ok := runtime.equippedCatalogWeapon(s.EntityID, s.ID)
 	if !ok { t.Fatal("unique main-hand weapon did not resolve catalog archetype") }
