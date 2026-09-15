@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 
 	"github.com/li41/astrahold-server/internal/characterstats"
@@ -47,14 +48,15 @@ type DamageRange struct {
 	Max uint32 `json:"max"`
 }
 
-// WeaponTypeDefinition owns shared basic-attack gameplay data for a weapon type. Cadence and
-// physical-damage attribute scaling are type-level truth so individual ItemArchetypes cannot
-// silently diverge. Damage scaling may remain unauthored until a WeaponType has production items;
-// runtime treats an unauthored value as no attribute bonus rather than inventing melee/ranged data.
+// WeaponTypeDefinition owns shared basic-attack gameplay data for a weapon type. Cadence,
+// physical-damage attribute scaling and an optional basic-attack range override are type-level
+// truth so individual ItemArchetypes cannot silently diverge. An unauthored range keeps the
+// action definition's normal authoritative range.
 type WeaponTypeDefinition struct {
-	WeaponType                 WeaponType       `json:"weapon_type"`
-	BasicAttackIntervalMS      *uint32          `json:"basic_attack_interval_ms,omitempty"`
+	WeaponType                 WeaponType        `json:"weapon_type"`
+	BasicAttackIntervalMS      *uint32           `json:"basic_attack_interval_ms,omitempty"`
 	BasicAttackDamageAttribute characterstats.ID `json:"basic_attack_damage_attribute,omitempty"`
+	BasicAttackRange           *float32          `json:"basic_attack_range,omitempty"`
 }
 
 type Weapon struct {
@@ -132,6 +134,13 @@ func New(def CatalogDefinition) (*Catalog, error) {
 			}
 			interval := *authored.BasicAttackIntervalMS
 			authored.BasicAttackIntervalMS = &interval
+		}
+		if authored.BasicAttackRange != nil {
+			attackRange := *authored.BasicAttackRange
+			if attackRange <= 0 || math.IsNaN(float64(attackRange)) || math.IsInf(float64(attackRange), 0) {
+				return nil, ErrInvalidCatalog
+			}
+			authored.BasicAttackRange = &attackRange
 		}
 		catalog.weaponTypes[authored.WeaponType] = authored
 	}
@@ -262,6 +271,23 @@ func (c *Catalog) BasicAttackDamageAttributeForItem(itemArchetypeID string) (cha
 		return "", false
 	}
 	return typeDefinition.BasicAttackDamageAttribute, true
+}
+
+// BasicAttackRangeForItem resolves a shared WeaponType range override for basic attacks. False
+// means the item is not a weapon or that type intentionally keeps the basic-attack action range.
+func (c *Catalog) BasicAttackRangeForItem(itemArchetypeID string) (float32, bool) {
+	if c == nil {
+		return 0, false
+	}
+	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	if !ok || item.Weapon == nil {
+		return 0, false
+	}
+	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]
+	if !ok || typeDefinition.BasicAttackRange == nil {
+		return 0, false
+	}
+	return *typeDefinition.BasicAttackRange, true
 }
 
 // UnitWeights returns a defensive copy of the authored carry weight for every catalog item.

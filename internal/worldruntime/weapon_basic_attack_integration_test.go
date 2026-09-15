@@ -19,21 +19,23 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingStrengthAndSkinAffinity(t *testing.T) {
+func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingRangeStrengthAndSkinAffinity(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
 	weaponAccuracyRoll = func() uint32 { return 0 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
 
-	// This interval and fixed large-target damage are test fixtures, not production content. They
-	// prove cadence, primary-stat scaling and skin affinity are all resolved from authoritative
-	// WeaponType data while the item itself carries only classification and damage data.
+	// These values are test fixtures, not production content. They prove cadence, range,
+	// primary-stat scaling and skin affinity are all resolved from authoritative WeaponType data
+	// while the item itself carries only classification and damage data.
 	interval := uint32(1200)
+	attackRange := float32(7.5)
 	catalog, err := equipmentcatalog.New(equipmentcatalog.CatalogDefinition{
-		Revision: "test-only-weapon-type-cadence",
+		Revision: "test-only-weapon-type-rules",
 		WeaponTypes: []equipmentcatalog.WeaponTypeDefinition{{
 			WeaponType:                 equipmentcatalog.WeaponTypeOneHandAxe,
 			BasicAttackIntervalMS:      &interval,
 			BasicAttackDamageAttribute: characterstats.Strength,
+			BasicAttackRange:           &attackRange,
 		}},
 		Items: []equipmentcatalog.Definition{{
 			ItemArchetypeID: "item_militia_battle_axe", Kind: equipmentcatalog.KindWeapon, Slot: equipmentcatalog.SlotMainHand,
@@ -70,7 +72,7 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingStrengthA
 	monsterID := world.EntityID(9001)
 	monsterEntity := world.EntityState{
 		ID: monsterID, Kind: world.EntityMonster, ArchetypeID: "test-large-monster", BodySize: world.EntityBodySizeLarge,
-		Transform: world.Transform{Position: world.Position{X: 2, Z: 0, Layer: 0}},
+		Transform: world.Transform{Position: world.Position{X: 6, Z: 0, Layer: 0}},
 	}
 	if err := sim.Spawn(monsterEntity, 4, .35, .5); err != nil {
 		t.Fatal(err)
@@ -157,6 +159,7 @@ func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingStrengthA
 	if firstEvent.ActorEntityID != s.EntityID || firstEvent.TargetEntityID != monsterID || firstEvent.Result != protocol.CombatEventHit {
 		t.Fatalf("first event=%#v", firstEvent)
 	}
+	// The target is 6m away: beyond the action fallback 4.5m but inside the authored 7.5m.
 	// Fixed weapon 8 + Strength 5 + matching Peasant Girl / one-hand-axe affinity 1 = 14.
 	if firstEvent.Damage != 14 {
 		t.Fatalf("matching-skin axe damage=%d, want 14", firstEvent.Damage)

@@ -52,5 +52,6 @@ func (r *Runtime) prepareAndDispatchAction(name string, sourceSessionID session.
 		return
 	}
 	r.applyEquippedBasicAttackTiming(&prepared, sourceSessionID)
+	r.applyEquippedBasicAttackRange(&prepared, sourceSessionID)
 	r.dispatchPreparedAction(name, sourceSessionID, clientActionSequence, prepared, tick, delta, report)
 }
