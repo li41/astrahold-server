@@ -54,7 +54,10 @@ const (
 	WeaponTypeMace         WeaponType = "mace"
 )
 
-type DamageRange struct { Min uint32 `json:"min"`; Max uint32 `json:"max"` }
+type DamageRange struct {
+	Min uint32 `json:"min"`
+	Max uint32 `json:"max"`
+}
 
 type WeaponTypeDefinition struct {
 	WeaponType                 WeaponType        `json:"weapon_type"`
@@ -97,14 +100,22 @@ type CatalogDefinition struct {
 	Items       []Definition           `json:"items"`
 }
 
-type Catalog struct { revision string; byItem map[string]Definition; weaponTypes map[WeaponType]WeaponTypeDefinition }
+type Catalog struct {
+	revision    string
+	byItem      map[string]Definition
+	weaponTypes map[WeaponType]WeaponTypeDefinition
+}
 
 func Default() (*Catalog, error) {
 	var def CatalogDefinition
 	decoder := json.NewDecoder(strings.NewReader(string(defaultCatalogJSON)))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&def); err != nil { return nil, err }
-	def.Revision = "equipment-progression-v2"
+	if err := decoder.Decode(&def); err != nil {
+		return nil, err
+	}
+	// Keep the authored weapon progression revision stable. Protocol v29 owns the seven-slot
+	// compatibility fence; the appended armor definitions extend this Server catalog without
+	// rewriting the historical weapon-data revision identifier.
 	def.Items = append(def.Items, defaultLowTierArmor()...)
 	return New(def)
 }
@@ -113,26 +124,43 @@ func Load(data []byte) (*Catalog, error) {
 	var def CatalogDefinition
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&def); err != nil { return nil, err }
+	if err := decoder.Decode(&def); err != nil {
+		return nil, err
+	}
 	return New(def)
 }
 
 func New(def CatalogDefinition) (*Catalog, error) {
 	def.Revision = strings.TrimSpace(def.Revision)
-	if def.Revision == "" || len(def.Items) == 0 { return nil, ErrInvalidCatalog }
-	catalog := &Catalog{revision: def.Revision, byItem: make(map[string]Definition, len(def.Items)), weaponTypes: make(map[WeaponType]WeaponTypeDefinition, len(def.WeaponTypes))}
+	if def.Revision == "" || len(def.Items) == 0 {
+		return nil, ErrInvalidCatalog
+	}
+	catalog := &Catalog{
+		revision:    def.Revision,
+		byItem:      make(map[string]Definition, len(def.Items)),
+		weaponTypes: make(map[WeaponType]WeaponTypeDefinition, len(def.WeaponTypes)),
+	}
 	for _, authored := range def.WeaponTypes {
 		authored.WeaponType = WeaponType(strings.TrimSpace(string(authored.WeaponType)))
 		authored.BasicAttackDamageAttribute = characterstats.ID(strings.TrimSpace(string(authored.BasicAttackDamageAttribute)))
-		if authored.WeaponType == "" || !validBasicAttackDamageAttribute(authored.BasicAttackDamageAttribute) { return nil, ErrInvalidCatalog }
-		if _, exists := catalog.weaponTypes[authored.WeaponType]; exists { return nil, ErrInvalidCatalog }
+		if authored.WeaponType == "" || !validBasicAttackDamageAttribute(authored.BasicAttackDamageAttribute) {
+			return nil, ErrInvalidCatalog
+		}
+		if _, exists := catalog.weaponTypes[authored.WeaponType]; exists {
+			return nil, ErrInvalidCatalog
+		}
 		if authored.BasicAttackIntervalMS != nil {
-			if *authored.BasicAttackIntervalMS == 0 { return nil, ErrInvalidCatalog }
-			interval := *authored.BasicAttackIntervalMS; authored.BasicAttackIntervalMS = &interval
+			if *authored.BasicAttackIntervalMS == 0 {
+				return nil, ErrInvalidCatalog
+			}
+			interval := *authored.BasicAttackIntervalMS
+			authored.BasicAttackIntervalMS = &interval
 		}
 		if authored.BasicAttackRange != nil {
 			attackRange := *authored.BasicAttackRange
-			if attackRange <= 0 || math.IsNaN(float64(attackRange)) || math.IsInf(float64(attackRange), 0) { return nil, ErrInvalidCatalog }
+			if attackRange <= 0 || math.IsNaN(float64(attackRange)) || math.IsInf(float64(attackRange), 0) {
+				return nil, ErrInvalidCatalog
+			}
 			authored.BasicAttackRange = &attackRange
 		}
 		catalog.weaponTypes[authored.WeaponType] = authored
@@ -141,24 +169,41 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
 		item.Material = strings.TrimSpace(item.Material)
 		item.ArmorClass = ArmorClass(strings.TrimSpace(string(item.ArmorClass)))
-		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) { return nil, ErrInvalidCatalog }
-		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists { return nil, ErrInvalidCatalog }
+		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) {
+			return nil, ErrInvalidCatalog
+		}
+		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {
+			return nil, ErrInvalidCatalog
+		}
 		staticModifiers, err := canonicalStaticModifiers(item.StaticModifiers)
-		if err != nil { return nil, ErrInvalidCatalog }
+		if err != nil {
+			return nil, ErrInvalidCatalog
+		}
 		item.StaticModifiers = staticModifiers
 		switch item.Kind {
 		case KindWeapon:
-			if item.Slot != SlotMainHand || item.Weapon == nil || item.Shield != nil || item.ArmorClass != "" { return nil, ErrInvalidCatalog }
+			if item.Slot != SlotMainHand || item.Weapon == nil || item.Shield != nil || item.ArmorClass != "" {
+				return nil, ErrInvalidCatalog
+			}
 			weapon := *item.Weapon
 			weapon.WeaponType = WeaponType(strings.TrimSpace(string(weapon.WeaponType)))
-			if !validWeapon(weapon) { return nil, ErrInvalidCatalog }
-			if _, ok := catalog.weaponTypes[weapon.WeaponType]; !ok { return nil, ErrInvalidCatalog }
+			if !validWeapon(weapon) {
+				return nil, ErrInvalidCatalog
+			}
+			if _, ok := catalog.weaponTypes[weapon.WeaponType]; !ok {
+				return nil, ErrInvalidCatalog
+			}
 			item.Weapon = &weapon
 		case KindShield:
-			if item.Slot != SlotOffHand || item.Shield == nil || item.Weapon != nil || item.ArmorClass != "" || !validShield(*item.Shield) { return nil, ErrInvalidCatalog }
-			shield := *item.Shield; item.Shield = &shield
+			if item.Slot != SlotOffHand || item.Shield == nil || item.Weapon != nil || item.ArmorClass != "" || !validShield(*item.Shield) {
+				return nil, ErrInvalidCatalog
+			}
+			shield := *item.Shield
+			item.Shield = &shield
 		case KindArmor:
-			if !validArmorSlot(item.Slot) || !validArmorClass(item.ArmorClass) || item.Weapon != nil || item.Shield != nil { return nil, ErrInvalidCatalog }
+			if !validArmorSlot(item.Slot) || !validArmorClass(item.ArmorClass) || item.Weapon != nil || item.Shield != nil {
+				return nil, ErrInvalidCatalog
+			}
 		default:
 			return nil, ErrInvalidCatalog
 		}
@@ -168,51 +213,147 @@ func New(def CatalogDefinition) (*Catalog, error) {
 }
 
 func validArmorSlot(slot Slot) bool {
-	switch slot { case SlotHelmet, SlotChest, SlotGloves, SlotLegs, SlotBoots: return true; default: return false }
+	switch slot {
+	case SlotHelmet, SlotChest, SlotGloves, SlotLegs, SlotBoots:
+		return true
+	default:
+		return false
+	}
 }
-func validArmorClass(class ArmorClass) bool { switch class { case ArmorClassCloth, ArmorClassLeather, ArmorClassHeavy: return true; default: return false } }
-func validTier(tier Tier) bool { switch tier { case TierLow, TierMid, TierHigh: return true; default: return false } }
-func validBasicAttackDamageAttribute(attribute characterstats.ID) bool { switch attribute { case "", characterstats.Strength, characterstats.Agility: return true; default: return false } }
-func validWeapon(w Weapon) bool { return w.WeaponType != "" && validRange(w.SmallDamage) && validRange(w.LargeDamage) }
-func validRange(r DamageRange) bool { return r.Min > 0 && r.Max >= r.Min }
+
+func validArmorClass(class ArmorClass) bool {
+	switch class {
+	case ArmorClassCloth, ArmorClassLeather, ArmorClassHeavy:
+		return true
+	default:
+		return false
+	}
+}
+
+func validTier(tier Tier) bool {
+	switch tier {
+	case TierLow, TierMid, TierHigh:
+		return true
+	default:
+		return false
+	}
+}
+
+func validBasicAttackDamageAttribute(attribute characterstats.ID) bool {
+	switch attribute {
+	case "", characterstats.Strength, characterstats.Agility:
+		return true
+	default:
+		return false
+	}
+}
+
+func validWeapon(w Weapon) bool {
+	return w.WeaponType != "" && validRange(w.SmallDamage) && validRange(w.LargeDamage)
+}
+
+func validRange(r DamageRange) bool {
+	return r.Min > 0 && r.Max >= r.Min
+}
+
 func validShield(s Shield) bool {
-	if s.BlockChancePercent > 100 || s.BlockDamageReductionPercent > 100 || s.MagicDamageReductionPercent > 100 { return false }
+	if s.BlockChancePercent > 100 || s.BlockDamageReductionPercent > 100 || s.MagicDamageReductionPercent > 100 {
+		return false
+	}
 	return (s.BlockChancePercent == 0) == (s.BlockDamageReductionPercent == 0)
 }
 
-func (c *Catalog) Revision() string { if c == nil { return "" }; return c.revision }
+func (c *Catalog) Revision() string {
+	if c == nil {
+		return ""
+	}
+	return c.revision
+}
+
 func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
-	if c == nil { return Definition{}, false }
+	if c == nil {
+		return Definition{}, false
+	}
 	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
-	if !ok { return Definition{}, false }
+	if !ok {
+		return Definition{}, false
+	}
 	item.StaticModifiers = cloneStaticModifiers(item.StaticModifiers)
-	if item.Weapon != nil { copy := *item.Weapon; item.Weapon = &copy }
-	if item.Shield != nil { copy := *item.Shield; item.Shield = &copy }
+	if item.Weapon != nil {
+		copy := *item.Weapon
+		item.Weapon = &copy
+	}
+	if item.Shield != nil {
+		copy := *item.Shield
+		item.Shield = &copy
+	}
 	return item, true
 }
+
 func (c *Catalog) BasicAttackIntervalMSForItem(itemArchetypeID string) (uint32, bool) {
-	if c == nil { return 0, false }
-	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]; if !ok || item.Weapon == nil { return 0, false }
-	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]; if !ok || typeDefinition.BasicAttackIntervalMS == nil { return 0, false }
+	if c == nil {
+		return 0, false
+	}
+	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	if !ok || item.Weapon == nil {
+		return 0, false
+	}
+	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]
+	if !ok || typeDefinition.BasicAttackIntervalMS == nil {
+		return 0, false
+	}
 	return *typeDefinition.BasicAttackIntervalMS, true
 }
+
 func (c *Catalog) BasicAttackDamageAttributeForItem(itemArchetypeID string) (characterstats.ID, bool) {
-	if c == nil { return "", false }
-	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]; if !ok || item.Weapon == nil { return "", false }
-	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]; if !ok || typeDefinition.BasicAttackDamageAttribute == "" { return "", false }
+	if c == nil {
+		return "", false
+	}
+	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	if !ok || item.Weapon == nil {
+		return "", false
+	}
+	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]
+	if !ok || typeDefinition.BasicAttackDamageAttribute == "" {
+		return "", false
+	}
 	return typeDefinition.BasicAttackDamageAttribute, true
 }
+
 func (c *Catalog) BasicAttackRangeForItem(itemArchetypeID string) (float32, bool) {
-	if c == nil { return 0, false }
-	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]; if !ok || item.Weapon == nil { return 0, false }
-	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]; if !ok || typeDefinition.BasicAttackRange == nil { return 0, false }
+	if c == nil {
+		return 0, false
+	}
+	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	if !ok || item.Weapon == nil {
+		return 0, false
+	}
+	typeDefinition, ok := c.weaponTypes[item.Weapon.WeaponType]
+	if !ok || typeDefinition.BasicAttackRange == nil {
+		return 0, false
+	}
 	return *typeDefinition.BasicAttackRange, true
 }
+
 func (c *Catalog) UnitWeights() map[string]uint32 {
-	if c == nil { return nil }
-	weights := make(map[string]uint32, len(c.byItem)); for id, item := range c.byItem { weights[id] = item.Weight }; return weights
+	if c == nil {
+		return nil
+	}
+	weights := make(map[string]uint32, len(c.byItem))
+	for id, item := range c.byItem {
+		weights[id] = item.Weight
+	}
+	return weights
 }
+
 func (d Definition) DamageRangeFor(size BodySize) DamageRange {
-	if d.Weapon == nil { return DamageRange{} }
-	switch size { case BodySizeLarge, BodySizeGiant: return d.Weapon.LargeDamage; default: return d.Weapon.SmallDamage }
+	if d.Weapon == nil {
+		return DamageRange{}
+	}
+	switch size {
+	case BodySizeLarge, BodySizeGiant:
+		return d.Weapon.LargeDamage
+	default:
+		return d.Weapon.SmallDamage
+	}
 }
