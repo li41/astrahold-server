@@ -30,8 +30,6 @@ func TestLowTierWeaponDamageRangesUseTargetSizeAndExtraDamage(t *testing.T) {
 }
 
 func TestWeaponAttackCooldownConversionPreservesExactTickBoundaries(t *testing.T) {
-	// Synthetic conversion fixtures only; production WeaponType cadence remains unauthored until
-	// product values are approved.
 	cases := []struct {
 		milliseconds uint32
 		wantTicks    uint64
@@ -63,8 +61,6 @@ func TestDirectSpawnRetainsAuthoritativeBodySizeAndClearsOnReuse(t *testing.T) {
 	if !ok || entity.BodySize != world.EntityBodySizeLarge { t.Fatalf("spawned entity = %#v ok=%v", entity, ok) }
 	if got := rt.entityWeaponBodySize(9001); got != equipmentcatalog.BodySizeLarge { t.Fatalf("body size = %q, want large", got) }
 
-	// EntityState owns the classification, so normal world removal cannot leak a stale large size
-	// when the same stable runtime EntityID is later reused by unclassified compatibility content.
 	rt.world.Remove(9001)
 	rt.characters.Remove(9001)
 	request.Entity.ArchetypeID = "test-unclassified-direct"
@@ -78,7 +74,7 @@ func TestDirectSpawnRetainsAuthoritativeBodySizeAndClearsOnReuse(t *testing.T) {
 
 func TestInventoryWeightsComeFromEquipmentCatalog(t *testing.T) {
 	weights := defaultEquipmentCatalog.UnitWeights()
-	if len(weights) != 8 { t.Fatalf("catalog weight count = %d, want 8", len(weights)) }
+	if len(weights) != 22 { t.Fatalf("catalog weight count = %d, want 22", len(weights)) }
 	for itemArchetypeID, want := range weights {
 		inv := newCharacterInventory(32)
 		if err := inv.Add(itemArchetypeID, 1); err != nil { t.Fatalf("add %s: %v", itemArchetypeID, err) }
