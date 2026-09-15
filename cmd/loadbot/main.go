@@ -14,14 +14,14 @@ import (
 
 func main() {
 	var (
-		tcpAddress   = flag.String("tcp", "127.0.0.1:17777", "Load Server reliable TCP address")
-		clients      = flag.Int("clients", 500, "Number of headless clients")
-		scenarioText = flag.String("scenario", string(loadlab.ScenarioGateZerg), "distributed | gate-zerg | vertical-siege")
-		inputRate    = flag.Int("input-rate", 20, "Movement input rate per client (Hz)")
-		rampUp       = flag.Duration("ramp-up", 5*time.Second, "Connection ramp-up window")
-		duration     = flag.Duration("duration", 90*time.Second, "Maximum bot process duration; 0 waits until server closes")
+		tcpAddress     = flag.String("tcp", "127.0.0.1:17777", "Load Server reliable TCP address")
+		clients        = flag.Int("clients", 500, "Number of headless clients")
+		scenarioText   = flag.String("scenario", string(loadlab.ScenarioCrowd), "distributed | crowd | teleport-churn")
+		inputRate      = flag.Int("input-rate", 20, "Movement input rate per client (Hz)")
+		rampUp         = flag.Duration("ramp-up", 5*time.Second, "Connection ramp-up window")
+		duration       = flag.Duration("duration", 90*time.Second, "Maximum bot process duration; 0 waits until server closes")
 		connectTimeout = flag.Duration("connect-timeout", 5*time.Second, "Per-client TCP connect timeout")
-		reportPath   = flag.String("report", "artifacts/loadlab-bots.json", "Bot JSON report path")
+		reportPath     = flag.String("report", "artifacts/loadlab-bots.json", "Bot JSON report path")
 	)
 	flag.Parse()
 

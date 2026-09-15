@@ -10,10 +10,10 @@ func TestStoreV4InventoryRoundTripPreservesStacksAndMainHand(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:inventory-v4")
-	inventoryState, err := NewInventoryState([]InventoryStack{
+	inventoryState, err := NewInventoryStateWithEquipment([]InventoryStack{
 		{ItemArchetypeID: "item_minor_mana_potion", Quantity: 2},
 		{ItemArchetypeID: "item_minor_healing_potion", Quantity: 3},
-	}, "item_training_blade")
+	}, "item_training_blade", "")
 	if err != nil { t.Fatal(err) }
 	snapshot := testSnapshot()
 	snapshot.Inventory = inventoryState
@@ -22,8 +22,10 @@ func TestStoreV4InventoryRoundTripPreservesStacksAndMainHand(t *testing.T) {
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
 	if loaded != saved { t.Fatalf("loaded=%#v saved=%#v", loaded, saved) }
-	if !loaded.Snapshot.Inventory.Initialized || loaded.Snapshot.Inventory.MainHand != "item_training_blade" {
-		t.Fatalf("inventory=%#v", loaded.Snapshot.Inventory)
+	equipment, err := loaded.Snapshot.Inventory.Equipment()
+	if err != nil { t.Fatal(err) }
+	if !loaded.Snapshot.Inventory.Initialized || len(equipment) != 1 || equipment[0].Slot != "main_hand" || equipment[0].ItemArchetypeID != "item_training_blade" {
+		t.Fatalf("inventory=%#v equipment=%#v", loaded.Snapshot.Inventory, equipment)
 	}
 	stacks, err := loaded.Snapshot.Inventory.Stacks()
 	if err != nil { t.Fatal(err) }
@@ -57,7 +59,7 @@ func TestStoreV3InventoryMigrationRemainsUninitialized(t *testing.T) {
 func TestSaveJournalV3InventoryRoundTripAndV2Migration(t *testing.T) {
 	identity := trusted(t, "character:journal-inventory")
 	snapshot := testSnapshot()
-	inventoryState, err := NewInventoryState([]InventoryStack{{ItemArchetypeID: "item_minor_healing_potion", Quantity: 4}}, "item_training_blade")
+	inventoryState, err := NewInventoryStateWithEquipment([]InventoryStack{{ItemArchetypeID: "item_minor_healing_potion", Quantity: 4}}, "item_training_blade", "")
 	if err != nil { t.Fatal(err) }
 	snapshot.Inventory = inventoryState
 	intent := SaveIntent{IntentID: 7, Identity: identity, Snapshot: snapshot}
@@ -67,12 +69,14 @@ func TestSaveJournalV3InventoryRoundTripAndV2Migration(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if decoded != intent { t.Fatalf("decoded=%#v intent=%#v", decoded, intent) }
 
+	legacySnapshot := snapshotToSaveJournalWire(testSnapshot())
+	legacySnapshot.Inventory = InventoryState{}
+	legacySnapshot.PrimaryStats = nil
 	legacyWire := saveJournalWireRecord{
 		SchemaVersion: ResourceSaveJournalSchemaVersion,
 		RecordID: 4, ExpectedRevision: 3, IntentID: 8, CharacterID: string(identity.ID),
-		Snapshot: snapshotToSaveJournalWire(testSnapshot()),
+		Snapshot: legacySnapshot,
 	}
-	legacyWire.Snapshot.Inventory = InventoryState{}
 	legacyPayload, err := json.Marshal(legacyWire)
 	if err != nil { t.Fatal(err) }
 	_, _, legacyDecoded, err := decodeSaveJournalRecord(legacyPayload)

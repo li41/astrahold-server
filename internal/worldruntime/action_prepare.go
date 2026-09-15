@@ -11,6 +11,10 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 	// Equipment, pickup, item-use and respawn share the existing bounded Reliable client-intent
 	// carrier, but remain distinct typed payloads and never enter combat preparation or the
 	// skill/action path.
+	if command.equipmentInstance != nil {
+		r.applyEquipmentInstanceCommand(name, command, report)
+		return
+	}
 	if command.equipment != nil {
 		r.applyEquipmentCommand(name, command, report)
 		return
@@ -63,8 +67,8 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		return
 	}
 
-	// Network/session authority ends here. Combat execution consumes an ActorEntityID intent so
-	// future Server-owned AI can reuse the same legality/damage path without inventing fake Sessions.
+	// Class/profession identity no longer participates in production action authorization.
+	// Action legality is owned by the authoritative combat/skill/equipment systems below.
 	intent := combatIntentFromClientAction(s.EntityID, command.action)
 	r.prepareAndDispatchAction(name, command.sessionID, command.sequence, intent, tick, delta, report)
 }

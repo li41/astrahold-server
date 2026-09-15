@@ -10,27 +10,24 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestVerticalSiegePlayerFactoryUsesAllLayers(t *testing.T) {
+func TestCrowdPlayerFactoryUsesGroundOnly(t *testing.T) {
 	loaded, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := NewPlayerFactory(loaded.Definition, ScenarioVerticalSiege, 100)
+	factory, err := NewPlayerFactory(loaded.Definition, ScenarioCrowd, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	ground := factory(session.ID(1), world.EntityID(1))
-	if ground.Entity.Transform.Position.Layer != 0 {
-		t.Fatalf("ground layer = %d, want 0", ground.Entity.Transform.Position.Layer)
-	}
-	ramp := factory(session.ID(6), world.EntityID(6))
-	if ramp.Entity.Transform.Position.Layer != 1 {
-		t.Fatalf("ramp layer = %d, want 1", ramp.Entity.Transform.Position.Layer)
-	}
-	wall := factory(session.ID(8), world.EntityID(8))
-	if wall.Entity.Transform.Position.Layer != 2 || wall.Entity.Transform.Position.Y != 8 {
-		t.Fatalf("wall position = %+v, want layer=2 y=8", wall.Entity.Transform.Position)
+	for entityID := world.EntityID(1); entityID <= 100; entityID++ {
+		player := factory(session.ID(entityID), entityID)
+		position := player.Entity.Transform.Position
+		if position.Layer != 0 || position.Y != 0 {
+			t.Fatalf("entity %d position=%+v, want ground layer", entityID, position)
+		}
+		if !loaded.Definition.Surfaces[0].Bounds.Contains(position.X, position.Z) {
+			t.Fatalf("entity %d position=%+v outside ground", entityID, position)
+		}
 	}
 }
 
@@ -95,6 +92,14 @@ func TestTeleportChurnRequiresQuarterablePopulation(t *testing.T) {
 	}
 }
 
+func TestRetiredCastleScenariosAreRejected(t *testing.T) {
+	for _, scenario := range []string{"gate-zerg", "vertical-siege"} {
+		if _, err := ParseScenario(scenario); err == nil {
+			t.Fatalf("retired scenario %q unexpectedly accepted", scenario)
+		}
+	}
+}
+
 func TestMovementDirectionIsDeterministic(t *testing.T) {
 	dx1, dz1 := MovementDirection(ScenarioDistributed, world.EntityID(42), 3*time.Second)
 	dx2, dz2 := MovementDirection(ScenarioDistributed, world.EntityID(42), 3*time.Second)
@@ -102,9 +107,9 @@ func TestMovementDirectionIsDeterministic(t *testing.T) {
 		t.Fatalf("direction is not deterministic: (%f,%f) != (%f,%f)", dx1, dz1, dx2, dz2)
 	}
 
-	dx, dz := MovementDirection(ScenarioGateZerg, world.EntityID(1), 0)
-	if dx != 0 || dz != 1 {
-		t.Fatalf("gate-zerg direction = (%f,%f), want (0,1)", dx, dz)
+	dx, dz := MovementDirection(ScenarioCrowd, world.EntityID(1), 0)
+	if dx != 0 || dz != -1 {
+		t.Fatalf("crowd direction = (%f,%f), want (0,-1)", dx, dz)
 	}
 
 	dx, dz = MovementDirection(ScenarioTeleportChurn, world.EntityID(1), 0)

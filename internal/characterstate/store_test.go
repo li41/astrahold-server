@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -61,6 +62,7 @@ func TestStoreMigratesV2RecordToFullMP(t *testing.T) {
 	if loaded.Snapshot.MP != LegacyDefaultMaxMP || loaded.Snapshot.MaxMP != LegacyDefaultMaxMP {
 		t.Fatalf("migrated mp=%d/%d", loaded.Snapshot.MP, loaded.Snapshot.MaxMP)
 	}
+	if loaded.Snapshot.PrimaryStats != characterstats.DefaultPrimary() { t.Fatalf("migrated stats=%#v", loaded.Snapshot.PrimaryStats) }
 }
 
 func TestStoreCreateOnlyConflictDoesNotOverwrite(t *testing.T) {
@@ -94,6 +96,7 @@ func TestStoreRejectsInvalidSnapshots(t *testing.T) {
 		func() Snapshot { s := testSnapshot(); s.HP = 0; s.Defeated = false; return s }(),
 		func() Snapshot { s := testSnapshot(); s.Position.X = float32(math.NaN()); return s }(),
 		func() Snapshot { s := testSnapshot(); s.Yaw = float32(math.Inf(1)); return s }(),
+		func() Snapshot { s := testSnapshot(); s.PrimaryStats.Charisma = 9; return s }(),
 	}
 	for i, snapshot := range tests {
 		if _, err := store.Save(identity, 0, snapshot); !errors.Is(err, ErrInvalidSnapshot) { t.Fatalf("case=%d err=%v", i, err) }
@@ -128,6 +131,8 @@ func TestStoreRevisionOverflowDoesNotAdvanceTruth(t *testing.T) {
 		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
 		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated,
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
+		Inventory: snapshot.Inventory,
+		PrimaryStats: primaryStatsToWire(snapshot.PrimaryStats),
 	}
 	data, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 	if err := os.WriteFile(store.recordPath(identity.ID), append(data,'\n'), 0o600); err != nil { t.Fatal(err) }
@@ -161,5 +166,6 @@ func testSnapshot() Snapshot {
 		HP:900, MaxHP:1000, MP:100, MaxMP:100, Defeated:false,
 		Position:world.Position{X:4,Y:2,Z:-7,Layer:1}, Yaw:0.75,
 		Inventory: InventoryState{Initialized: true},
+		PrimaryStats: characterstats.DefaultPrimary(),
 	}
 }

@@ -27,11 +27,10 @@ func TestLifecycleBackpressureRetriesWithoutDeliveryLoss(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.SnapshotEveryTicks = 1
-	// Protocol v14+ registration emits two independent authoritative ReliableOrdered
-	// bootstrap views before lifecycle replication: InventorySnapshot and EquipmentSnapshot.
-	// Capacity 3 therefore admits those two plus EntitySpawn(1), deliberately forcing the
-	// second spawn to backpressure so this test keeps exercising lifecycle retry semantics.
-	conn := session.NewQueueConnection(3, 16)
+	// Protocol v28 registration emits five independent authoritative ReliableOrdered owner views
+	// before lifecycle replication. Capacity 6 therefore admits those five plus EntitySpawn(1),
+	// deliberately forcing EntitySpawn(2) to backpressure so retry semantics remain exact.
+	conn := session.NewQueueConnection(6, 16)
 	s, err := session.New(1, 1, 20, conn)
 	if err != nil {
 		t.Fatal(err)
@@ -52,27 +51,28 @@ func TestLifecycleBackpressureRetriesWithoutDeliveryLoss(t *testing.T) {
 		t.Fatal("backpressured spawn must not become known")
 	}
 
-	select {
-	case envelope := <-conn.Reliable():
-		if _, ok := envelope.Message.(protocol.InventorySnapshot); !ok {
-			t.Fatalf("first reliable message=%T %#v, want InventorySnapshot", envelope.Message, envelope.Message)
-		}
-	default:
-		t.Fatal("expected inventory bootstrap in reliable queue")
+	wantBootstrap := []protocol.MessageType{
+		protocol.MessageInventorySnapshot,
+		protocol.MessageInventoryInstanceSnapshot,
+		protocol.MessageEquipmentSnapshot,
+		protocol.MessageEquipmentInstanceSnapshot,
+		protocol.MessageAppearanceSnapshot,
 	}
-	select {
-	case envelope := <-conn.Reliable():
-		if _, ok := envelope.Message.(protocol.EquipmentSnapshot); !ok {
-			t.Fatalf("second reliable message=%T %#v, want EquipmentSnapshot", envelope.Message, envelope.Message)
+	for index, want := range wantBootstrap {
+		select {
+		case envelope := <-conn.Reliable():
+			if got := envelope.Message.Type(); got != want {
+				t.Fatalf("bootstrap[%d] type=%d (%T) want=%d", index, got, envelope.Message, want)
+			}
+		default:
+			t.Fatalf("expected bootstrap[%d] type=%d in reliable queue", index, want)
 		}
-	default:
-		t.Fatal("expected equipment bootstrap in reliable queue")
 	}
 	select {
 	case envelope := <-conn.Reliable():
 		spawn, ok := envelope.Message.(protocol.EntitySpawn)
 		if !ok || spawn.EntityID != 1 {
-			t.Fatalf("third reliable message=%T %#v, want EntitySpawn(1)", envelope.Message, envelope.Message)
+			t.Fatalf("sixth reliable message=%T %#v, want EntitySpawn(1)", envelope.Message, envelope.Message)
 		}
 	default:
 		t.Fatal("expected first spawn in reliable queue")

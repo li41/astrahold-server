@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
-  "revision": "s3f4-001",
+  "revision": "first-continent-world-master-v1",
   "spawn_points": [
     {
       "id": "field-camp",
       "class": "safe",
       "x": 0,
       "y": 0,
-      "z": -35,
+      "z": -220,
       "layer": 0,
       "checkpoint_activation_radius": 0
     },

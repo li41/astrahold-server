@@ -25,14 +25,14 @@ type ActionCommandSink interface {
 type EquipmentCommandSink interface {
 	EnqueueEquipmentCommand(session.ID, uint32, protocol.ClientEquipmentCommand) error
 }
+type EquipmentInstanceCommandSink interface {
+	EnqueueEquipmentInstanceCommand(session.ID, uint32, protocol.ClientEquipmentInstanceCommand) error
+}
 type PickupCommandSink interface {
 	EnqueuePickupItem(session.ID, uint32, protocol.ClientPickupItem) error
 }
 type ItemUseCommandSink interface {
 	EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error
-}
-type InitialClassSelectionCommandSink interface {
-	EnqueueInitialClassSelection(session.ID, uint32, protocol.ClientInitialClassSelection) error
 }
 type NPCCommandSink interface {
 	EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error
@@ -54,6 +54,8 @@ func NewIngress(sink MoveCommandSink) *Ingress {
 }
 
 // Handle validates the client-owned message/delivery boundary before entering the bounded runtime queue.
+// Fixed-class selection is intentionally unsupported by production ingress. Its compatibility wire
+// type may remain decodable, but class/profession selection is no longer a gameplay command.
 func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error {
 	if sessionID == 0 || envelope.Sequence == 0 || envelope.Message == nil {
 		return ErrInvalidClientEnvelope
@@ -83,6 +85,14 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil || !validEquipmentCommand(*message) { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueEquipmentCommand(sessionID, envelope.Sequence, *message)
+	case protocol.ClientEquipmentInstanceCommand:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		if !validEquipmentInstanceCommand(message) { return ErrInvalidClientEnvelope }
+		return g.enqueueEquipmentInstanceCommand(sessionID, envelope.Sequence, message)
+	case *protocol.ClientEquipmentInstanceCommand:
+		if message == nil || !validEquipmentInstanceCommand(*message) { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		return g.enqueueEquipmentInstanceCommand(sessionID, envelope.Sequence, *message)
 	case protocol.ClientPickupItem:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		if message.DropEntityID == 0 { return ErrInvalidClientEnvelope }
@@ -99,14 +109,6 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil || strings.TrimSpace(message.ItemArchetypeID) == "" { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueUseItem(sessionID, envelope.Sequence, *message)
-	case protocol.ClientInitialClassSelection:
-		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
-		if strings.TrimSpace(message.ClassID) == "" { return ErrInvalidClientEnvelope }
-		return g.enqueueInitialClassSelection(sessionID, envelope.Sequence, message)
-	case *protocol.ClientInitialClassSelection:
-		if message == nil || strings.TrimSpace(message.ClassID) == "" { return ErrInvalidClientEnvelope }
-		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
-		return g.enqueueInitialClassSelection(sessionID, envelope.Sequence, *message)
 	case protocol.ClientInteractNPC:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		if message.NPCEntityID == 0 { return ErrInvalidClientEnvelope }
@@ -160,6 +162,23 @@ func validEquipmentCommand(command protocol.ClientEquipmentCommand) bool {
 	}
 }
 
+func validEquipmentInstanceCommand(command protocol.ClientEquipmentInstanceCommand) bool {
+	switch command.Slot {
+	case protocol.EquipmentSlotMainHand, protocol.EquipmentSlotOffHand:
+	default:
+		return false
+	}
+	instanceID := strings.TrimSpace(command.ItemInstanceID)
+	switch command.Operation {
+	case protocol.EquipmentOperationEquip:
+		return instanceID != "" && instanceID == command.ItemInstanceID
+	case protocol.EquipmentOperationUnequip:
+		return command.ItemInstanceID == ""
+	default:
+		return false
+	}
+}
+
 func validShopCommand(command protocol.ClientShopCommand) bool {
 	if command.NPCEntityID == 0 { return false }
 	switch command.Operation {
@@ -184,6 +203,10 @@ func (g *Ingress) enqueueEquipmentCommand(sessionID session.ID, sequence uint32,
 	sink, ok := g.sink.(EquipmentCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueEquipmentCommand(sessionID, sequence, command)
 }
+func (g *Ingress) enqueueEquipmentInstanceCommand(sessionID session.ID, sequence uint32, command protocol.ClientEquipmentInstanceCommand) error {
+	sink, ok := g.sink.(EquipmentInstanceCommandSink); if !ok { return ErrUnsupportedClientMessage }
+	return sink.EnqueueEquipmentInstanceCommand(sessionID, sequence, command)
+}
 func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, intent protocol.ClientPickupItem) error {
 	sink, ok := g.sink.(PickupCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueuePickupItem(sessionID, sequence, intent)
@@ -191,10 +214,6 @@ func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, inten
 func (g *Ingress) enqueueUseItem(sessionID session.ID, sequence uint32, intent protocol.ClientUseItem) error {
 	sink, ok := g.sink.(ItemUseCommandSink); if !ok { return ErrUnsupportedClientMessage }
 	return sink.EnqueueUseItem(sessionID, sequence, intent)
-}
-func (g *Ingress) enqueueInitialClassSelection(sessionID session.ID, sequence uint32, intent protocol.ClientInitialClassSelection) error {
-	sink, ok := g.sink.(InitialClassSelectionCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueInitialClassSelection(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueInteractNPC(sessionID session.ID, sequence uint32, intent protocol.ClientInteractNPC) error {
 	sink, ok := g.sink.(NPCCommandSink); if !ok { return ErrUnsupportedClientMessage }

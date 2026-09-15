@@ -7,7 +7,7 @@ import (
 )
 
 const validWorldJSON = `{
-  "schema_version": 2,
+  "schema_version": 4,
   "world_id": "test-world",
   "revision": "r1",
   "units": "meters",
@@ -17,6 +17,8 @@ const validWorldJSON = `{
     "bounds":{"min_x":-10,"max_x":10,"min_z":-10,"max_z":10},
     "plane":{"origin_x":0,"origin_z":0,"base_y":0,"slope_x":0,"slope_z":0}
   }],
+  "regions": [],
+  "maps": [],
   "portals": [],
   "blockers": [],
   "gates": []
@@ -60,7 +62,9 @@ func TestValidateRejectsOverlappingSameLayerSurfaces(t *testing.T) {
 
 func TestValidateRejectsGateWithMissingBlocker(t *testing.T) {
 	loaded, err := Load(strings.NewReader(validWorldJSON))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	d := loaded.Definition
 	d.Gates = []Gate{{
 		ID: "gate", BlockerID: "missing", MaxHP: 100,

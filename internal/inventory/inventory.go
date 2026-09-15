@@ -1,4 +1,4 @@
-// Package inventory owns authoritative character item-stack and minimal equipment state.
+// Package inventory owns authoritative character item-stack and equipment state.
 // Presentation metadata (mesh/icon/name) stays outside the Server; the Server stores stable item archetype IDs only.
 package inventory
 
@@ -7,15 +7,21 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/li41/astrahold-server/internal/iteminstance"
 )
 
 var (
 	ErrInvalidArchetype      = errors.New("inventory: invalid archetype")
 	ErrInvalidQuantity       = errors.New("inventory: invalid quantity")
+	ErrInvalidInstance       = errors.New("inventory: invalid item instance")
+	ErrInstanceExists        = errors.New("inventory: item instance already exists")
+	ErrInstanceNotFound      = errors.New("inventory: item instance not found")
 	ErrFull                  = errors.New("inventory: full")
 	ErrWeightExceeded        = errors.New("inventory: carry weight exceeded")
 	ErrInsufficient          = errors.New("inventory: insufficient quantity")
 	ErrQuantityOverflow      = errors.New("inventory: quantity overflow")
+	ErrInvalidEquipmentSlot  = errors.New("inventory: invalid equipment slot")
 	ErrEquipmentSlotOccupied = errors.New("inventory: equipment slot occupied")
 	ErrEquipmentSlotEmpty    = errors.New("inventory: equipment slot empty")
 )
@@ -23,6 +29,11 @@ var (
 type Stack struct {
 	ArchetypeID string
 	Quantity    uint32
+}
+
+type EquippedArchetype struct {
+	Slot        EquipmentSlot
+	ArchetypeID string
 }
 
 type WeightPolicy struct {
@@ -34,6 +45,7 @@ type WeightPolicy struct {
 type Inventory struct {
 	maxStacks int
 	stacks    map[string]uint32
+	instances map[iteminstance.ID]iteminstance.Instance
 	revision  uint64
 
 	maxWeight         uint64
@@ -41,8 +53,8 @@ type Inventory struct {
 	defaultUnitWeight uint32
 	unitWeights       map[string]uint32
 
-	mainHand          string
-	offHand           string
+	equipped          map[EquipmentSlot]string
+	equippedInstances map[EquipmentSlot]iteminstance.Instance
 	equipmentRevision uint64
 }
 
@@ -58,15 +70,42 @@ func NewWithWeightPolicy(maxStacks int, policy WeightPolicy) *Inventory {
 		if archetypeID == "" || weight == 0 { continue }
 		weights[archetypeID] = weight
 	}
-	return &Inventory{maxStacks: maxStacks, stacks: make(map[string]uint32), maxWeight: policy.MaxWeight, defaultUnitWeight: defaultWeight, unitWeights: weights}
+	return &Inventory{
+		maxStacks:         maxStacks,
+		stacks:            make(map[string]uint32),
+		instances:         make(map[iteminstance.ID]iteminstance.Instance),
+		maxWeight:         policy.MaxWeight,
+		defaultUnitWeight: defaultWeight,
+		unitWeights:       weights,
+		equipped:          make(map[EquipmentSlot]string, len(equipmentSlots)),
+		equippedInstances: make(map[EquipmentSlot]iteminstance.Instance, len(equipmentSlots)),
+	}
 }
 
 func (i *Inventory) Revision() uint64 { if i == nil { return 0 }; return i.revision }
 func (i *Inventory) EquipmentRevision() uint64 { if i == nil { return 0 }; return i.equipmentRevision }
-func (i *Inventory) MainHand() string { if i == nil { return "" }; return i.mainHand }
-func (i *Inventory) OffHand() string { if i == nil { return "" }; return i.offHand }
 func (i *Inventory) CurrentWeight() uint64 { if i == nil { return 0 }; return i.currentWeight }
 func (i *Inventory) MaxWeight() uint64 { if i == nil { return 0 }; return i.maxWeight }
+
+func (i *Inventory) Equipped(slot EquipmentSlot) string {
+	if i == nil || !ValidEquipmentSlot(slot) { return "" }
+	if archetypeID := i.equipped[slot]; archetypeID != "" { return archetypeID }
+	return i.equippedInstances[slot].ItemArchetypeID
+}
+
+func (i *Inventory) EquippedArchetypeSnapshot() []EquippedArchetype {
+	if i == nil { return nil }
+	out := make([]EquippedArchetype, 0, len(equipmentSlots))
+	for _, slot := range equipmentSlots {
+		if archetypeID := i.equipped[slot]; archetypeID != "" {
+			out = append(out, EquippedArchetype{Slot: slot, ArchetypeID: archetypeID})
+		}
+	}
+	return out
+}
+
+func (i *Inventory) MainHand() string { return i.Equipped(SlotMainHand) }
+func (i *Inventory) OffHand() string { return i.Equipped(SlotOffHand) }
 
 func (i *Inventory) Add(archetypeID string, quantity uint32) error {
 	if i == nil { return ErrFull }
@@ -74,7 +113,7 @@ func (i *Inventory) Add(archetypeID string, quantity uint32) error {
 	if archetypeID == "" { return ErrInvalidArchetype }
 	if quantity == 0 { return ErrInvalidQuantity }
 	current, exists := i.stacks[archetypeID]
-	if !exists && len(i.stacks) >= i.maxStacks { return ErrFull }
+	if !exists && i.unequippedEntryCount() >= i.maxStacks { return ErrFull }
 	if uint64(current)+uint64(quantity) > math.MaxUint32 { return ErrQuantityOverflow }
 	addedWeight := i.weightFor(archetypeID, quantity)
 	if i.maxWeight > 0 && (addedWeight > i.maxWeight || i.currentWeight > i.maxWeight-addedWeight) { return ErrWeightExceeded }
@@ -122,9 +161,9 @@ func (i *Inventory) Exchange(removeArchetypeID string, removeQuantity uint32, ad
 	}
 	addCurrent, addExists := i.stacks[addArchetypeID]
 	if uint64(addCurrent)+uint64(addQuantity) > math.MaxUint32 { return ErrQuantityOverflow }
-	stackCountAfterRemove := len(i.stacks)
-	if removeCurrent == removeQuantity { stackCountAfterRemove-- }
-	if !addExists && stackCountAfterRemove >= i.maxStacks { return ErrFull }
+	entryCountAfterRemove := i.unequippedEntryCount()
+	if removeCurrent == removeQuantity { entryCountAfterRemove-- }
+	if !addExists && entryCountAfterRemove >= i.maxStacks { return ErrFull }
 	remaining := removeCurrent - removeQuantity
 	if remaining == 0 { delete(i.stacks, removeArchetypeID) } else { i.stacks[removeArchetypeID] = remaining }
 	i.stacks[addArchetypeID] = addCurrent + addQuantity
@@ -133,50 +172,41 @@ func (i *Inventory) Exchange(removeArchetypeID string, removeQuantity uint32, ad
 	return nil
 }
 
-func (i *Inventory) equip(archetypeID string, slot *string) error {
+func (i *Inventory) Equip(slot EquipmentSlot, archetypeID string) error {
 	if i == nil { return ErrInsufficient }
+	if !ValidEquipmentSlot(slot) { return ErrInvalidEquipmentSlot }
 	archetypeID = strings.TrimSpace(archetypeID)
 	if archetypeID == "" { return ErrInvalidArchetype }
-	if *slot != "" { return ErrEquipmentSlotOccupied }
+	if i.equipped[slot] != "" || i.equippedInstances[slot].ID != "" { return ErrEquipmentSlotOccupied }
 	current := i.stacks[archetypeID]
 	if current == 0 { return ErrInsufficient }
 	if current == 1 { delete(i.stacks, archetypeID) } else { i.stacks[archetypeID] = current - 1 }
-	*slot = archetypeID
+	i.equipped[slot] = archetypeID
 	i.revision++
 	i.equipmentRevision++
 	return nil
 }
 
-func (i *Inventory) unequip(slot *string) (string, error) {
-	if i == nil || *slot == "" { return "", ErrEquipmentSlotEmpty }
-	archetypeID := *slot
+func (i *Inventory) Unequip(slot EquipmentSlot) (string, error) {
+	if i == nil { return "", ErrEquipmentSlotEmpty }
+	if !ValidEquipmentSlot(slot) { return "", ErrInvalidEquipmentSlot }
+	archetypeID := i.equipped[slot]
+	if archetypeID == "" { return "", ErrEquipmentSlotEmpty }
 	current, exists := i.stacks[archetypeID]
-	if !exists && len(i.stacks) >= i.maxStacks { return "", ErrFull }
+	if !exists && i.unequippedEntryCount() >= i.maxStacks { return "", ErrFull }
 	if current == math.MaxUint32 { return "", ErrQuantityOverflow }
 	i.stacks[archetypeID] = current + 1
-	*slot = ""
+	delete(i.equipped, slot)
 	i.revision++
 	i.equipmentRevision++
 	return archetypeID, nil
 }
 
 // Equipped items remain part of authoritative carried load, so equip/unequip never changes currentWeight.
-func (i *Inventory) EquipMainHand(archetypeID string) error {
-	if i == nil { return ErrInsufficient }
-	return i.equip(archetypeID, &i.mainHand)
-}
-func (i *Inventory) UnequipMainHand() (string, error) {
-	if i == nil { return "", ErrEquipmentSlotEmpty }
-	return i.unequip(&i.mainHand)
-}
-func (i *Inventory) EquipOffHand(archetypeID string) error {
-	if i == nil { return ErrInsufficient }
-	return i.equip(archetypeID, &i.offHand)
-}
-func (i *Inventory) UnequipOffHand() (string, error) {
-	if i == nil { return "", ErrEquipmentSlotEmpty }
-	return i.unequip(&i.offHand)
-}
+func (i *Inventory) EquipMainHand(archetypeID string) error { return i.Equip(SlotMainHand, archetypeID) }
+func (i *Inventory) UnequipMainHand() (string, error) { return i.Unequip(SlotMainHand) }
+func (i *Inventory) EquipOffHand(archetypeID string) error { return i.Equip(SlotOffHand, archetypeID) }
+func (i *Inventory) UnequipOffHand() (string, error) { return i.Unequip(SlotOffHand) }
 
 func (i *Inventory) Quantity(archetypeID string) uint32 { if i == nil { return 0 }; return i.stacks[archetypeID] }
 
@@ -186,6 +216,11 @@ func (i *Inventory) Snapshot() []Stack {
 	for archetypeID, quantity := range i.stacks { out = append(out, Stack{ArchetypeID: archetypeID, Quantity: quantity}) }
 	sort.Slice(out, func(a, b int) bool { return out[a].ArchetypeID < out[b].ArchetypeID })
 	return out
+}
+
+func (i *Inventory) unequippedEntryCount() int {
+	if i == nil { return 0 }
+	return len(i.stacks) + len(i.instances)
 }
 
 func (i *Inventory) weightFor(archetypeID string, quantity uint32) uint64 {

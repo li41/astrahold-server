@@ -40,3 +40,57 @@ func TestInputSequenceIsSessionScoped(t *testing.T) {
 		t.Fatalf("new session should accept sequence 1: %v", err)
 	}
 }
+
+func TestRegistryIndexesActiveSessionByEntity(t *testing.T) {
+	registry := NewRegistry()
+	s, err := New(10, 20, 30, NewQueueConnection(1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(s); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := registry.GetByEntity(20)
+	if !ok || got != s {
+		t.Fatalf("GetByEntity() = (%p, %t), want (%p, true)", got, ok, s)
+	}
+	if _, err := registry.Remove(s.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := registry.GetByEntity(20); ok || got != nil {
+		t.Fatalf("removed entity lookup = (%p, %t), want (nil, false)", got, ok)
+	}
+}
+
+func TestRegistryEntityIndexPreservesAddFirstReplacement(t *testing.T) {
+	registry := NewRegistry()
+	oldSession, err := New(10, 20, 30, NewQueueConnection(1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := New(11, 20, 30, NewQueueConnection(1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(oldSession); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(replacement); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := registry.GetByEntity(20); !ok || got != replacement {
+		t.Fatalf("replacement lookup = (%p, %t), want (%p, true)", got, ok, replacement)
+	}
+	if _, err := registry.Remove(oldSession.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := registry.GetByEntity(20); !ok || got != replacement {
+		t.Fatalf("lookup after old removal = (%p, %t), want (%p, true)", got, ok, replacement)
+	}
+	if _, err := registry.Remove(replacement.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := registry.GetByEntity(20); ok || got != nil {
+		t.Fatalf("lookup after replacement removal = (%p, %t), want (nil, false)", got, ok)
+	}
+}

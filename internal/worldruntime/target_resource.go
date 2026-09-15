@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/actionpolicy"
 	"github.com/li41/astrahold-server/internal/character"
-	"github.com/li41/astrahold-server/internal/classaction"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/targetresource"
@@ -38,7 +38,7 @@ func isSideOrBackAttackPosition(actor, target world.EntityState) bool {
 }
 
 func (r *Runtime) prepareTargetResourceSpend(sourceID, targetID world.EntityID, actionID string) (targetResourceSpendPlan, bool, error) {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok || policy.TargetSpend.ResourceID == "" {
 		return targetResourceSpendPlan{}, false, nil
 	}
@@ -63,7 +63,7 @@ func (r *Runtime) commitTargetResourceSpend(sourceSessionID session.ID, sourceID
 }
 
 func (r *Runtime) applyHitTargetResource(name string, sourceSessionID session.ID, actor, target world.EntityState, actionID string, tick uint64, delta time.Duration, report *StepReport) {
-	policy, ok := classaction.ForAction(actionID)
+	policy, ok := actionpolicy.ForAction(actionID)
 	if !ok || policy.HitTargetResource == "" || policy.HitTargetGain == 0 || policy.HitTargetMax == 0 {
 		return
 	}
@@ -103,25 +103,25 @@ func (r *Runtime) sendTargetResourceState(sessionID session.ID, message protocol
 	if !ok || s.EntityID != message.SourceEntityID || report == nil {
 		return
 	}
-	pending := r.pendingClassMessages[s.ID]
+	pending := r.pendingResourceMessages[s.ID]
 	for i, existing := range pending {
 		if current, ok := existing.(protocol.CharacterTargetResourceState); ok && sameTargetResourceState(current, message) {
 			pending[i] = message
-			r.pendingClassMessages[s.ID] = pending
+			r.pendingResourceMessages[s.ID] = pending
 			return
 		}
 	}
 	if len(pending) > 0 {
-		if len(pending) >= maxPendingClassMessagesPerSession {
+		if len(pending) >= maxPendingResourceMessagesPerSession {
 			_ = s.Connection().Close()
 			return
 		}
-		r.pendingClassMessages[s.ID] = append(pending, message)
+		r.pendingResourceMessages[s.ID] = append(pending, message)
 		return
 	}
-	if err := r.trySendClassMessage(s, message, report.Tick, report); err != nil {
+	if err := r.trySendResourceMessage(s, message, report.Tick, report); err != nil {
 		if errors.Is(err, session.ErrBackpressure) {
-			r.pendingClassMessages[s.ID] = []protocol.Message{message}
+			r.pendingResourceMessages[s.ID] = []protocol.Message{message}
 			return
 		}
 		report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID: s.ID, Delivery: protocol.DeliveryReliableOrdered, MessageType: message.Type(), Err: err})

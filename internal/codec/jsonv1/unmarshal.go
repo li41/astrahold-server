@@ -5,6 +5,16 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
+func fromItemAffixState(in itemAffixState) protocol.ItemAffixState {
+	return protocol.ItemAffixState{AffixID: in.AffixID, Strength: in.Strength, Value: in.Value}
+}
+
+func fromItemInstanceState(in itemInstanceState) protocol.ItemInstanceState {
+	out := protocol.ItemInstanceState{ItemInstanceID: in.ItemInstanceID, ItemArchetypeID: in.ItemArchetypeID, Affixes: make([]protocol.ItemAffixState, len(in.Affixes))}
+	for i := range in.Affixes { out.Affixes[i] = fromItemAffixState(in.Affixes[i]) }
+	return out
+}
+
 func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.Message, error) {
 	switch messageType {
 	case protocol.MessageClientMoveInput:
@@ -19,6 +29,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in clientEquipmentCommand
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
 		return protocol.ClientEquipmentCommand{Operation: protocol.EquipmentOperation(in.Operation), Slot: protocol.EquipmentSlot(in.Slot), ItemArchetypeID: in.ItemArchetypeID}, nil
+	case protocol.MessageClientEquipmentInstanceCommand:
+		var in clientEquipmentInstanceCommand
+		if err := decodeStrict(data, &in); err != nil { return nil, err }
+		return protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperation(in.Operation), Slot: protocol.EquipmentSlot(in.Slot), ItemInstanceID: in.ItemInstanceID}, nil
 	case protocol.MessageClientPickupItem:
 		var in clientPickupItem
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
@@ -107,12 +121,28 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		items := make([]protocol.InventoryItemStack, len(in.Items))
 		for i, item := range in.Items { items[i] = protocol.InventoryItemStack{ArchetypeID: item.ArchetypeID, Quantity: item.Quantity} }
 		return protocol.InventorySnapshot{Revision: in.Revision, CurrentCarryWeight: in.CurrentCarryWeight, MaxCarryWeight: in.MaxCarryWeight, Items: items}, nil
+	case protocol.MessageInventoryInstanceSnapshot:
+		var in inventoryInstanceSnapshot
+		if err := decodeStrict(data, &in); err != nil { return nil, err }
+		items := make([]protocol.ItemInstanceState, len(in.Items))
+		for i := range in.Items { items[i] = fromItemInstanceState(in.Items[i]) }
+		return protocol.InventoryInstanceSnapshot{Revision: in.Revision, Items: items}, nil
 	case protocol.MessageEquipmentSnapshot:
 		var in equipmentSnapshot
 		if err := decodeStrict(data, &in); err != nil { return nil, err }
 		slots := make([]protocol.EquipmentSlotState, len(in.Slots))
 		for i, slot := range in.Slots { slots[i] = protocol.EquipmentSlotState{Slot: protocol.EquipmentSlot(slot.Slot), ItemArchetypeID: slot.ItemArchetypeID} }
 		return protocol.EquipmentSnapshot{Revision: in.Revision, Slots: slots}, nil
+	case protocol.MessageAppearanceSnapshot:
+		var in appearanceSnapshot
+		if err := decodeStrict(data, &in); err != nil { return nil, err }
+		return fromAppearanceSnapshot(in), nil
+	case protocol.MessageEquipmentInstanceSnapshot:
+		var in equipmentInstanceSnapshot
+		if err := decodeStrict(data, &in); err != nil { return nil, err }
+		slots := make([]protocol.EquipmentInstanceSlotState, len(in.Slots))
+		for i := range in.Slots { slots[i] = protocol.EquipmentInstanceSlotState{Slot: protocol.EquipmentSlot(in.Slots[i].Slot), Item: fromItemInstanceState(in.Slots[i].Item)} }
+		return protocol.EquipmentInstanceSnapshot{Revision: in.Revision, Slots: slots}, nil
 	case protocol.MessageNPCInteraction:
 		var in npcInteraction
 		if err := decodeStrict(data, &in); err != nil { return nil, err }

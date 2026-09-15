@@ -243,8 +243,11 @@ func (r *Runtime) beginAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, ac
 		agent.threat.Clear()
 	}
 	// Evade begins a fresh encounter. Damage from the failed pull must not survive into the next
-	// attempt for either loot probability or target selection.
+	// attempt for either loot probability or target selection. Transient source-target combat
+	// resources are encounter state too, so clear them here and publish authoritative zeroes to
+	// surviving source sessions before the monster becomes attackable again.
 	r.resetMonsterLootContributions(actor.ID)
+	r.clearTargetResourcesForEntity(actor.ID, report)
 	r.stepAutonomousMeleeReturnHome(agent, actor, report)
 }
 

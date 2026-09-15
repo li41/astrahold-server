@@ -11,7 +11,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
+func TestFreshPlayerUsesWorldMasterSpawnAndCanReachEmberwatchCenter(t *testing.T) {
 	loadedWorld, err := gameplayworld.LoadFile("../../worlds/castle-sandbox/gameplay.json")
 	if err != nil {
 		t.Fatal(err)
@@ -28,8 +28,8 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spawn.ID != "field-camp" || spawn.Layer != 0 || spawn.Z != -35 {
-		t.Fatalf("fresh spawn=%#v; want field-camp on layer 0 at z=-35", spawn)
+	if spawn.ID != "field-camp" || spawn.Layer != 0 || spawn.X != 0 || spawn.Z != -220 {
+		t.Fatalf("fresh spawn=%#v; want field-camp on layer 0 at (0,-220)", spawn)
 	}
 
 	factory := newWorldPlayerFactory(spawn, loadedWorld.Definition.Agent)
@@ -56,8 +56,8 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const gateFrontZ = float32(8.5)
-	for step := 0; step < 120 && state.Position.Z < gateFrontZ; step++ {
+	const villageCenterZ = float32(0)
+	for step := 0; step < 600 && state.Position.Z < villageCenterZ; step++ {
 		before := state.Position.Z
 		if _, err := move.Step(&state, 0.1); err != nil {
 			t.Fatalf("step %d from z=%g: %v", step, before, err)
@@ -69,7 +69,7 @@ func TestFreshPlayerCanReachMainGateFrontInCastleSandbox(t *testing.T) {
 	if state.Position.Layer != 0 {
 		t.Fatalf("layer=%d; want ground layer 0", state.Position.Layer)
 	}
-	if state.Position.Z < gateFrontZ {
-		t.Fatalf("stopped at z=%g; want to reach main-gate front z>=%g", state.Position.Z, gateFrontZ)
+	if state.Position.Z < villageCenterZ {
+		t.Fatalf("stopped at z=%g; want to reach Emberwatch center z>=%g", state.Position.Z, villageCenterZ)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/character"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
@@ -17,10 +19,39 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testing.T) {
+func TestConfiguredWeaponTypeDrivesAuthoritativeBasicAttackDamageTimingRangeStrengthAndSkinAffinity(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
 	weaponAccuracyRoll = func() uint32 { return 0 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
+
+	// These values are test fixtures, not production content. They prove cadence, range,
+	// primary-stat scaling and skin affinity are all resolved from authoritative WeaponType data
+	// while the item itself carries only classification and damage data.
+	interval := uint32(1200)
+	attackRange := float32(7.5)
+	catalog, err := equipmentcatalog.New(equipmentcatalog.CatalogDefinition{
+		Revision: "test-only-weapon-type-rules",
+		WeaponTypes: []equipmentcatalog.WeaponTypeDefinition{{
+			WeaponType:                 equipmentcatalog.WeaponTypeOneHandAxe,
+			BasicAttackIntervalMS:      &interval,
+			BasicAttackDamageAttribute: characterstats.Strength,
+			BasicAttackRange:           &attackRange,
+		}},
+		Items: []equipmentcatalog.Definition{{
+			ItemArchetypeID: "item_militia_battle_axe", Kind: equipmentcatalog.KindWeapon, Slot: equipmentcatalog.SlotMainHand,
+			Tier: equipmentcatalog.TierLow, Weight: 10, Material: "iron_wood",
+			Weapon: &equipmentcatalog.Weapon{
+				WeaponType: equipmentcatalog.WeaponTypeOneHandAxe,
+				SmallDamage: equipmentcatalog.DamageRange{Min: 5, Max: 8}, LargeDamage: equipmentcatalog.DamageRange{Min: 8, Max: 8}, AccuracyModifier: -1,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := defaultEquipmentCatalog
+	defaultEquipmentCatalog = catalog
+	t.Cleanup(func() { defaultEquipmentCatalog = oldCatalog })
 
 	definition := gameplayworld.Definition{
 		SchemaVersion: gameplayworld.SchemaVersion,
@@ -41,7 +72,7 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	monsterID := world.EntityID(9001)
 	monsterEntity := world.EntityState{
 		ID: monsterID, Kind: world.EntityMonster, ArchetypeID: "test-large-monster", BodySize: world.EntityBodySizeLarge,
-		Transform: world.Transform{Position: world.Position{X: 2, Z: 0, Layer: 0}},
+		Transform: world.Transform{Position: world.Position{X: 6, Z: 0, Layer: 0}},
 	}
 	if err := sim.Spawn(monsterEntity, 4, .35, .5); err != nil {
 		t.Fatal(err)
@@ -84,6 +115,20 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 		t.Fatalf("join errors: %#v", report.CommandErrors)
 	}
 
+	actorState, ok := rt.characters.State(s.EntityID)
+	if !ok {
+		t.Fatal("player character state missing")
+	}
+	actorState.PrimaryStats = characterstats.DefaultPrimary()
+	actorState.PrimaryStats.Strength = 20 // formal melee bonus = floor((20-10)/2) = +5.
+	rt.characters.Remove(s.EntityID)
+	if err := rt.characters.RegisterState(actorState); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.characterSkills.restoreAppearance(s.EntityID, appearance.PeasantGirl); err != nil {
+		t.Fatal(err)
+	}
+
 	inv := rt.inventories[s.CharacterIdentity.ID]
 	if inv == nil {
 		t.Fatal("inventory missing")
@@ -114,11 +159,13 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	if firstEvent.ActorEntityID != s.EntityID || firstEvent.TargetEntityID != monsterID || firstEvent.Result != protocol.CombatEventHit {
 		t.Fatalf("first event=%#v", firstEvent)
 	}
-	if firstEvent.Damage < 8 || firstEvent.Damage > 12 {
-		t.Fatalf("large-target axe damage=%d, want 8..12", firstEvent.Damage)
+	// The target is 6m away: beyond the action fallback 4.5m but inside the authored 7.5m.
+	// Fixed weapon 8 + Strength 5 + matching Peasant Girl / one-hand-axe affinity 1 = 14.
+	if firstEvent.Damage != 14 {
+		t.Fatalf("matching-skin axe damage=%d, want 14", firstEvent.Damage)
 	}
-	if firstEvent.CooldownReadyTick != 26 {
-		t.Fatalf("axe cooldown ready tick=%d, want 26", firstEvent.CooldownReadyTick)
+	if firstEvent.CooldownReadyTick != 27 {
+		t.Fatalf("type cadence ready tick=%d, want 27", firstEvent.CooldownReadyTick)
 	}
 	monster, ok := rt.combatantState(monsterID)
 	if !ok || monster.HP != 200-firstEvent.Damage {
@@ -126,8 +173,8 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 	}
 	firstHP := monster.HP
 
-	// Tick 14 is beyond the catalog's old 0.5-second action cooldown (10 ticks) but still
-	// before the battle axe's authored 1.15-second interval (23 ticks from tick 3).
+	// Tick 14 is beyond the action definition's 0.5-second fallback but before this test-only
+	// WeaponType cadence (24 ticks from tick 3), proving the shared type value owns legality.
 	if err := rt.EnqueueUseAction(s.ID, 3, attack); err != nil {
 		t.Fatal(err)
 	}
@@ -140,16 +187,21 @@ func TestEquippedBattleAxeDrivesAuthoritativeBasicAttackDamageAndTiming(t *testi
 		t.Fatalf("cooldown-rejected attack changed HP: %+v ok=%v want=%d", monster, ok, firstHP)
 	}
 
+	// Change only the authoritative selected skin. Ninja is a dagger affinity, so the same axe
+	// attack loses exactly the +1 while weapon damage, Strength and cadence remain unchanged.
+	if err := rt.characterSkills.restoreAppearance(s.EntityID, appearance.Ninja); err != nil {
+		t.Fatal(err)
+	}
 	if err := rt.EnqueueUseAction(s.ID, 4, attack); err != nil {
 		t.Fatal(err)
 	}
-	report = rt.Step(26, 50*time.Millisecond)
+	report = rt.Step(27, 50*time.Millisecond)
 	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
 		t.Fatalf("ready attack report=%#v", report)
 	}
 	secondEvent := waitForCombatEvent(t, conn)
-	if secondEvent.Damage < 8 || secondEvent.Damage > 12 {
-		t.Fatalf("second large-target axe damage=%d, want 8..12", secondEvent.Damage)
+	if secondEvent.Damage != 13 {
+		t.Fatalf("mismatched-skin axe damage=%d, want 13", secondEvent.Damage)
 	}
 	monster, ok = rt.combatantState(monsterID)
 	if !ok || monster.HP != firstHP-secondEvent.Damage {

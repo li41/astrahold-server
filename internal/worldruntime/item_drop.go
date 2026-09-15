@@ -156,6 +156,15 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrSessionEntityNotFound})
 		return
 	}
+	state, ok := r.characters.State(s.EntityID)
+	if !ok {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterNotFound})
+		return
+	}
+	if state.Defeated {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: character.ErrCharacterDefeated})
+		return
+	}
 	request := *command.pickup
 	dropEntity, ok := r.world.Entity(request.DropEntityID)
 	if !ok || dropEntity.Kind != world.EntityItemDrop || dropEntity.ArchetypeID == "" {

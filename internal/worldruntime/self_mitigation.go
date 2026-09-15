@@ -30,16 +30,16 @@ func (r *Runtime) applySelfMitigationAction(
 		r.rejectClientAction(name, sessionID, clientActionSequence, actor.ID, startPrepared.Definition.ID, protocol.ActionTargetKind(startPrepared.Target.Kind), combat.ErrTargetNotAllowed, tick, report)
 		return false
 	}
-	if !r.validateActionClassResourceCost(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
+	if !r.validateActionResourceCost(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 		return false
 	}
 	if !r.consumeActionMP(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 		return false
 	}
-	if !r.consumeActionClassResource(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
+	if !r.consumeActionResource(name, sessionID, clientActionSequence, actor.ID, startPrepared, protocol.ActionTargetKind(startPrepared.Target.Kind), tick, report) {
 		return false
 	}
-	if !r.applyAcceptedActionClassResourceReduction(name, sessionID, actor.ID, prepared.Definition.ID, report) {
+	if !r.applyAcceptedActionResourceReduction(name, sessionID, actor.ID, prepared.Definition.ID, report) {
 		return false
 	}
 

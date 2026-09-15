@@ -1,269 +1,47 @@
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "world_id": "castle-sandbox",
-  "revision": "s5b-commercial-mpv-001",
+  "revision": "first-continent-world-master-v2",
   "units": "meters",
-  "agent": {
-    "radius": 0.35,
-    "height": 1.8,
-    "max_step_height": 0.5
-  },
-  "surfaces": [
-    {
-      "id": "ground",
-      "layer": 0,
-      "bounds": { "min_x": -45, "max_x": 45, "min_z": -55, "max_z": 45 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0 }
-    },
-    {
-      "id": "west-stair",
-      "layer": 1,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 12, "max_z": 20 },
-      "plane": { "origin_x": -25, "origin_z": 20, "base_y": 0, "slope_x": 0, "slope_z": -1 }
-    },
-    {
-      "id": "east-stair",
-      "layer": 1,
-      "bounds": { "min_x": 23, "max_x": 27, "min_z": 12, "max_z": 20 },
-      "plane": { "origin_x": 25, "origin_z": 20, "base_y": 0, "slope_x": 0, "slope_z": -1 }
-    },
-    {
-      "id": "front-wall-walk",
-      "layer": 2,
-      "bounds": { "min_x": -30, "max_x": 30, "min_z": 8.5, "max_z": 12.5 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
-    },
-    {
-      "id": "west-wall-walk",
-      "layer": 2,
-      "bounds": { "min_x": -30, "max_x": -26, "min_z": 12.5, "max_z": 35 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
-    },
-    {
-      "id": "east-wall-walk",
-      "layer": 2,
-      "bounds": { "min_x": 26, "max_x": 30, "min_z": 12.5, "max_z": 35 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
-    },
-    {
-      "id": "rear-wall-walk",
-      "layer": 2,
-      "bounds": { "min_x": -26, "max_x": 26, "min_z": 31, "max_z": 35 },
-      "plane": { "origin_x": 0, "origin_z": 0, "base_y": 8, "slope_x": 0, "slope_z": 0 }
-    }
+  "agent": {"radius": 0.35, "height": 1.8, "max_step_height": 0.5},
+  "surfaces": [{"id": "ground", "layer": 0, "bounds": {"min_x": -2600, "max_x": 2600, "min_z": -900, "max_z": 4100}, "plane": {"origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0}}],
+  "regions": [
+    {"id":"region_emberwatch","layer":0,"polygon":[{"x":-420,"z":-680},{"x":180,"z":-720},{"x":700,"z":-600},{"x":920,"z":-350},{"x":900,"z":-60},{"x":720,"z":170},{"x":420,"z":300},{"x":120,"z":320},{"x":-220,"z":220},{"x":-480,"z":-60}]},
+    {"id":"region_whisperwood","layer":0,"polygon":[{"x":420,"z":180},{"x":820,"z":120},{"x":1200,"z":260},{"x":1380,"z":520},{"x":1320,"z":820},{"x":1080,"z":950},{"x":720,"z":900},{"x":500,"z":700},{"x":360,"z":450}]},
+    {"id":"region_thornfield","layer":0,"polygon":[{"x":600,"z":700},{"x":980,"z":620},{"x":1380,"z":720},{"x":1520,"z":980},{"x":1420,"z":1260},{"x":1100,"z":1340},{"x":760,"z":1240},{"x":580,"z":1000}]},
+    {"id":"region_astrahold","layer":0,"polygon":[{"x":-780,"z":650},{"x":-450,"z":560},{"x":-40,"z":580},{"x":350,"z":720},{"x":520,"z":1000},{"x":480,"z":1380},{"x":120,"z":1600},{"x":-300,"z":1620},{"x":-650,"z":1400},{"x":-820,"z":1000}]},
+    {"id":"region_stoneford","layer":0,"polygon":[{"x":-1550,"z":650},{"x":-1260,"z":580},{"x":-920,"z":620},{"x":-620,"z":760},{"x":-560,"z":1080},{"x":-700,"z":1400},{"x":-1060,"z":1510},{"x":-1420,"z":1340},{"x":-1580,"z":980}]},
+    {"id":"region_greyfen_marsh","layer":0,"polygon":[{"x":-1840,"z":-820},{"x":-1380,"z":-880},{"x":-920,"z":-800},{"x":-560,"z":-600},{"x":-420,"z":-280},{"x":-520,"z":80},{"x":-900,"z":240},{"x":-1400,"z":200},{"x":-1820,"z":-100}]},
+    {"id":"region_ashen_plains","layer":0,"polygon":[{"x":-2580,"z":-80},{"x":-2180,"z":-120},{"x":-1700,"z":-40},{"x":-1320,"z":180},{"x":-1260,"z":520},{"x":-1420,"z":880},{"x":-1760,"z":1080},{"x":-2200,"z":1040},{"x":-2520,"z":700}]},
+    {"id":"region_raven_hollow","layer":0,"polygon":[{"x":-1880,"z":1600},{"x":-1580,"z":1520},{"x":-1280,"z":1600},{"x":-1100,"z":1840},{"x":-1120,"z":2180},{"x":-1340,"z":2380},{"x":-1680,"z":2360},{"x":-1900,"z":2140}]},
+    {"id":"region_broken_hills","layer":0,"polygon":[{"x":-1380,"z":1620},{"x":-980,"z":1540},{"x":-580,"z":1600},{"x":-180,"z":1800},{"x":80,"z":2140},{"x":20,"z":2520},{"x":-320,"z":2760},{"x":-760,"z":2800},{"x":-1120,"z":2600},{"x":-1420,"z":2200}]},
+    {"id":"region_blackridge_highlands","layer":0,"polygon":[{"x":-1080,"z":2680},{"x":-700,"z":2600},{"x":-260,"z":2640},{"x":200,"z":2780},{"x":560,"z":3060},{"x":620,"z":3460},{"x":400,"z":3820},{"x":40,"z":3980},{"x":-400,"z":4000},{"x":-800,"z":3860},{"x":-1060,"z":3540},{"x":-1100,"z":3100}]},
+    {"id":"region_frostmere","parent_id":"region_blackridge_highlands","layer":0,"polygon":[{"x":-820,"z":3320},{"x":-520,"z":3220},{"x":-180,"z":3280},{"x":120,"z":3480},{"x":140,"z":3820},{"x":-80,"z":4040},{"x":-460,"z":4080},{"x":-780,"z":3900},{"x":-880,"z":3600}]},
+    {"id":"region_starfall_wastes","layer":0,"polygon":[{"x":760,"z":1620},{"x":1120,"z":1500},{"x":1580,"z":1500},{"x":2040,"z":1660},{"x":2440,"z":2000},{"x":2520,"z":2420},{"x":2300,"z":2840},{"x":1900,"z":2940},{"x":1460,"z":2860},{"x":1080,"z":2660},{"x":820,"z":2300}]}
   ],
-  "portals": [
-    {
-      "id": "ground-to-west-stair",
-      "from_layer": 0,
-      "to_layer": 1,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 19.5, "max_z": 20 },
-      "bidirectional": true
-    },
-    {
-      "id": "west-stair-to-front-wall",
-      "from_layer": 1,
-      "to_layer": 2,
-      "bounds": { "min_x": -27, "max_x": -23, "min_z": 12, "max_z": 12.5 },
-      "bidirectional": true
-    },
-    {
-      "id": "ground-to-east-stair",
-      "from_layer": 0,
-      "to_layer": 1,
-      "bounds": { "min_x": 23, "max_x": 27, "min_z": 19.5, "max_z": 20 },
-      "bidirectional": true
-    },
-    {
-      "id": "east-stair-to-front-wall",
-      "from_layer": 1,
-      "to_layer": 2,
-      "bounds": { "min_x": 23, "max_x": 27, "min_z": 12, "max_z": 12.5 },
-      "bidirectional": true
-    }
+  "maps": [
+    {"id":"map_redsoil_ant_nest","kind":"underground","scale_class":"small","envelope":{"width_x":260,"length_z":220},"entrance":{"id":"entrance_redsoil_ant_nest","layer":0,"point":{"x":520,"z":220}},"level_count":3,"max_depth_meters":38,"main_route_meters":900},
+    {"id":"map_astrahold_gaol","kind":"underground","scale_class":"medium","envelope":{"width_x":160,"length_z":120},"entrance":{"id":"entrance_astrahold_gaol","layer":0,"point":{"x":-280,"z":1160}},"level_count":3,"max_depth_meters":32,"main_route_meters":650},
+    {"id":"map_ironroot_mine","kind":"underground","scale_class":"medium","planning_range":{"min_meters":160,"max_meters":400},"entrance":{"id":"entrance_ironroot_mine","layer":0,"point":{"x":-300,"z":2350}}},
+    {"id":"map_riftstone_caverns","kind":"underground","scale_class":"medium","envelope":{"width_x":360,"length_z":280},"entrance":{"id":"entrance_riftstone_caverns","layer":0,"point":{"x":-980,"z":2480}},"level_count":4,"max_depth_meters":72,"main_route_meters":1450},
+    {"id":"map_hollow_crypt","kind":"underground","scale_class":"medium","planning_range":{"min_meters":160,"max_meters":400},"entrance":{"id":"entrance_hollow_crypt","layer":0,"point":{"x":-1500,"z":2150}}},
+    {"id":"map_sunken_abbey","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_sunken_abbey","layer":0,"point":{"x":-950,"z":-520}}},
+    {"id":"map_blackridge_depths","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_blackridge_depths","layer":0,"point":{"x":-120,"z":3020}}},
+    {"id":"map_starfall_ruins","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_starfall_ruins","layer":0,"point":{"x":1950,"z":2700}}},
+    {"id":"map_deep_vault","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_deep_vault","layer":0,"point":{"x":2200,"z":3200}}}
   ],
+  "portals": [],
   "blockers": [
-    {
-      "id": "main-gate",
-      "layer": 0,
-      "bounds": { "min_x": -3, "max_x": 3, "min_z": 9.5, "max_z": 10.5 },
-      "min_y": 0,
-      "max_y": 6,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "front-wall-left",
-      "layer": 0,
-      "bounds": { "min_x": -30, "max_x": -3, "min_z": 9.5, "max_z": 10.5 },
-      "min_y": 0,
-      "max_y": 7.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "front-wall-right",
-      "layer": 0,
-      "bounds": { "min_x": 3, "max_x": 30, "min_z": 9.5, "max_z": 10.5 },
-      "min_y": 0,
-      "max_y": 7.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "west-side-wall",
-      "layer": 0,
-      "bounds": { "min_x": -30.5, "max_x": -29.5, "min_z": 10.5, "max_z": 35.5 },
-      "min_y": 0,
-      "max_y": 7.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "east-side-wall",
-      "layer": 0,
-      "bounds": { "min_x": 29.5, "max_x": 30.5, "min_z": 10.5, "max_z": 35.5 },
-      "min_y": 0,
-      "max_y": 7.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "rear-wall",
-      "layer": 0,
-      "bounds": { "min_x": -30, "max_x": 30, "min_z": 34.5, "max_z": 35.5 },
-      "min_y": 0,
-      "max_y": 7.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "south-west-tower",
-      "layer": 0,
-      "bounds": { "min_x": -32, "max_x": -26, "min_z": 7.5, "max_z": 13.5 },
-      "min_y": 0,
-      "max_y": 11.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "south-east-tower",
-      "layer": 0,
-      "bounds": { "min_x": 26, "max_x": 32, "min_z": 7.5, "max_z": 13.5 },
-      "min_y": 0,
-      "max_y": 11.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "north-west-tower",
-      "layer": 0,
-      "bounds": { "min_x": -32, "max_x": -26, "min_z": 31.5, "max_z": 37.5 },
-      "min_y": 0,
-      "max_y": 11.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "north-east-tower",
-      "layer": 0,
-      "bounds": { "min_x": 26, "max_x": 32, "min_z": 31.5, "max_z": 37.5 },
-      "min_y": 0,
-      "max_y": 11.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "keep-front-left",
-      "layer": 0,
-      "bounds": { "min_x": -14, "max_x": -3, "min_z": 23.5, "max_z": 24.5 },
-      "min_y": 0,
-      "max_y": 6.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "keep-front-right",
-      "layer": 0,
-      "bounds": { "min_x": 3, "max_x": 14, "min_z": 23.5, "max_z": 24.5 },
-      "min_y": 0,
-      "max_y": 6.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "keep-west-wall",
-      "layer": 0,
-      "bounds": { "min_x": -14.5, "max_x": -13.5, "min_z": 24.5, "max_z": 33.5 },
-      "min_y": 0,
-      "max_y": 6.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "keep-east-wall",
-      "layer": 0,
-      "bounds": { "min_x": 13.5, "max_x": 14.5, "min_z": 24.5, "max_z": 33.5 },
-      "min_y": 0,
-      "max_y": 6.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "keep-rear-wall",
-      "layer": 0,
-      "bounds": { "min_x": -14, "max_x": 14, "min_z": 32.5, "max_z": 33.5 },
-      "min_y": 0,
-      "max_y": 6.5,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "west-barracks",
-      "layer": 0,
-      "bounds": { "min_x": -23, "max_x": -17, "min_z": 17, "max_z": 24 },
-      "min_y": 0,
-      "max_y": 3.8,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    },
-    {
-      "id": "east-barracks",
-      "layer": 0,
-      "bounds": { "min_x": 17, "max_x": 23, "min_z": 17, "max_z": 24 },
-      "min_y": 0,
-      "max_y": 3.8,
-      "blocks_movement": true,
-      "blocks_los": true,
-      "enabled": true
-    }
+    {"id":"emberwatch-warden-post","layer":0,"bounds":{"min_x":-11.8,"max_x":-9.2,"min_z":-43.8,"max_z":-33.2},"min_y":0,"max_y":4.6,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-house-west","layer":0,"bounds":{"min_x":-29.3,"max_x":-20.7,"min_z":-27.6,"max_z":-23.4},"min_y":0,"max_y":5.2,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-cottage-west","layer":0,"bounds":{"min_x":-16.8,"max_x":-14.2,"min_z":-18,"max_z":-13},"min_y":0,"max_y":4.6,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-house-east","layer":0,"bounds":{"min_x":21.1,"max_x":26.9,"min_z":-16.2,"max_z":-7.8},"min_y":0,"max_y":5.2,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-gate-hut","layer":0,"bounds":{"min_x":6.7,"max_x":10.3,"min_z":-8.6,"max_z":1.6},"min_y":0,"max_y":4.6,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-cottage-east","layer":0,"bounds":{"min_x":14.6,"max_x":18.4,"min_z":-34,"max_z":-31},"min_y":0,"max_y":4.6,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-chapel","layer":0,"bounds":{"min_x":-23.4,"max_x":-9.6,"min_z":-7.7,"max_z":1.7},"min_y":0,"max_y":12.1,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-market-shed","layer":0,"bounds":{"min_x":4.6,"max_x":13.4,"min_z":-38.5,"max_z":-36.5},"min_y":0,"max_y":3.8,"blocks_movement":true,"blocks_los":true,"enabled":true},
+    {"id":"emberwatch-well","layer":0,"bounds":{"min_x":4.6,"max_x":7.4,"min_z":-34.4,"max_z":-31.6},"min_y":0,"max_y":3,"blocks_movement":true,"blocks_los":false,"enabled":true},
+    {"id":"emberwatch-campfire","layer":0,"bounds":{"min_x":-5.4,"max_x":-3.6,"min_z":-41.4,"max_z":-39.6},"min_y":0,"max_y":1,"blocks_movement":true,"blocks_los":false,"enabled":true}
   ],
-  "gates": [
-    {
-      "id": "main-gate",
-      "blocker_id": "main-gate",
-      "max_hp": 1000,
-      "attack": {
-        "range": 4.5,
-        "damage": 100,
-        "cooldown_seconds": 0.5
-      }
-    }
-  ]
+  "gates": []
 }

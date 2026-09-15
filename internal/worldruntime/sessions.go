@@ -103,7 +103,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 			return
 		}
 		if request.Restore.Inventory.Initialized {
-			restoredInventory, err = restoreCharacterInventoryForClass(r.config.InventoryMaxStacks, request.Restore.Inventory, request.Restore.ClassID)
+			restoredInventory, err = restoreCharacterInventory(r.config.InventoryMaxStacks, request.Restore.Inventory)
 			if err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 				return
@@ -111,13 +111,13 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		}
 		entity.Transform = request.Restore.Transform
 		state := character.State{
-			EntityID: request.Entity.ID,
-			ClassID:  request.Restore.ClassID,
-			HP:       request.Restore.HP,
-			MaxHP:    request.Restore.MaxHP,
-			MP:       request.Restore.MP,
-			MaxMP:    request.Restore.MaxMP,
-			Defeated: request.Restore.Defeated,
+			EntityID:     request.Entity.ID,
+			HP:           request.Restore.HP,
+			MaxHP:        request.Restore.MaxHP,
+			MP:           request.Restore.MP,
+			MaxMP:        request.Restore.MaxMP,
+			PrimaryStats: request.Restore.PrimaryStats,
+			Defeated:     request.Restore.Defeated,
 		}
 		restoredState = &state
 		if request.Restore.Defeated {
@@ -140,8 +140,28 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 		return
 	}
+	// A successful entity incarnation starts with an explicit empty skill/appearance state. Durable
+	// restores then replace it atomically; this prevents EntityID reuse from inheriting residue.
+	r.characterSkills.clear(request.Entity.ID)
+	if request.Restore != nil {
+		if err := r.characterSkills.restore(request.Entity.ID, request.Restore.LearnedSkills, request.Restore.CombatLoadout); err != nil {
+			r.characterSkills.clear(request.Entity.ID)
+			r.characters.Remove(request.Entity.ID)
+			r.world.Remove(request.Entity.ID)
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+			return
+		}
+		if err := r.characterSkills.restoreAppearance(request.Entity.ID, request.Restore.SkinID); err != nil {
+			r.characterSkills.clear(request.Entity.ID)
+			r.characters.Remove(request.Entity.ID)
+			r.world.Remove(request.Entity.ID)
+			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+			return
+		}
+	}
 	if defeatedRestore != nil {
 		if err := r.installDefeatedRestore(*defeatedRestore); err != nil {
+			r.characterSkills.clear(request.Entity.ID)
 			r.characters.Remove(request.Entity.ID)
 			r.world.Remove(request.Entity.ID)
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
@@ -153,6 +173,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	if err != nil {
 		if r.respawnPolicy != nil { r.respawnPolicy.Remove(request.Entity.ID) }
 		r.removeEntityVitals(request.Entity.ID)
+		r.characterSkills.clear(request.Entity.ID)
 		r.characters.Remove(request.Entity.ID)
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
@@ -162,6 +183,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		if siegeAssigned { r.removeSiegeParticipant(request.Session) }
 		if r.respawnPolicy != nil { r.respawnPolicy.Remove(request.Entity.ID) }
 		r.removeEntityVitals(request.Entity.ID)
+		r.characterSkills.clear(request.Entity.ID)
 		r.characters.Remove(request.Entity.ID)
 		r.world.Remove(request.Entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
@@ -202,8 +224,9 @@ func (r *Runtime) applyLeave(name string, c leaveCommand, report *StepReport) {
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
 	if r.respawnPolicy != nil { r.respawnPolicy.Remove(s.EntityID) }
-	if r.combat != nil { r.combat.ClearSelfMitigation(s.EntityID) }
+	if r.combat != nil { r.combat.ClearTransientStatuses(s.EntityID) }
 	r.clearTargetResourcesForEntity(s.EntityID, report)
+	r.characterSkills.clear(s.EntityID)
 	r.characters.Remove(s.EntityID)
 	r.characterIdentities.removeEntity(s.EntityID)
 	r.world.Remove(s.EntityID)

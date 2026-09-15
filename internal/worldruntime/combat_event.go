@@ -13,9 +13,10 @@ func (r *Runtime) emitCombatEvent(event protocol.CombatEvent, tick uint64, repor
 	if event.ActionInstanceID == 0 || event.ActorEntityID == 0 || event.ActionID == "" {
 		return
 	}
-	for _, s := range r.sessions.List() {
-		if s.EntityID != event.ActorEntityID && (event.TargetEntityID == 0 || s.EntityID != event.TargetEntityID) {
-			continue
+
+	deliver := func(s *session.Session) {
+		if s == nil {
+			return
 		}
 		envelope := protocol.Envelope{
 			Delivery:   protocol.DeliveryReliableOrdered,
@@ -30,9 +31,17 @@ func (r *Runtime) emitCombatEvent(event protocol.CombatEvent, tick uint64, repor
 				MessageType: protocol.MessageCombatEvent,
 				Err:         err,
 			})
-			if err == session.ErrConnectionClosed {
-				continue
-			}
 		}
+	}
+
+	actorSession, actorActive := r.sessions.GetByEntity(event.ActorEntityID)
+	if actorActive {
+		deliver(actorSession)
+	}
+	if event.TargetEntityID == 0 || event.TargetEntityID == event.ActorEntityID {
+		return
+	}
+	if targetSession, ok := r.sessions.GetByEntity(event.TargetEntityID); ok {
+		deliver(targetSession)
 	}
 }

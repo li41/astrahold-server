@@ -209,11 +209,11 @@ type Runtime struct {
 	characterStateAutosaveLastTick map[world.EntityID]uint64
 	characterStateAutosaveCursor   int
 	characterStateAutosaveNextTick uint64
+	characterSkills                characterSkillRuntime
 	inventories                    map[characteridentity.ID]*inventory.Inventory
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
-	pendingClassMessages           map[session.ID][]protocol.Message
-	initialClassSelectionFeedback  map[uint64]initialClassSelectionFeedback
+	pendingResourceMessages        map[session.ID][]protocol.Message
 	sessionInventoryPending        map[session.ID]struct{}
 	replication                    *replication.Service
 	replicationFrameBuilder        *simulation.ReplicationFrameBuilder
@@ -234,6 +234,7 @@ type Runtime struct {
 	monsterLootStates              map[world.EntityID]*monsterLootState
 	monsterLootEntityIDs           []world.EntityID
 	nextItemDropEntityID           world.EntityID
+	itemDropExpireTick             map[world.EntityID]uint64
 	respawnPolicy                  *respawnpolicy.Service
 	deathPenalty                   *deathpenalty.Service
 	deathOutbox                    *deathoutcome.Outbox
@@ -321,8 +322,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
 		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),
-		pendingClassMessages:           make(map[session.ID][]protocol.Message),
-		initialClassSelectionFeedback:  make(map[uint64]initialClassSelectionFeedback),
+		pendingResourceMessages:        make(map[session.ID][]protocol.Message),
 		sessionInventoryPending:        make(map[session.ID]struct{}),
 		replication:                    replication.NewService(config.ReplicationPolicy),
 		replicationFrameBuilder:        simulation.NewReplicationFrameBuilder(),
@@ -331,6 +331,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		config:                         config,
 		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
 		nextItemDropEntityID:           firstItemDropEntityID,
+		itemDropExpireTick:             make(map[world.EntityID]uint64),
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
 		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),

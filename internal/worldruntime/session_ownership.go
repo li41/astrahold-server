@@ -12,15 +12,15 @@ import (
 )
 
 var (
-	ErrCharacterOwnershipFenceInvalid = errors.New("worldruntime: character ownership fence invalid")
-	ErrCharacterOwnershipFenceStale   = errors.New("worldruntime: character ownership fence stale")
+	ErrCharacterOwnershipFenceInvalid   = errors.New("worldruntime: character ownership fence invalid")
+	ErrCharacterOwnershipFenceStale     = errors.New("worldruntime: character ownership fence stale")
 	ErrCharacterOwnershipEpochExhausted = errors.New("worldruntime: character ownership epoch exhausted")
 )
 
 // SessionOwnershipFence identifies the currently authoritative trusted network session for
-// one CharacterID. It is process-local, server-internal, and never serialized into Protocol v6.
-// Epoch is independent from the shorter-lived S3-F.17 admission lease generation so future
-// ownership transfer can advance active ownership without changing admission semantics.
+// one CharacterID. It is process-local, server-internal, and never serialized into the wire
+// protocol. Epoch is independent from the shorter-lived admission lease generation so ownership
+// transfer can advance active ownership without changing admission semantics.
 type SessionOwnershipFence struct {
 	SessionID   session.ID
 	EntityID    world.EntityID

@@ -15,7 +15,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 2
+const SchemaVersion uint16 = 4
 
 var (
 	ErrUnsupportedSchema = errors.New("gameplayworld: unsupported schema version")
@@ -97,15 +97,17 @@ type Gate struct {
 }
 
 type Definition struct {
-	SchemaVersion uint16        `json:"schema_version"`
-	WorldID       string        `json:"world_id"`
-	Revision      string        `json:"revision"`
-	Units         string        `json:"units"`
-	Agent         AgentDefaults `json:"agent"`
-	Surfaces      []Surface     `json:"surfaces"`
-	Portals       []Portal      `json:"portals"`
-	Blockers      []Blocker     `json:"blockers"`
-	Gates         []Gate        `json:"gates"`
+	SchemaVersion uint16         `json:"schema_version"`
+	WorldID       string         `json:"world_id"`
+	Revision      string         `json:"revision"`
+	Units         string         `json:"units"`
+	Agent         AgentDefaults  `json:"agent"`
+	Surfaces      []Surface      `json:"surfaces"`
+	Regions       []RegionCore   `json:"regions"`
+	Maps          []MapAuthority `json:"maps"`
+	Portals       []Portal       `json:"portals"`
+	Blockers      []Blocker      `json:"blockers"`
+	Gates         []Gate         `json:"gates"`
 }
 
 type Loaded struct {
@@ -179,6 +181,12 @@ func Validate(d Definition) error {
 				return fmt.Errorf("%w: overlapping surfaces on layer %d: %s/%s", ErrInvalidDefinition, a.Layer, a.ID, b.ID)
 			}
 		}
+	}
+	if err := validateRegions(d); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
+	}
+	if err := validateMaps(d); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
 	}
 
 	portalIDs := make(map[string]struct{}, len(d.Portals))

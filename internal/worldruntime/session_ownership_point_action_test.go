@@ -43,3 +43,36 @@ func TestFencedPointActionRejectsMissingOrNonFiniteCoordinates(t *testing.T) {
 		t.Fatal("non-finite point X was accepted")
 	}
 }
+
+func TestFencedActionRejectsMixedTargetShapes(t *testing.T) {
+	rt, fence, _ := joinOwnedIdentitySession(t)
+	x := float32(4.5)
+	z := float32(12.25)
+	cases := []protocol.ClientUseAction{
+		{
+			ActionID:   "meteor-strike",
+			TargetKind: protocol.ActionTargetPoint,
+			TargetID:   "unexpected-entity",
+			TargetX:    &x,
+			TargetZ:    &z,
+		},
+		{
+			ActionID:   "basic-attack",
+			TargetKind: protocol.ActionTargetEntity,
+			TargetID:   "2",
+			TargetX:    &x,
+			TargetZ:    &z,
+		},
+		{
+			ActionID:   "basic-attack",
+			TargetKind: protocol.ActionTargetGate,
+			TargetID:   "main-gate",
+			TargetX:    &x,
+		},
+	}
+	for i, action := range cases {
+		if err := rt.EnqueueFencedUseAction(fence, uint32(i+1), action); err == nil {
+			t.Fatalf("case %d accepted mixed target shape: %#v", i, action)
+		}
+	}
+}

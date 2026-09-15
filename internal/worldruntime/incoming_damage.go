@@ -25,9 +25,12 @@ type DamageRequest struct {
 	TargetEntityID               world.EntityID
 	RawDamage                    uint32
 	DamageType                   combat.DamageType
+	Critical                     bool
 	Blockable                    bool
 	PhysicalDefenseIgnorePercent uint8
 	SelfDamageReductionPercent   uint8
+	AdditionalPhysicalDefense    uint32
+	MagicDefense                 uint32
 }
 
 // DamageResult is the single authoritative outcome used by HP mutation, combat events and
@@ -49,32 +52,44 @@ func physicalMitigationRateWithIgnore(physicalDefense uint32, ignorePercent uint
 	return effectiveDefense / (effectiveDefense + physicalDefenseScale)
 }
 
-func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatalog.Definition, bool) {
+func magicMitigationRate(magicDefense uint32) float64 {
+	if magicDefense == 0 {
+		return 0
+	}
+	defense := float64(magicDefense)
+	return defense / (defense + physicalDefenseScale)
+}
+
+func (r *Runtime) equippedCatalogShield(targetID world.EntityID) (equipmentcatalog.Definition, bool) {
 	if r == nil || targetID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
-	for _, s := range r.sessions.List() {
-		if s.EntityID != targetID || !s.CharacterIdentity.Valid() {
-			continue
-		}
-		inv := r.inventories[s.CharacterIdentity.ID]
-		if inv == nil {
-			return equipmentcatalog.Definition{}, false
-		}
-		definition, ok := defaultEquipmentCatalog.Resolve(inv.OffHand())
-		if !ok || definition.Kind != equipmentcatalog.KindShield || definition.Shield == nil {
-			return equipmentcatalog.Definition{}, false
-		}
-		return definition, true
+	s, ok := r.sessions.GetByEntity(targetID)
+	if !ok || !s.CharacterIdentity.Valid() {
+		return equipmentcatalog.Definition{}, false
 	}
-	return equipmentcatalog.Definition{}, false
+	inv := r.inventories[s.CharacterIdentity.ID]
+	if inv == nil {
+		return equipmentcatalog.Definition{}, false
+	}
+	definition, ok := defaultEquipmentCatalog.Resolve(inv.OffHand())
+	if !ok || definition.Kind != equipmentcatalog.KindShield || definition.Shield == nil {
+		return equipmentcatalog.Definition{}, false
+	}
+	return definition, true
 }
 
 func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (DamageResult, error) {
 	var shield *equipmentcatalog.Shield
-	if definition, ok := r.equippedLowTierShield(request.TargetEntityID); ok {
+	if definition, ok := r.equippedCatalogShield(request.TargetEntityID); ok {
 		shield = definition.Shield
 	}
+	modifiers, err := r.equippedInstanceModifiers(request.TargetEntityID)
+	if err != nil {
+		return DamageResult{}, err
+	}
+	request.AdditionalPhysicalDefense = saturatingAddUint32(request.AdditionalPhysicalDefense, modifiers.PhysicalDefense)
+	request.MagicDefense = saturatingAddUint32(request.MagicDefense, modifiers.MagicDefense)
 	if request.SelfDamageReductionPercent == 0 && r.combat != nil {
 		request.SelfDamageReductionPercent = r.combat.SelfDamageReductionPercent(request.TargetEntityID, tick)
 	}
@@ -85,10 +100,18 @@ func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (Dam
 	return resolveDamageMitigation(request, shield, roll)
 }
 
+func saturatingAddUint32(a, b uint32) uint32 {
+	total := uint64(a) + uint64(b)
+	if total > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(total)
+}
+
 // resolveDamageMitigation is pure so formula and probability boundaries are deterministic in tests.
-// Intermediate math stays float64; positive damage is rounded once at the end and has a minimum of 1.
-// Physical-defense ignore changes only the defense term for this damage instance. Self mitigation is
-// a separate Server-owned multiplier and never mutates block, defense, equipment or later damage.
+// Critical is multiplied in float64 before every mitigation layer, so odd integer raw damage keeps
+// its half-point until the existing single final math.Round. Physical-defense ignore changes only
+// the defense term for this damage instance. Self mitigation is a separate Server-owned multiplier.
 func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shield, blockRoll uint32) (DamageResult, error) {
 	if request.RawDamage == 0 {
 		return DamageResult{}, nil
@@ -101,12 +124,19 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 	}
 
 	damage := float64(request.RawDamage)
+	if request.Critical {
+		damage *= float64(combat.CriticalMultiplierV1Numerator) / float64(combat.CriticalMultiplierV1Denominator)
+	}
 	blocked := false
 
 	switch request.DamageType {
 	case combat.DamagePhysical:
-		if shield != nil && shield.PhysicalDefense > 0 {
-			damage *= 1 - physicalMitigationRateWithIgnore(shield.PhysicalDefense, request.PhysicalDefenseIgnorePercent)
+		physicalDefense := request.AdditionalPhysicalDefense
+		if shield != nil {
+			physicalDefense = saturatingAddUint32(physicalDefense, shield.PhysicalDefense)
+		}
+		if physicalDefense > 0 {
+			damage *= 1 - physicalMitigationRateWithIgnore(physicalDefense, request.PhysicalDefenseIgnorePercent)
 		}
 		if shield != nil && request.Blockable && shield.BlockChancePercent > 0 && blockRoll%100 < uint32(shield.BlockChancePercent) {
 			blocked = true
@@ -115,6 +145,9 @@ func resolveDamageMitigation(request DamageRequest, shield *equipmentcatalog.Shi
 	case combat.DamageMagic:
 		if request.PhysicalDefenseIgnorePercent != 0 {
 			return DamageResult{}, ErrInvalidPhysicalDefenseIgnore
+		}
+		if request.MagicDefense > 0 {
+			damage *= 1 - magicMitigationRate(request.MagicDefense)
 		}
 		if shield != nil && shield.MagicDamageReductionPercent > 0 {
 			damage *= 1 - float64(shield.MagicDamageReductionPercent)/100

@@ -27,19 +27,22 @@ func (r *Runtime) emitActionStarted(actorID world.EntityID, prepared combat.Prep
 		started.TargetZ = &z
 	}
 
-	for _, s := range r.sessions.List() {
+	// Cross-Session delivery order has no protocol meaning here; each Session still observes
+	// actions in authoritative command order through its own Reliable sequence. Avoid rebuilding
+	// and sorting the full Session registry for every accepted combat action.
+	r.sessions.RangeUnordered(func(s *session.Session) bool {
 		if s.EntityID != actorID && (r.replication == nil || !r.replication.Knows(s.ID, actorID)) {
-			continue
+			return true
 		}
 		envelope := protocol.Envelope{
-			Delivery: protocol.DeliveryReliableOrdered,
-			Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
+			Delivery:   protocol.DeliveryReliableOrdered,
+			Sequence:   s.NextOutboundSequence(protocol.DeliveryReliableOrdered),
 			ServerTick: tick,
-			Message: started,
+			Message:    started,
 		}
 		if err := s.Connection().TrySend(envelope); err != nil {
 			report.DeliveryErrors = append(report.DeliveryErrors, DeliveryError{SessionID:s.ID,Delivery:protocol.DeliveryReliableOrdered,MessageType:protocol.MessageActionStarted,Err:err})
-			if err == session.ErrConnectionClosed { continue }
 		}
-	}
+		return true
+	})
 }

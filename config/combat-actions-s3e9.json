@@ -1,21 +1,27 @@
 {
-  "schema_version": 1,
-  "revision": "s3e9-soak-001",
+  "schema_version": 4,
+  "revision": "s3e9-soak-003",
   "actions": [
     {
       "id": "basic-attack",
-      "targets": ["gate", "entity"],
+      "effect": "damage",
+      "targets": ["entity"],
       "range": 4.5,
       "base_damage": 100,
       "damage_type": "physical",
+      "critical_eligible": true,
+      "blockable": true,
       "cooldown_seconds": 0.5
     },
     {
       "id": "soak-attack",
+      "effect": "damage",
       "targets": ["entity"],
       "range": 4.5,
       "base_damage": 1,
       "damage_type": "physical",
+      "critical_eligible": true,
+      "blockable": true,
       "cooldown_seconds": 0.05
     }
   ]

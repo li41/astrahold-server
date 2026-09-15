@@ -8,6 +8,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
+	"github.com/li41/astrahold-server/internal/characterstats"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
 	"github.com/li41/astrahold-server/internal/world"
@@ -352,5 +353,6 @@ func worlddCharacterSnapshot(hp uint32) characterstate.Snapshot {
 		Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1},
 		Yaw:      0.75,
 		Inventory: characterstate.InventoryState{Initialized: true},
+		PrimaryStats: characterstats.DefaultPrimary(),
 	}
 }
