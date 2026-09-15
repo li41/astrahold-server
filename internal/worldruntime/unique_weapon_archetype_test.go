@@ -32,8 +32,8 @@ func TestUniqueMainHandResolvesWeaponArchetypeForBasicAttackRules(t *testing.T) 
 	if resolved.ItemArchetypeID != "item_mid_bow" || resolved.Tier != equipmentcatalog.TierMid || resolved.Weapon == nil || resolved.Weapon.WeaponType != equipmentcatalog.WeaponTypeBow {
 		t.Fatalf("resolved unique weapon=%#v", resolved)
 	}
-	if got := rollWeaponDamage(resolved, equipmentcatalog.BodySizeSmall, 0); got != 11 {
-		t.Fatalf("mid bow base damage=%d want=11", got)
+	if got := rollWeaponDamage(resolved, equipmentcatalog.BodySizeSmall, 0); got != 3 {
+		t.Fatalf("mid bow base damage=%d want=3 before arrow damage", got)
 	}
 	if resolved.Weapon.AccuracyModifier != 1 {
 		t.Fatalf("mid bow accuracy=%d want=1", resolved.Weapon.AccuracyModifier)
