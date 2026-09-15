@@ -20,7 +20,6 @@ const (
 	WeaponTypeKnuckles     WeaponType = "knuckles"
 	WeaponTypeClaw         WeaponType = "claw"
 	WeaponTypeDualBlades   WeaponType = "dual_blades"
-	WeaponTypeBow          WeaponType = "bow"
 	WeaponTypeCrossbow     WeaponType = "crossbow"
 	WeaponTypeSling        WeaponType = "sling"
 	WeaponTypeStaff        WeaponType = "staff"
