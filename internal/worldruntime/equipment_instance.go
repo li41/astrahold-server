@@ -87,7 +87,12 @@ func (r *Runtime) applyEquipmentInstanceCommand(name string, command equipmentCo
 	var err error
 	switch request.Operation {
 	case protocol.EquipmentOperationEquip:
-		err = r.applyEquipInstance(inv, request.Slot, iteminstance.ID(request.ItemInstanceID))
+		instanceID := iteminstance.ID(request.ItemInstanceID)
+		if requirementErr := validateEquipmentInstanceBaseRequirements(inv, instanceID, state.PrimaryStats); requirementErr != nil {
+			err = requirementErr
+		} else {
+			err = r.applyEquipInstance(inv, request.Slot, instanceID)
+		}
 	case protocol.EquipmentOperationUnequip:
 		_, err = inv.UnequipInstance(slot)
 	default:

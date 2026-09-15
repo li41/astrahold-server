@@ -28,6 +28,7 @@ const (
 
 	EquipmentKindWeapon EquipmentKind = "weapon"
 	EquipmentKindShield EquipmentKind = "shield"
+	EquipmentKindArmor  EquipmentKind = "armor"
 
 	AffixStrength        AffixID = "affix_strength"
 	AffixDexterity       AffixID = "affix_dexterity"
@@ -85,6 +86,25 @@ var shieldPool = []AffixID{
 	AffixMagicDefense,
 }
 
+// armorPool follows the formal armor plan. PhysicalDamage is intentionally excluded so five high
+// armor pieces cannot stack direct physical-damage affixes faster than the weapon progression.
+var armorPool = []AffixID{
+	AffixStrength,
+	AffixDexterity,
+	AffixIntelligence,
+	AffixConstitution,
+	AffixSpirit,
+	AffixCharisma,
+	AffixPhysicalHit,
+	AffixCriticalRating,
+	AffixEvasion,
+	AffixMaxHP,
+	AffixMaxMP,
+	AffixPhysicalDefense,
+	AffixMagicDefense,
+	AffixMagicPower,
+}
+
 func AffixCount(tier Tier) (int, bool) {
 	switch tier {
 	case TierLow:
@@ -105,6 +125,8 @@ func AllowedPool(kind EquipmentKind) ([]AffixID, bool) {
 		pool = weaponPool
 	case EquipmentKindShield:
 		pool = shieldPool
+	case EquipmentKindArmor:
+		pool = armorPool
 	default:
 		return nil, false
 	}

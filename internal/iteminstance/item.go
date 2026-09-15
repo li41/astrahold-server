@@ -179,6 +179,8 @@ func affixDomain(definition equipmentcatalog.Definition) (equipmentaffix.Tier, e
 		kind = equipmentaffix.EquipmentKindWeapon
 	case equipmentcatalog.KindShield:
 		kind = equipmentaffix.EquipmentKindShield
+	case equipmentcatalog.KindArmor:
+		kind = equipmentaffix.EquipmentKindArmor
 	default:
 		return "", "", ErrUnsupportedItem
 	}

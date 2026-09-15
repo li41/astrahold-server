@@ -82,21 +82,24 @@ type Shield struct {
 }
 
 type Definition struct {
-	ItemArchetypeID string           `json:"item_archetype_id"`
-	Kind            Kind             `json:"kind"`
-	Slot            Slot             `json:"slot"`
-	Tier            Tier             `json:"tier"`
-	Weight          uint32           `json:"weight"`
-	Material        string           `json:"material"`
-	ArmorClass      ArmorClass       `json:"armor_class,omitempty"`
-	StaticModifiers []StaticModifier `json:"static_modifiers,omitempty"`
-	Weapon          *Weapon          `json:"weapon,omitempty"`
-	Shield          *Shield          `json:"shield,omitempty"`
+	ItemArchetypeID  string                `json:"item_archetype_id"`
+	Kind             Kind                  `json:"kind"`
+	Slot             Slot                  `json:"slot"`
+	Tier             Tier                  `json:"tier"`
+	Weight           uint32                `json:"weight"`
+	Material         string                `json:"material"`
+	ArmorClass       ArmorClass            `json:"armor_class,omitempty"`
+	SetID            SetID                 `json:"set_id,omitempty"`
+	BaseRequirements []BaseStatRequirement `json:"base_requirements,omitempty"`
+	StaticModifiers  []StaticModifier      `json:"static_modifiers,omitempty"`
+	Weapon           *Weapon               `json:"weapon,omitempty"`
+	Shield           *Shield               `json:"shield,omitempty"`
 }
 
 type CatalogDefinition struct {
 	Revision    string                 `json:"revision"`
 	WeaponTypes []WeaponTypeDefinition `json:"weapon_types,omitempty"`
+	Sets        []SetDefinition        `json:"sets,omitempty"`
 	Items       []Definition           `json:"items"`
 }
 
@@ -105,6 +108,7 @@ type Catalog struct {
 	byItem      map[string]Definition
 	armorByItem map[string]Definition
 	weaponTypes map[WeaponType]WeaponTypeDefinition
+	sets        map[SetID]SetDefinition
 }
 
 func Default() (*Catalog, error) {
@@ -118,6 +122,8 @@ func Default() (*Catalog, error) {
 	// v29 is the compatibility fence for the seven-slot model, so adding armor does not rewrite that
 	// weapon-data revision string.
 	def.Items = append(def.Items, defaultLowTierArmor()...)
+	def.Items = append(def.Items, defaultRemainingArmor()...)
+	def.Sets = append(def.Sets, defaultArmorSets()...)
 	return New(def)
 }
 
@@ -136,11 +142,16 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	if def.Revision == "" || len(def.Items) == 0 {
 		return nil, ErrInvalidCatalog
 	}
+	sets, err := canonicalSetDefinitions(def.Sets)
+	if err != nil {
+		return nil, ErrInvalidCatalog
+	}
 	catalog := &Catalog{
 		revision:    def.Revision,
 		byItem:      make(map[string]Definition, len(def.Items)),
 		armorByItem: make(map[string]Definition),
 		weaponTypes: make(map[WeaponType]WeaponTypeDefinition, len(def.WeaponTypes)),
+		sets:        sets,
 	}
 	for _, authored := range def.WeaponTypes {
 		authored.WeaponType = WeaponType(strings.TrimSpace(string(authored.WeaponType)))
@@ -171,6 +182,7 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
 		item.Material = strings.TrimSpace(item.Material)
 		item.ArmorClass = ArmorClass(strings.TrimSpace(string(item.ArmorClass)))
+		item.SetID = SetID(strings.TrimSpace(string(item.SetID)))
 		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) {
 			return nil, ErrInvalidCatalog
 		}
@@ -185,6 +197,16 @@ func New(def CatalogDefinition) (*Catalog, error) {
 			return nil, ErrInvalidCatalog
 		}
 		item.StaticModifiers = staticModifiers
+		baseRequirements, err := canonicalBaseRequirements(item.BaseRequirements)
+		if err != nil {
+			return nil, ErrInvalidCatalog
+		}
+		item.BaseRequirements = baseRequirements
+		if item.SetID != "" {
+			if _, ok := catalog.sets[item.SetID]; !ok {
+				return nil, ErrInvalidCatalog
+			}
+		}
 		switch item.Kind {
 		case KindWeapon:
 			if item.Slot != SlotMainHand || item.Weapon == nil || item.Shield != nil || item.ArmorClass != "" {
@@ -215,6 +237,9 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		default:
 			return nil, ErrInvalidCatalog
 		}
+	}
+	if err := validateSetPopulation(catalog); err != nil {
+		return nil, ErrInvalidCatalog
 	}
 	return catalog, nil
 }
@@ -290,6 +315,7 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 		return Definition{}, false
 	}
 	item.StaticModifiers = cloneStaticModifiers(item.StaticModifiers)
+	item.BaseRequirements = cloneBaseRequirements(item.BaseRequirements)
 	if item.Weapon != nil {
 		copy := *item.Weapon
 		item.Weapon = &copy

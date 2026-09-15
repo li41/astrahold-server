@@ -89,7 +89,7 @@ func (c *Catalog) StaticModifiersForItem(itemArchetypeID string) ([]StaticModifi
 	if c == nil {
 		return nil, false
 	}
-	item, ok := c.byItem[strings.TrimSpace(itemArchetypeID)]
+	item, ok := c.Resolve(strings.TrimSpace(itemArchetypeID))
 	if !ok {
 		return nil, false
 	}
