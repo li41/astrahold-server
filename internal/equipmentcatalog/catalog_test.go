@@ -8,12 +8,12 @@ import (
 	"github.com/li41/astrahold-server/internal/characterstats"
 )
 
-func TestDefaultCatalogLocksLowTierEquipmentV5(t *testing.T) {
+func TestDefaultCatalogLocksEquipmentProgressionV1(t *testing.T) {
 	catalog, err := Default()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := catalog.Revision(); got != "low-tier-equipment-v5" {
+	if got := catalog.Revision(); got != "weapon-progression-v1" {
 		t.Fatalf("revision = %q", got)
 	}
 
