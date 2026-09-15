@@ -75,14 +75,15 @@ type Shield struct {
 }
 
 type Definition struct {
-	ItemArchetypeID string  `json:"item_archetype_id"`
-	Kind            Kind    `json:"kind"`
-	Slot            Slot    `json:"slot"`
-	Tier            Tier    `json:"tier"`
-	Weight          uint32  `json:"weight"`
-	Material        string  `json:"material"`
-	Weapon          *Weapon `json:"weapon,omitempty"`
-	Shield          *Shield `json:"shield,omitempty"`
+	ItemArchetypeID string           `json:"item_archetype_id"`
+	Kind            Kind             `json:"kind"`
+	Slot            Slot             `json:"slot"`
+	Tier            Tier             `json:"tier"`
+	Weight          uint32           `json:"weight"`
+	Material        string           `json:"material"`
+	StaticModifiers []StaticModifier `json:"static_modifiers,omitempty"`
+	Weapon          *Weapon          `json:"weapon,omitempty"`
+	Shield          *Shield          `json:"shield,omitempty"`
 }
 
 type CatalogDefinition struct {
@@ -153,6 +154,11 @@ func New(def CatalogDefinition) (*Catalog, error) {
 		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {
 			return nil, ErrInvalidCatalog
 		}
+		staticModifiers, err := canonicalStaticModifiers(item.StaticModifiers)
+		if err != nil {
+			return nil, ErrInvalidCatalog
+		}
+		item.StaticModifiers = staticModifiers
 		switch item.Kind {
 		case KindWeapon:
 			if item.Slot != SlotMainHand || item.Weapon == nil || item.Shield != nil {
@@ -227,6 +233,7 @@ func (c *Catalog) Resolve(itemArchetypeID string) (Definition, bool) {
 	if !ok {
 		return Definition{}, false
 	}
+	item.StaticModifiers = cloneStaticModifiers(item.StaticModifiers)
 	if item.Weapon != nil {
 		copy := *item.Weapon
 		item.Weapon = &copy

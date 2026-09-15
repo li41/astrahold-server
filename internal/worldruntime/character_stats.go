@@ -3,6 +3,7 @@ package worldruntime
 import (
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/characterstats"
+	"github.com/li41/astrahold-server/internal/equipmentstats"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -25,9 +26,20 @@ func effectivePrimaryStatsFromLearned(base characterstats.Primary, learned learn
 	return characterstats.Effective(base, bonus)
 }
 
-// characterEffectivePrimaryStats is the world-owner read seam for future combat scaling.
-// It reads the existing authoritative character and learned-skill stores; it does not create a
-// second mutable stat authority or infer any unapproved allocation/scaling rules.
+func primaryBonusFromEquipmentModifiers(modifiers equipmentstats.Modifiers) characterstats.AdditiveBonus {
+	return characterstats.AdditiveBonus{
+		Strength: modifiers.Strength,
+		Agility: modifiers.Dexterity,
+		Constitution: modifiers.Constitution,
+		Intelligence: modifiers.Intelligence,
+		Spirit: modifiers.Spirit,
+		Charisma: modifiers.Charisma,
+	}
+}
+
+// characterEffectivePrimaryStats is the world-owner read seam for combat scaling. Durable base
+// stats are composed with learned passives first, then with currently equipped fixed/rolled primary
+// bonuses. Equipment remains derived truth and is never copied into durable base attributes.
 func (r *Runtime) characterEffectivePrimaryStats(entityID world.EntityID) (characterstats.Primary, error) {
 	state, ok := r.characters.State(entityID)
 	if !ok {
@@ -37,5 +49,13 @@ func (r *Runtime) characterEffectivePrimaryStats(entityID world.EntityID) (chara
 	if err != nil {
 		return characterstats.Primary{}, err
 	}
-	return effectivePrimaryStatsFromLearned(state.PrimaryStats, learned)
+	effective, err := effectivePrimaryStatsFromLearned(state.PrimaryStats, learned)
+	if err != nil {
+		return characterstats.Primary{}, err
+	}
+	modifiers, err := r.equippedInstanceModifiers(entityID)
+	if err != nil {
+		return characterstats.Primary{}, err
+	}
+	return characterstats.Effective(effective, primaryBonusFromEquipmentModifiers(modifiers))
 }
