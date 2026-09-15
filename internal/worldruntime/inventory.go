@@ -64,6 +64,7 @@ func legacyEquipmentArchetypeAllowed(itemArchetypeID string, kind equipmentcatal
 
 func durableInventoryState(inv *inventory.Inventory) (characterstate.InventoryState, error) {
 	if inv == nil { return characterstate.InventoryState{}, errors.New("worldruntime: inventory unavailable") }
+	if err := validateInventoryHandCombination(inv); err != nil { return characterstate.InventoryState{}, err }
 
 	stacks := inv.Snapshot()
 	durableStacks := make([]characterstate.InventoryStack, 0, len(stacks))
@@ -109,6 +110,7 @@ func restoreCharacterInventory(maxStacks int, state characterstate.InventoryStat
 	if !state.Initialized { return nil, nil }
 	canonical, err := characterstate.CanonicalInventoryState(state)
 	if err != nil || canonical != state { return nil, characterstate.ErrInvalidSnapshot }
+	if err := validateInventoryStateHandCombination(state); err != nil { return nil, err }
 
 	stacks, err := state.Stacks(); if err != nil { return nil, err }
 	instances, err := state.Instances(); if err != nil { return nil, err }
