@@ -7,7 +7,7 @@ import (
 )
 
 const validWorldJSON = `{
-  "schema_version": 3,
+  "schema_version": 4,
   "world_id": "test-world",
   "revision": "r1",
   "units": "meters",
@@ -18,6 +18,7 @@ const validWorldJSON = `{
     "plane":{"origin_x":0,"origin_z":0,"base_y":0,"slope_x":0,"slope_z":0}
   }],
   "regions": [],
+  "maps": [],
   "portals": [],
   "blockers": [],
   "gates": []

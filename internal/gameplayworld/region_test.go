@@ -13,8 +13,8 @@ func TestCastleSandboxFirstContinentLayout(t *testing.T) {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
 	d := loaded.Definition
-	if d.SchemaVersion != 3 {
-		t.Fatalf("schema version = %d, want 3", d.SchemaVersion)
+	if d.SchemaVersion != 4 {
+		t.Fatalf("schema version = %d, want 4", d.SchemaVersion)
 	}
 	if len(d.Surfaces) != 1 {
 		t.Fatalf("surfaces = %d, want 1", len(d.Surfaces))

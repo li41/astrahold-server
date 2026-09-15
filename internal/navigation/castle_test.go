@@ -40,8 +40,8 @@ func TestCastleSandboxEmberwatchVillageBlockers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Definition.Revision != "first-continent-world-master-v1" {
-		t.Fatalf("revision=%q, want first-continent-world-master-v1", loaded.Definition.Revision)
+	if loaded.Definition.Revision != "first-continent-world-master-v2" {
+		t.Fatalf("revision=%q, want first-continent-world-master-v2", loaded.Definition.Revision)
 	}
 
 	type expectedBlocker struct {

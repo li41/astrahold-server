@@ -12,11 +12,11 @@ func TestCurrentStarterWorldIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFile(castle-sandbox) error = %v", err)
 	}
-	if loaded.Definition.Revision != "first-continent-world-master-v1" {
-		t.Fatalf("revision = %q, want first-continent-world-master-v1", loaded.Definition.Revision)
+	if loaded.Definition.Revision != "first-continent-world-master-v2" {
+		t.Fatalf("revision = %q, want first-continent-world-master-v2", loaded.Definition.Revision)
 	}
-	if len(loaded.Definition.Surfaces) != 1 || len(loaded.Definition.Regions) != 12 || len(loaded.Definition.Portals) != 0 || len(loaded.Definition.Blockers) != 10 || len(loaded.Definition.Gates) != 0 {
-		t.Fatalf("unexpected starter world topology: surfaces=%d regions=%d portals=%d blockers=%d gates=%d", len(loaded.Definition.Surfaces), len(loaded.Definition.Regions), len(loaded.Definition.Portals), len(loaded.Definition.Blockers), len(loaded.Definition.Gates))
+	if len(loaded.Definition.Surfaces) != 1 || len(loaded.Definition.Regions) != 12 || len(loaded.Definition.Maps) != 9 || len(loaded.Definition.Portals) != 0 || len(loaded.Definition.Blockers) != 10 || len(loaded.Definition.Gates) != 0 {
+		t.Fatalf("unexpected starter world topology: surfaces=%d regions=%d maps=%d portals=%d blockers=%d gates=%d", len(loaded.Definition.Surfaces), len(loaded.Definition.Regions), len(loaded.Definition.Maps), len(loaded.Definition.Portals), len(loaded.Definition.Blockers), len(loaded.Definition.Gates))
 	}
 	ground := loaded.Definition.Surfaces[0]
 	if ground.ID != "ground" || ground.Layer != 0 {
@@ -37,7 +37,7 @@ func TestValidateRejectsPortalHeightGapAboveMaxStep(t *testing.T) {
 		},
 		Portals: []Portal{{
 			ID: "too-high", FromLayer: 0, ToLayer: 1,
-			Bounds:        BoundsXZ{MinX: -0.5, MaxX: 0.5, MinZ: -0.5, MaxZ: 0.5},
+			Bounds:        BoundsXZ{MinX: -0.5, MaxX: 0.5, MinZ: 0, MaxZ: 0.2},
 			Bidirectional: true,
 		}},
 	}

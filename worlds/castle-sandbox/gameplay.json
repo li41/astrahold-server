@@ -1,7 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "world_id": "castle-sandbox",
-  "revision": "first-continent-world-master-v1",
+  "revision": "first-continent-world-master-v2",
   "units": "meters",
   "agent": {"radius": 0.35, "height": 1.8, "max_step_height": 0.5},
   "surfaces": [{"id": "ground", "layer": 0, "bounds": {"min_x": -2600, "max_x": 2600, "min_z": -900, "max_z": 4100}, "plane": {"origin_x": 0, "origin_z": 0, "base_y": 0, "slope_x": 0, "slope_z": 0}}],
@@ -18,6 +18,17 @@
     {"id":"region_blackridge_highlands","layer":0,"polygon":[{"x":-1080,"z":2680},{"x":-700,"z":2600},{"x":-260,"z":2640},{"x":200,"z":2780},{"x":560,"z":3060},{"x":620,"z":3460},{"x":400,"z":3820},{"x":40,"z":3980},{"x":-400,"z":4000},{"x":-800,"z":3860},{"x":-1060,"z":3540},{"x":-1100,"z":3100}]},
     {"id":"region_frostmere","parent_id":"region_blackridge_highlands","layer":0,"polygon":[{"x":-820,"z":3320},{"x":-520,"z":3220},{"x":-180,"z":3280},{"x":120,"z":3480},{"x":140,"z":3820},{"x":-80,"z":4040},{"x":-460,"z":4080},{"x":-780,"z":3900},{"x":-880,"z":3600}]},
     {"id":"region_starfall_wastes","layer":0,"polygon":[{"x":760,"z":1620},{"x":1120,"z":1500},{"x":1580,"z":1500},{"x":2040,"z":1660},{"x":2440,"z":2000},{"x":2520,"z":2420},{"x":2300,"z":2840},{"x":1900,"z":2940},{"x":1460,"z":2860},{"x":1080,"z":2660},{"x":820,"z":2300}]}
+  ],
+  "maps": [
+    {"id":"map_redsoil_ant_nest","kind":"underground","scale_class":"small","envelope":{"width_x":260,"length_z":220},"entrance":{"id":"entrance_redsoil_ant_nest","layer":0,"point":{"x":520,"z":220}},"level_count":3,"max_depth_meters":38,"main_route_meters":900},
+    {"id":"map_astrahold_gaol","kind":"underground","scale_class":"medium","envelope":{"width_x":160,"length_z":120},"entrance":{"id":"entrance_astrahold_gaol","layer":0,"point":{"x":-280,"z":1160}},"level_count":3,"max_depth_meters":32,"main_route_meters":650},
+    {"id":"map_ironroot_mine","kind":"underground","scale_class":"medium","planning_range":{"min_meters":160,"max_meters":400},"entrance":{"id":"entrance_ironroot_mine","layer":0,"point":{"x":-300,"z":2350}}},
+    {"id":"map_riftstone_caverns","kind":"underground","scale_class":"medium","envelope":{"width_x":360,"length_z":280},"entrance":{"id":"entrance_riftstone_caverns","layer":0,"point":{"x":-980,"z":2480}},"level_count":4,"max_depth_meters":72,"main_route_meters":1450},
+    {"id":"map_hollow_crypt","kind":"underground","scale_class":"medium","planning_range":{"min_meters":160,"max_meters":400},"entrance":{"id":"entrance_hollow_crypt","layer":0,"point":{"x":-1500,"z":2150}}},
+    {"id":"map_sunken_abbey","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_sunken_abbey","layer":0,"point":{"x":-950,"z":-520}}},
+    {"id":"map_blackridge_depths","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_blackridge_depths","layer":0,"point":{"x":-120,"z":3020}}},
+    {"id":"map_starfall_ruins","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_starfall_ruins","layer":0,"point":{"x":1950,"z":2700}}},
+    {"id":"map_deep_vault","kind":"underground","scale_class":"large","planning_range":{"min_meters":400,"max_meters":800},"entrance":{"id":"entrance_deep_vault","layer":0,"point":{"x":2200,"z":3200}}}
   ],
   "portals": [],
   "blockers": [

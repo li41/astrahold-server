@@ -15,7 +15,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 3
+const SchemaVersion uint16 = 4
 
 var (
 	ErrUnsupportedSchema = errors.New("gameplayworld: unsupported schema version")
@@ -86,7 +86,7 @@ type Blocker struct {
 type GateAttackProfile struct {
 	Range           float32 `json:"range"`
 	Damage          uint32  `json:"damage"`
-	CooldownSeconds float32  `json:"cooldown_seconds"`
+	CooldownSeconds float32 `json:"cooldown_seconds"`
 }
 
 type Gate struct {
@@ -97,16 +97,17 @@ type Gate struct {
 }
 
 type Definition struct {
-	SchemaVersion uint16        `json:"schema_version"`
-	WorldID       string        `json:"world_id"`
-	Revision      string        `json:"revision"`
-	Units         string        `json:"units"`
-	Agent         AgentDefaults `json:"agent"`
-	Surfaces      []Surface     `json:"surfaces"`
-	Regions       []RegionCore  `json:"regions"`
-	Portals       []Portal      `json:"portals"`
-	Blockers      []Blocker     `json:"blockers"`
-	Gates         []Gate        `json:"gates"`
+	SchemaVersion uint16         `json:"schema_version"`
+	WorldID       string         `json:"world_id"`
+	Revision      string         `json:"revision"`
+	Units         string         `json:"units"`
+	Agent         AgentDefaults  `json:"agent"`
+	Surfaces      []Surface      `json:"surfaces"`
+	Regions       []RegionCore   `json:"regions"`
+	Maps          []MapAuthority `json:"maps"`
+	Portals       []Portal       `json:"portals"`
+	Blockers      []Blocker      `json:"blockers"`
+	Gates         []Gate         `json:"gates"`
 }
 
 type Loaded struct {
@@ -182,6 +183,9 @@ func Validate(d Definition) error {
 		}
 	}
 	if err := validateRegions(d); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
+	}
+	if err := validateMaps(d); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
 	}
 
