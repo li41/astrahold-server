@@ -52,6 +52,7 @@ const (
 	WeaponTypeOneHandSword WeaponType = "one_hand_sword"
 	WeaponTypeOneHandAxe   WeaponType = "one_hand_axe"
 	WeaponTypeMace         WeaponType = "mace"
+	WeaponTypeBow          WeaponType = "bow"
 )
 
 type DamageRange struct {
@@ -125,6 +126,9 @@ func Default() (*Catalog, error) {
 	def.Items = append(def.Items, defaultRemainingArmor()...)
 	def.Sets = append(def.Sets, defaultArmorSets()...)
 	if err := applyDefaultProductionMaterials(def.Items); err != nil {
+		return nil, err
+	}
+	if err := applyDefaultBowAmmunitionBalance(def.Items); err != nil {
 		return nil, err
 	}
 	return New(def)
