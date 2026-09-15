@@ -234,7 +234,9 @@ func (r *Runtime) matchingSkinBasicAttackDamageBonus(actorID world.EntityID, wea
 // authoritative weapon damage, then apply only the WeaponType's formally authored primary-attribute
 // scaling, then the selected-skin WeaponType affinity flat +1. All direct entity damage finally
 // receives the matching equipped unique-instance flat modifier: PhysicalDamage for physical damage
-// and MagicPower for magic damage. Critical and target mitigation happen later in the owner path.
+// and MagicPower for magic damage. For a silver main-hand physical basic attack against a current
+// Server-classified undead target, the complete raw aggregate is then multiplied by 1.20 with floor.
+// Critical and target mitigation happen later in the owner path.
 func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourceSessionID session.ID, targetID world.EntityID, prepared combat.PreparedAction) uint32 {
 	if prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
@@ -263,10 +265,9 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 	}
 	switch prepared.Damage.Type {
 	case combat.DamagePhysical:
-		return saturatingAddUint32(damage, modifiers.PhysicalDamage)
+		damage = saturatingAddUint32(damage, modifiers.PhysicalDamage)
 	case combat.DamageMagic:
-		return saturatingAddUint32(damage, modifiers.MagicPower)
-	default:
-		return damage
+		damage = saturatingAddUint32(damage, modifiers.MagicPower)
 	}
+	return r.applySilverUndeadBasicAttackBonus(actorID, sourceSessionID, targetID, prepared, damage)
 }

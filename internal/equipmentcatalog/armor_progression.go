@@ -290,7 +290,7 @@ func defaultRemainingArmor() []Definition {
 	}
 }
 
-func progressionArmor(id string, slot Slot, tier Tier, weight uint32, material string, class ArmorClass, setID SetID, physicalDefense, magicDefense uint32, requirements []BaseStatRequirement) Definition {
+func progressionArmor(id string, slot Slot, tier Tier, weight uint32, material MaterialID, class ArmorClass, setID SetID, physicalDefense, magicDefense uint32, requirements []BaseStatRequirement) Definition {
 	modifiers := make([]StaticModifier, 0, 2)
 	if physicalDefense > 0 {
 		modifiers = append(modifiers, StaticModifier{ID: StaticPhysicalDefense, Value: physicalDefense})

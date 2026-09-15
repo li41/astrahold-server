@@ -15,7 +15,7 @@ func TestDefaultCatalogHasLowTierRepresentativeForEveryFormalWeaponType(t *testi
 	cases := []struct {
 		id              string
 		weaponType      WeaponType
-		material        string
+		material        MaterialID
 		small           DamageRange
 		large           DamageRange
 		extra           uint32
@@ -26,23 +26,23 @@ func TestDefaultCatalogHasLowTierRepresentativeForEveryFormalWeaponType(t *testi
 		attackRange     float32
 		hands           HandRequirement
 	}{
-		{"item_militia_iron_sword", WeaponTypeOneHandSword, "iron", DamageRange{6, 9}, DamageRange{6, 8}, 0, 0, 7, 900, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_iron_dagger", WeaponTypeDagger, "iron", DamageRange{4, 6}, DamageRange{3, 5}, 0, 2, 3, 650, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_militia_battle_axe", WeaponTypeOneHandAxe, "iron_wood", DamageRange{5, 8}, DamageRange{8, 12}, 0, -1, 10, 1050, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_militia_iron_spear", WeaponTypeOneHandSpear, "iron_wood", DamageRange{7, 9}, DamageRange{9, 11}, 0, 1, 8, 1000, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_iron_warhammer", WeaponTypeWarhammer, "iron_wood", DamageRange{8, 11}, DamageRange{8, 11}, 0, -1, 10, 1150, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_iron_morning_star", WeaponTypeMorningStar, "iron_chain", DamageRange{8, 11}, DamageRange{8, 11}, 0, 0, 10, 1200, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_iron_war_mace", WeaponTypeMace, "iron_wood", DamageRange{6, 9}, DamageRange{6, 9}, 1, 1, 9, 1050, characterstats.Strength, 0, HandRequirementOneHand},
-		{"item_two_hand_iron_sword", WeaponTypeTwoHandSword, "iron", DamageRange{11, 16}, DamageRange{10, 15}, 0, 0, 12, 1350, characterstats.Strength, 0, HandRequirementTwoHand},
-		{"item_two_hand_battle_axe", WeaponTypeTwoHandAxe, "iron_wood", DamageRange{12, 18}, DamageRange{16, 20}, 0, -2, 14, 1500, characterstats.Strength, 0, HandRequirementTwoHand},
-		{"item_long_iron_spear", WeaponTypeTwoHandSpear, "iron_wood", DamageRange{11, 15}, DamageRange{14, 18}, 0, 0, 11, 1300, characterstats.Strength, 0, HandRequirementTwoHand},
-		{"item_iron_knuckles", WeaponTypeKnuckles, "iron_leather", DamageRange{4, 7}, DamageRange{4, 6}, 0, 2, 4, 600, characterstats.Strength, 0, HandRequirementTwoHand},
-		{"item_iron_claw", WeaponTypeClaw, "iron_leather", DamageRange{5, 8}, DamageRange{5, 7}, 0, 1, 5, 700, characterstats.Strength, 0, HandRequirementTwoHand},
-		{"item_militia_dual_blades", WeaponTypeDualBlades, "iron", DamageRange{6, 8}, DamageRange{5, 7}, 0, 0, 8, 700, characterstats.Strength, 0, HandRequirementTwoHand},
-		{"item_hunter_shortbow", WeaponTypeBow, "wood_leather", DamageRange{8, 11}, DamageRange{8, 11}, 0, 1, 4, 1200, characterstats.Agility, 18, HandRequirementTwoHand},
-		{"item_hunter_light_crossbow", WeaponTypeCrossbow, "wood_iron", DamageRange{12, 15}, DamageRange{12, 15}, 0, 2, 8, 1550, characterstats.Agility, 22, HandRequirementTwoHand},
-		{"item_leather_sling", WeaponTypeSling, "leather", DamageRange{7, 10}, DamageRange{7, 10}, 0, 2, 2, 1100, characterstats.Agility, 14, HandRequirementOneHand},
-		{"item_apprentice_wood_staff", WeaponTypeStaff, "wood", DamageRange{5, 8}, DamageRange{5, 8}, 0, 0, 5, 1250, "", 0, HandRequirementTwoHand},
+		{"item_militia_iron_sword", WeaponTypeOneHandSword, MaterialIron, DamageRange{6, 9}, DamageRange{6, 8}, 0, 0, 7, 900, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_iron_dagger", WeaponTypeDagger, MaterialIron, DamageRange{4, 6}, DamageRange{3, 5}, 0, 2, 3, 650, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_militia_battle_axe", WeaponTypeOneHandAxe, MaterialIron, DamageRange{5, 8}, DamageRange{8, 12}, 0, -1, 10, 1050, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_militia_iron_spear", WeaponTypeOneHandSpear, MaterialIron, DamageRange{7, 9}, DamageRange{9, 11}, 0, 1, 8, 1000, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_iron_warhammer", WeaponTypeWarhammer, MaterialIron, DamageRange{8, 11}, DamageRange{8, 11}, 0, -1, 10, 1150, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_iron_morning_star", WeaponTypeMorningStar, MaterialIron, DamageRange{8, 11}, DamageRange{8, 11}, 0, 0, 10, 1200, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_iron_war_mace", WeaponTypeMace, MaterialIron, DamageRange{6, 9}, DamageRange{6, 9}, 1, 1, 9, 1050, characterstats.Strength, 0, HandRequirementOneHand},
+		{"item_two_hand_iron_sword", WeaponTypeTwoHandSword, MaterialIron, DamageRange{11, 16}, DamageRange{10, 15}, 0, 0, 12, 1350, characterstats.Strength, 0, HandRequirementTwoHand},
+		{"item_two_hand_battle_axe", WeaponTypeTwoHandAxe, MaterialIron, DamageRange{12, 18}, DamageRange{16, 20}, 0, -2, 14, 1500, characterstats.Strength, 0, HandRequirementTwoHand},
+		{"item_long_iron_spear", WeaponTypeTwoHandSpear, MaterialIron, DamageRange{11, 15}, DamageRange{14, 18}, 0, 0, 11, 1300, characterstats.Strength, 0, HandRequirementTwoHand},
+		{"item_iron_knuckles", WeaponTypeKnuckles, MaterialIron, DamageRange{4, 7}, DamageRange{4, 6}, 0, 2, 4, 600, characterstats.Strength, 0, HandRequirementTwoHand},
+		{"item_iron_claw", WeaponTypeClaw, MaterialIron, DamageRange{5, 8}, DamageRange{5, 7}, 0, 1, 5, 700, characterstats.Strength, 0, HandRequirementTwoHand},
+		{"item_militia_dual_blades", WeaponTypeDualBlades, MaterialIron, DamageRange{6, 8}, DamageRange{5, 7}, 0, 0, 8, 700, characterstats.Strength, 0, HandRequirementTwoHand},
+		{"item_hunter_shortbow", WeaponTypeBow, MaterialWood, DamageRange{8, 11}, DamageRange{8, 11}, 0, 1, 4, 1200, characterstats.Agility, 18, HandRequirementTwoHand},
+		{"item_hunter_light_crossbow", WeaponTypeCrossbow, MaterialWood, DamageRange{12, 15}, DamageRange{12, 15}, 0, 2, 8, 1550, characterstats.Agility, 22, HandRequirementTwoHand},
+		{"item_leather_sling", WeaponTypeSling, MaterialLeather, DamageRange{7, 10}, DamageRange{7, 10}, 0, 2, 2, 1100, characterstats.Agility, 14, HandRequirementOneHand},
+		{"item_apprentice_wood_staff", WeaponTypeStaff, MaterialWood, DamageRange{5, 8}, DamageRange{5, 8}, 0, 0, 5, 1250, "", 0, HandRequirementTwoHand},
 	}
 	if len(cases) != 17 {
 		t.Fatalf("representative weapon count = %d, want 17", len(cases))
