@@ -7,9 +7,9 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
-func TestV28UniqueItemAndAppearanceMessageIDsDoNotOverlap(t *testing.T) {
-	if protocol.Version != 28 {
-		t.Fatalf("protocol version=%d want=28", protocol.Version)
+func TestV29UniqueItemAndAppearanceMessageIDsDoNotOverlap(t *testing.T) {
+	if protocol.Version != 29 {
+		t.Fatalf("protocol version=%d want=29", protocol.Version)
 	}
 	if protocol.MessageClientEquipmentInstanceCommand != 119 || protocol.MessageInventoryInstanceSnapshot != 120 || protocol.MessageEquipmentInstanceSnapshot != 121 {
 		t.Fatalf("unexpected unique-instance message ids: equip=%d inventory=%d equipment=%d",
@@ -41,9 +41,13 @@ func TestUniqueItemInstanceMessagesRoundTrip(t *testing.T) {
 	}
 	for _, message := range messages {
 		encoded, err := codec.Marshal(message)
-		if err != nil { t.Fatalf("Marshal(%T): %v", message, err) }
+		if err != nil {
+			t.Fatalf("Marshal(%T): %v", message, err)
+		}
 		decoded, err := codec.Unmarshal(message.Type(), encoded)
-		if err != nil { t.Fatalf("Unmarshal(%T): %v", message, err) }
+		if err != nil {
+			t.Fatalf("Unmarshal(%T): %v", message, err)
+		}
 		if !reflect.DeepEqual(decoded, message) {
 			t.Fatalf("round trip %T changed:\n got=%#v\nwant=%#v\njson=%s", message, decoded, message, encoded)
 		}
