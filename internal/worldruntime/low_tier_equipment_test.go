@@ -74,7 +74,7 @@ func TestDirectSpawnRetainsAuthoritativeBodySizeAndClearsOnReuse(t *testing.T) {
 
 func TestInventoryWeightsComeFromEquipmentCatalog(t *testing.T) {
 	weights := defaultEquipmentCatalog.UnitWeights()
-	if len(weights) != 56 { t.Fatalf("catalog weight count = %d, want 56", len(weights)) }
+	if len(weights) != 62 { t.Fatalf("catalog weight count = %d, want 62", len(weights)) }
 	for itemArchetypeID, want := range weights {
 		inv := newCharacterInventory(64)
 		if err := inv.Add(itemArchetypeID, 1); err != nil { t.Fatalf("add %s: %v", itemArchetypeID, err) }

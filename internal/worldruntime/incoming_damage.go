@@ -60,7 +60,7 @@ func magicMitigationRate(magicDefense uint32) float64 {
 	return defense / (defense + physicalDefenseScale)
 }
 
-func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatalog.Definition, bool) {
+func (r *Runtime) equippedCatalogShield(targetID world.EntityID) (equipmentcatalog.Definition, bool) {
 	if r == nil || targetID == 0 {
 		return equipmentcatalog.Definition{}, false
 	}
@@ -81,7 +81,7 @@ func (r *Runtime) equippedLowTierShield(targetID world.EntityID) (equipmentcatal
 
 func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (DamageResult, error) {
 	var shield *equipmentcatalog.Shield
-	if definition, ok := r.equippedLowTierShield(request.TargetEntityID); ok {
+	if definition, ok := r.equippedCatalogShield(request.TargetEntityID); ok {
 		shield = definition.Shield
 	}
 	modifiers, err := r.equippedInstanceModifiers(request.TargetEntityID)
