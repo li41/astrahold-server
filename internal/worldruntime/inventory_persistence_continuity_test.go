@@ -35,7 +35,12 @@ func TestCharacterStateSaveCapturesInitializedInventoryAndMainHand(t *testing.T)
 	if len(pending) != 1 { t.Fatalf("pending=%#v", pending) }
 	persisted := pending[0].Snapshot.Inventory
 	if !persisted.Initialized { t.Fatalf("persisted inventory must be initialized: %#v", persisted) }
-	if persisted.MainHand != trainingBladeArchetypeID { t.Fatalf("main hand=%q, want %q", persisted.MainHand, trainingBladeArchetypeID) }
+	equipment, err := persisted.Equipment()
+	if err != nil { t.Fatal(err) }
+	if len(equipment) != 1 || equipment[0].Slot != string(inventory.SlotMainHand) || equipment[0].ItemArchetypeID != trainingBladeArchetypeID {
+		t.Fatalf("generic equipment=%#v, want main hand %q", equipment, trainingBladeArchetypeID)
+	}
+	if persisted.MainHand != "" { t.Fatalf("legacy main hand=%q, want empty after generic persistence migration", persisted.MainHand) }
 	stacks, err := persisted.Stacks()
 	if err != nil { t.Fatal(err) }
 	quantities := make(map[string]uint32, len(stacks))
