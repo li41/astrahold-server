@@ -164,14 +164,14 @@ func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSe
 	if err != nil {
 		return false
 	}
-	return weaponBasicAttackHits(
+	return r.finalizeBasicAttackHit(actorID, sourceSessionID, weaponBasicAttackHits(
 		definition.Weapon.AccuracyModifier,
 		characterstats.PhysicalHitModifier(attackerStats.Agility),
 		attackerModifiers.PhysicalHit,
 		characterstats.EvasionModifier(targetStats.Agility),
 		targetModifiers.Evasion,
 		weaponAccuracyRoll(),
-	)
+	))
 }
 
 func (r *Runtime) entityWeaponBodySize(entityID world.EntityID) equipmentcatalog.BodySize {
@@ -245,7 +245,7 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 	damage := prepared.Damage.Amount
 	if prepared.Definition.ID == basicAttackActionID {
 		if definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID); ok {
-			if weaponDamage := rollWeaponDamage(definition, r.entityWeaponBodySize(targetID), rand.Uint32()); weaponDamage != 0 {
+			if weaponDamage := r.rollEquippedBasicAttackWeaponDamage(actorID, sourceSessionID, definition, r.entityWeaponBodySize(targetID)); weaponDamage != 0 {
 				damage = weaponDamage
 				if prepared.Damage.Type == combat.DamagePhysical {
 					if attribute, authored := defaultEquipmentCatalog.BasicAttackDamageAttributeForItem(definition.ItemArchetypeID); authored {
