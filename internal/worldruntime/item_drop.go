@@ -232,6 +232,10 @@ func (r *Runtime) applyUseItem(name string, command useActionCommand, report *St
 		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, err, 0, report)
 		return
 	}
+	if isAstraholdTeleportRune(request.ItemArchetypeID) {
+		r.applyAstraholdTeleportRune(name, s, command.sequence, inv, report)
+		return
+	}
 	definition, ok := defaultItemUseCatalog.Resolve(request.ItemArchetypeID)
 	if !ok {
 		r.rejectItemUse(name, s, command.sequence, request.ItemArchetypeID, ErrItemNotUsable, 0, report)
