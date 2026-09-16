@@ -19,7 +19,7 @@ import (
 const characterStateTestSHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 var characterStateTestWorld = characterstate.WorldRef{
-	WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: characterStateTestSHA,
+	MapID: "map1", WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: characterStateTestSHA,
 }
 
 func TestTrustedLeaveEnqueuesAuthoritativeCharacterState(t *testing.T) {
