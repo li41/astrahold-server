@@ -347,7 +347,7 @@ func worlddTrustedIdentity(t *testing.T, id string) characteridentity.Binding {
 func worlddCharacterSnapshot(hp uint32) characterstate.Snapshot {
 	return characterstate.Snapshot{
 		World: characterstate.WorldRef{
-			WorldID: worlddCharacterWorld.WorldID, Revision: worlddCharacterWorld.Revision, GameplaySHA256: worlddCharacterWorld.GameplaySHA256,
+			MapID: "map1", WorldID: worlddCharacterWorld.WorldID, Revision: worlddCharacterWorld.Revision, GameplaySHA256: worlddCharacterWorld.GameplaySHA256,
 		},
 		HP: hp, MaxHP: 1000, MP: 100, MaxMP: 100,
 		Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1},
