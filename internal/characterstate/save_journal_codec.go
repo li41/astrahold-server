@@ -16,6 +16,7 @@ import (
 
 func encodeSaveJournalRecord(recordID, expectedRevision uint64, intent SaveIntent) ([]byte, error) {
 	wire := saveJournalWireRecord{SchemaVersion: SaveJournalSchemaVersion, RecordID: recordID, ExpectedRevision: expectedRevision, IntentID: intent.IntentID, CharacterID: string(intent.Identity.ID), Snapshot: snapshotToSaveJournalWire(intent.Snapshot)}
+	wire.Snapshot.MapID = intent.Snapshot.World.MapID
 	payload, err := json.Marshal(wire); if err != nil { return nil, err }
 	if len(payload) == 0 || len(payload) > maxSaveJournalPayload { return nil, fmt.Errorf("%w: encoded payload size=%d", ErrInvalidSnapshot, len(payload)) }
 	return payload, nil
@@ -36,7 +37,7 @@ func decodeSaveJournalRecord(payload []byte) (uint64, uint64, SaveIntent, error)
 
 func snapshotToSaveJournalWire(snapshot Snapshot) saveJournalWireSnapshot {
 	wire := saveJournalWireSnapshot{
-		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256, MapID: snapshot.World.MapID,
+		WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256,
 		HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated,
 		X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw,
 		Inventory: snapshot.Inventory, CombatLoadout: combatLoadoutToWire(snapshot.CombatLoadout), LearnedSkills: learnedSkillsToWire(snapshot.LearnedSkills),
