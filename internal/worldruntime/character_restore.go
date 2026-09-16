@@ -28,10 +28,6 @@ var (
 	ErrCharacterRestoreRespawnPolicyUnavailable = errors.New("worldruntime: defeated character restore requires respawn policy")
 )
 
-// CharacterRestore is immutable durable state prepared outside the world owner.
-// Store/network I/O must complete before this value is enqueued with JoinRequest.
-// Historical profession identity is deliberately excluded: persistence migration validates and
-// discards legacy ClassID before constructing the current classless snapshot.
 type CharacterRestore struct {
 	SchemaVersion uint16
 	CharacterID   characteridentity.ID
@@ -57,25 +53,34 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		SchemaVersion: record.SchemaVersion,
 		CharacterID:   record.CharacterID,
 		Revision:      record.Revision,
-		World: protocol.WorldIdentity{
-			WorldID:        record.Snapshot.World.WorldID,
-			Revision:       record.Snapshot.World.Revision,
-			GameplaySHA256: record.Snapshot.World.GameplaySHA256,
-		},
-		MapID:         gameplayworld.MapID(record.Snapshot.World.MapID),
-		HP:            record.Snapshot.HP,
-		MaxHP:         record.Snapshot.MaxHP,
-		MP:            record.Snapshot.MP,
-		MaxMP:         record.Snapshot.MaxMP,
-		Defeated:      record.Snapshot.Defeated,
-		Transform:     world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
-		Respawn:       record.Snapshot.Respawn,
-		Inventory:     record.Snapshot.Inventory,
+		World: protocol.WorldIdentity{WorldID: record.Snapshot.World.WorldID, Revision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256},
+		MapID: gameplayworld.MapID(record.Snapshot.World.MapID),
+		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP,
+		Defeated: record.Snapshot.Defeated,
+		Transform: world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
+		Respawn: record.Snapshot.Respawn,
+		Inventory: record.Snapshot.Inventory,
 		CombatLoadout: record.Snapshot.CombatLoadout,
 		LearnedSkills: record.Snapshot.LearnedSkills,
-		PrimaryStats:  record.Snapshot.PrimaryStats,
-		SkinID:        record.Snapshot.SkinID,
+		PrimaryStats: record.Snapshot.PrimaryStats,
+		SkinID: record.Snapshot.SkinID,
 	}
+}
+
+func resolvedRestoreMapID(restore CharacterRestore, currentWorld protocol.WorldIdentity) (gameplayworld.MapID, bool) {
+	raw := string(restore.MapID)
+	if raw != strings.TrimSpace(raw) {
+		return "", false
+	}
+	if raw != "" {
+		return restore.MapID, true
+	}
+	// Server-internal bootstraps that predate explicit MapID are ordinary player
+	// characters and therefore default only to map1. map0 is never implicit.
+	if currentWorld.WorldID == "castle-sandbox" {
+		return gameplayworld.MapIDStarterVillage, true
+	}
+	return "", false
 }
 
 func ValidateCharacterRestore(identity characteridentity.Binding, restore CharacterRestore, currentWorld protocol.WorldIdentity) error {
@@ -91,8 +96,7 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if restore.World != currentWorld {
 		return ErrCharacterRestoreWorldMismatch
 	}
-	mapID := string(restore.MapID)
-	if mapID == "" || mapID != strings.TrimSpace(mapID) {
+	if _, ok := resolvedRestoreMapID(restore, currentWorld); !ok {
 		return ErrCharacterRestoreInvalid
 	}
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
@@ -128,12 +132,7 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	if err := validateCharacterSkillRestore(restore.SchemaVersion, restore.LearnedSkills, restore.CombatLoadout); err != nil {
 		return err
 	}
-	for _, value := range []float32{
-		restore.Transform.Position.X,
-		restore.Transform.Position.Y,
-		restore.Transform.Position.Z,
-		restore.Transform.Yaw,
-	} {
+	for _, value := range []float32{restore.Transform.Position.X, restore.Transform.Position.Y, restore.Transform.Position.Z, restore.Transform.Yaw} {
 		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
 			return ErrCharacterRestoreInvalid
 		}
@@ -164,16 +163,11 @@ func validateCharacterPrimaryStatsRestore(schemaVersion uint16, primary characte
 	}
 	neutral := characterstats.DefaultPrimary()
 	if schemaVersion < characterstate.PrimaryStatsSchemaVersion {
-		if primary != neutral {
-			return ErrCharacterRestoreInvalid
-		}
+		if primary != neutral { return ErrCharacterRestoreInvalid }
 		return nil
 	}
 	if schemaVersion == characterstate.PrimaryStatsSchemaVersion {
-		if primary.Constitution != neutral.Constitution ||
-			primary.Intelligence != neutral.Intelligence ||
-			primary.Spirit != neutral.Spirit ||
-			primary.Charisma != neutral.Charisma {
+		if primary.Constitution != neutral.Constitution || primary.Intelligence != neutral.Intelligence || primary.Spirit != neutral.Spirit || primary.Charisma != neutral.Charisma {
 			return ErrCharacterRestoreInvalid
 		}
 	}
@@ -199,18 +193,11 @@ func validRestoreSpawnClass(class respawnpolicy.SpawnClass) bool {
 }
 
 func (r *Runtime) validateCharacterRestore(s *session.Session, restore CharacterRestore) error {
-	if s == nil {
-		return session.ErrInvalidSession
-	}
-	currentWorld := protocol.WorldIdentity{
-		WorldID:        r.characterStateWorld.WorldID,
-		Revision:       r.characterStateWorld.Revision,
-		GameplaySHA256: r.characterStateWorld.GameplaySHA256,
-	}
-	if err := ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld); err != nil {
-		return err
-	}
-	if string(restore.MapID) != r.characterStateWorld.MapID {
+	if s == nil { return session.ErrInvalidSession }
+	currentWorld := protocol.WorldIdentity{WorldID: r.characterStateWorld.WorldID, Revision: r.characterStateWorld.Revision, GameplaySHA256: r.characterStateWorld.GameplaySHA256}
+	if err := ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld); err != nil { return err }
+	mapID, ok := resolvedRestoreMapID(restore, currentWorld)
+	if !ok || string(mapID) != r.characterStateWorld.MapID {
 		return ErrCharacterRestoreMapMismatch
 	}
 	return nil
