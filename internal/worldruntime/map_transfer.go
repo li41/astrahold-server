@@ -17,6 +17,7 @@ import (
 
 var (
 	ErrMapExitSourceNotIsolated       = errors.New("worldruntime: map exit source is not isolated")
+	ErrMapExitPolicyUnavailable       = errors.New("worldruntime: map exit policy unavailable")
 	ErrMapExitInvalidDestination      = errors.New("worldruntime: invalid map exit destination")
 	ErrMapExitInvalidRestriction      = errors.New("worldruntime: invalid map exit item restriction")
 	ErrMapExitRestrictedItem          = errors.New("worldruntime: map exit blocked by restricted item")
@@ -26,9 +27,8 @@ var (
 )
 
 type MapExitRequest struct {
-	DestinationWorld           characterstate.WorldRef
-	DestinationTransform       world.Transform
-	RestrictedItemArchetypeIDs []string
+	DestinationWorld     characterstate.WorldRef
+	DestinationTransform world.Transform
 }
 
 func (r *Runtime) EnqueueMapExit(id session.ID, request MapExitRequest) error {
@@ -37,7 +37,6 @@ func (r *Runtime) EnqueueMapExit(id session.ID, request MapExitRequest) error {
 
 func (r *Runtime) EnqueueMapExitOwned(id session.ID, ownership SessionOwnershipFence, request MapExitRequest) error {
 	owned := request
-	owned.RestrictedItemArchetypeIDs = append([]string(nil), request.RestrictedItemArchetypeIDs...)
 	return r.queue.tryPush(leaveCommand{id: id, ownership: ownership, mapExit: &owned})
 }
 
@@ -46,8 +45,22 @@ func (r *Runtime) applyMapExit(name string, c leaveCommand, report *StepReport) 
 	if request == nil {
 		return
 	}
-	if gameplayworld.MapID(r.characterStateWorld.MapID) != gameplayworld.MapIDGMRoom || r.characterStateWorld.WorldID != "gm-room" {
+	sourceMapID := gameplayworld.MapID(r.characterStateWorld.MapID)
+	if sourceMapID != gameplayworld.MapIDGMRoom || r.characterStateWorld.WorldID != "gm-room" {
 		r.recordMapExitError(name, c.id, ErrMapExitSourceNotIsolated, report)
+		return
+	}
+	policy, ok := gameplayworld.MapExitPolicyFor(sourceMapID)
+	if !ok {
+		r.recordMapExitError(name, c.id, ErrMapExitPolicyUnavailable, report)
+		return
+	}
+	r.applyMapExitWithPolicy(name, c, policy, report)
+}
+
+func (r *Runtime) applyMapExitWithPolicy(name string, c leaveCommand, policy gameplayworld.MapExitPolicy, report *StepReport) {
+	request := c.mapExit
+	if request == nil {
 		return
 	}
 	if err := validateMapExitDestination(r.characterStateWorld, *request); err != nil {
@@ -68,7 +81,7 @@ func (r *Runtime) applyMapExit(name string, c leaveCommand, report *StepReport) 
 		return
 	}
 	inv := r.inventories[s.CharacterIdentity.ID]
-	restricted, err := firstRestrictedItemArchetype(inv, request.RestrictedItemArchetypeIDs)
+	restricted, err := firstRestrictedItemArchetype(inv, policy.RestrictedItemArchetypeIDs)
 	if err != nil {
 		r.recordMapExitError(name, c.id, err, report)
 		return
