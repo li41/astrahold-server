@@ -61,9 +61,15 @@ func (ownershipTransferCommand) name() string { return "transfer_character_owner
 type leaveCommand struct {
 	id        session.ID
 	ownership SessionOwnershipFence
+	mapExit   *MapExitRequest
 }
 
-func (leaveCommand) name() string { return "leave_world" }
+func (c leaveCommand) name() string {
+	if c.mapExit != nil {
+		return "exit_map"
+	}
+	return "leave_world"
+}
 
 type moveInputCommand struct {
 	sessionID session.ID
