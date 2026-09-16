@@ -3,11 +3,13 @@ package worldruntime
 import (
 	"errors"
 	"math"
+	"strings"
 
 	"github.com/li41/astrahold-server/internal/appearance"
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/characterstats"
+	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/respawnpolicy"
@@ -20,6 +22,7 @@ var (
 	ErrCharacterRestoreRequiresTrustedIdentity  = errors.New("worldruntime: character restore requires trusted identity")
 	ErrCharacterRestoreIdentityMismatch         = errors.New("worldruntime: character restore identity mismatch")
 	ErrCharacterRestoreWorldMismatch            = errors.New("worldruntime: character restore gameplay world mismatch")
+	ErrCharacterRestoreMapMismatch              = errors.New("worldruntime: character restore map mismatch")
 	ErrCharacterRestoreInvalid                  = errors.New("worldruntime: invalid character restore")
 	ErrCharacterRestoreDefeatedUnsupported      = errors.New("worldruntime: legacy defeated character restore is not supported")
 	ErrCharacterRestoreRespawnPolicyUnavailable = errors.New("worldruntime: defeated character restore requires respawn policy")
@@ -34,6 +37,7 @@ type CharacterRestore struct {
 	CharacterID   characteridentity.ID
 	Revision      uint64
 	World         protocol.WorldIdentity
+	MapID         gameplayworld.MapID
 	HP            uint32
 	MaxHP         uint32
 	MP            uint32
@@ -58,6 +62,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 			Revision:       record.Snapshot.World.Revision,
 			GameplaySHA256: record.Snapshot.World.GameplaySHA256,
 		},
+		MapID:         gameplayworld.MapID(record.Snapshot.World.MapID),
 		HP:            record.Snapshot.HP,
 		MaxHP:         record.Snapshot.MaxHP,
 		MP:            record.Snapshot.MP,
@@ -85,6 +90,10 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 	}
 	if restore.World != currentWorld {
 		return ErrCharacterRestoreWorldMismatch
+	}
+	mapID := string(restore.MapID)
+	if mapID == "" || mapID != strings.TrimSpace(mapID) {
+		return ErrCharacterRestoreInvalid
 	}
 	if restore.MaxHP == 0 || restore.HP > restore.MaxHP || restore.MaxMP == 0 || restore.MP > restore.MaxMP {
 		return ErrCharacterRestoreInvalid
@@ -198,5 +207,11 @@ func (r *Runtime) validateCharacterRestore(s *session.Session, restore Character
 		Revision:       r.characterStateWorld.Revision,
 		GameplaySHA256: r.characterStateWorld.GameplaySHA256,
 	}
-	return ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld)
+	if err := ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld); err != nil {
+		return err
+	}
+	if string(restore.MapID) != r.characterStateWorld.MapID {
+		return ErrCharacterRestoreMapMismatch
+	}
+	return nil
 }
