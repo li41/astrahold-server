@@ -53,17 +53,20 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		SchemaVersion: record.SchemaVersion,
 		CharacterID:   record.CharacterID,
 		Revision:      record.Revision,
-		World: protocol.WorldIdentity{WorldID: record.Snapshot.World.WorldID, Revision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256},
-		MapID: gameplayworld.MapID(record.Snapshot.World.MapID),
-		HP: record.Snapshot.HP, MaxHP: record.Snapshot.MaxHP, MP: record.Snapshot.MP, MaxMP: record.Snapshot.MaxMP,
-		Defeated: record.Snapshot.Defeated,
-		Transform: world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
-		Respawn: record.Snapshot.Respawn,
-		Inventory: record.Snapshot.Inventory,
+		World:         protocol.WorldIdentity{WorldID: record.Snapshot.World.WorldID, Revision: record.Snapshot.World.Revision, GameplaySHA256: record.Snapshot.World.GameplaySHA256},
+		MapID:         gameplayworld.MapID(record.Snapshot.World.MapID),
+		HP:            record.Snapshot.HP,
+		MaxHP:         record.Snapshot.MaxHP,
+		MP:            record.Snapshot.MP,
+		MaxMP:         record.Snapshot.MaxMP,
+		Defeated:      record.Snapshot.Defeated,
+		Transform:     world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
+		Respawn:       record.Snapshot.Respawn,
+		Inventory:     record.Snapshot.Inventory,
 		CombatLoadout: record.Snapshot.CombatLoadout,
 		LearnedSkills: record.Snapshot.LearnedSkills,
-		PrimaryStats: record.Snapshot.PrimaryStats,
-		SkinID: record.Snapshot.SkinID,
+		PrimaryStats:  record.Snapshot.PrimaryStats,
+		SkinID:        record.Snapshot.SkinID,
 	}
 }
 
@@ -76,8 +79,8 @@ func resolvedRestoreMapID(restore CharacterRestore, currentWorld protocol.WorldI
 		return restore.MapID, true
 	}
 	// Server-internal bootstraps that predate explicit MapID are ordinary player
-	// characters and therefore default only to map1. map0 is never implicit.
-	if currentWorld.WorldID == "castle-sandbox" {
+	// characters and therefore default only to map1. map0/gm-room is never implicit.
+	if currentWorld.WorldID != "gm-room" {
 		return gameplayworld.MapIDStarterVillage, true
 	}
 	return "", false
@@ -163,7 +166,9 @@ func validateCharacterPrimaryStatsRestore(schemaVersion uint16, primary characte
 	}
 	neutral := characterstats.DefaultPrimary()
 	if schemaVersion < characterstate.PrimaryStatsSchemaVersion {
-		if primary != neutral { return ErrCharacterRestoreInvalid }
+		if primary != neutral {
+			return ErrCharacterRestoreInvalid
+		}
 		return nil
 	}
 	if schemaVersion == characterstate.PrimaryStatsSchemaVersion {
@@ -193,9 +198,13 @@ func validRestoreSpawnClass(class respawnpolicy.SpawnClass) bool {
 }
 
 func (r *Runtime) validateCharacterRestore(s *session.Session, restore CharacterRestore) error {
-	if s == nil { return session.ErrInvalidSession }
+	if s == nil {
+		return session.ErrInvalidSession
+	}
 	currentWorld := protocol.WorldIdentity{WorldID: r.characterStateWorld.WorldID, Revision: r.characterStateWorld.Revision, GameplaySHA256: r.characterStateWorld.GameplaySHA256}
-	if err := ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld); err != nil { return err }
+	if err := ValidateCharacterRestore(s.CharacterIdentity, restore, currentWorld); err != nil {
+		return err
+	}
 	mapID, ok := resolvedRestoreMapID(restore, currentWorld)
 	if !ok || string(mapID) != r.characterStateWorld.MapID {
 		return ErrCharacterRestoreMapMismatch
