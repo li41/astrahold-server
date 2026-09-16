@@ -17,10 +17,14 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var decoded wireAlias
-	if err := decoder.Decode(&decoded); err != nil { return err }
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil { return fmt.Errorf("unexpected trailing JSON value") }
+		if err == nil {
+			return fmt.Errorf("unexpected trailing JSON value")
+		}
 		return err
 	}
 	if decoded.SchemaVersion < ClassSaveJournalSchemaVersion && decoded.Snapshot.ClassID != "" {
@@ -31,6 +35,12 @@ func (wire *saveJournalWireRecord) UnmarshalJSON(data []byte) error {
 	}
 	if decoded.SchemaVersion < AppearanceSaveJournalSchemaVersion && decoded.Snapshot.SkinID != "" {
 		return fmt.Errorf("skin id requires save journal schema %d", AppearanceSaveJournalSchemaVersion)
+	}
+	if decoded.SchemaVersion < MapSaveJournalSchemaVersion && decoded.Snapshot.MapID != "" {
+		return fmt.Errorf("map id requires save journal schema %d", MapSaveJournalSchemaVersion)
+	}
+	if decoded.SchemaVersion >= MapSaveJournalSchemaVersion && !validMapID(decoded.Snapshot.MapID) {
+		return fmt.Errorf("map id missing or invalid for save journal schema %d", MapSaveJournalSchemaVersion)
 	}
 	if decoded.SchemaVersion < LoadoutSaveJournalSchemaVersion && len(decoded.Snapshot.CombatLoadout) != 0 {
 		return fmt.Errorf("combat loadout requires save journal schema %d", LoadoutSaveJournalSchemaVersion)
