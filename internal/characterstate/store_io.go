@@ -54,6 +54,7 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 	if err := validateTrustedIdentity(identity); err != nil {
 		return Record{}, err
 	}
+	snapshot = defaultSnapshotMap(snapshot)
 	inventoryState, err := CanonicalInventoryState(snapshot.Inventory)
 	if err != nil {
 		return Record{}, err
