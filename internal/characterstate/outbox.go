@@ -48,6 +48,7 @@ func (o *Outbox) Enqueue(identity characteridentity.Binding, snapshot Snapshot) 
 	if err := validateTrustedIdentity(identity); err != nil {
 		return SaveIntent{}, err
 	}
+	snapshot = defaultSnapshotMap(snapshot)
 	if err := validateSnapshotV9(snapshot); err != nil {
 		return SaveIntent{}, err
 	}
