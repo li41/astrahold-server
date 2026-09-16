@@ -9,6 +9,7 @@ import (
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/characterstats"
+	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/navigation"
 	"github.com/li41/astrahold-server/internal/protocol"
@@ -106,7 +107,9 @@ func TestValidateCharacterRestoreRequiresTrustedMatchingIdentity(t *testing.T) {
 	ephemeral, _ := characteridentity.NewEphemeral()
 	if err := ValidateCharacterRestore(ephemeral, restore, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreRequiresTrustedIdentity) { t.Fatalf("ephemeral err=%v", err) }
 	missingMap := restore; missingMap.SchemaVersion = characterstate.SchemaVersion; missingMap.MapID = ""
-	if err := ValidateCharacterRestore(trusted, missingMap, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("missing map err=%v", err) }
+	if err := ValidateCharacterRestore(trusted, missingMap, characterRestoreWorld); err != nil { t.Fatalf("missing in-memory map should default to map1: %v", err) }
+	mapID, ok := resolvedRestoreMapID(missingMap, characterRestoreWorld)
+	if !ok || mapID != gameplayworld.MapIDStarterVillage { t.Fatalf("resolved map=%q ok=%v", mapID, ok) }
 }
 
 func TestValidateCharacterRestoreRejectsStatSmugglingAcrossSchemaBoundary(t *testing.T) {
