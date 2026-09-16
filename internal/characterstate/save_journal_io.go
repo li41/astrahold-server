@@ -45,6 +45,7 @@ func (j *SaveJournal) Close() error {
 }
 
 func (j *SaveJournal) Append(intent SaveIntent, expectedRevision uint64) (SaveJournalRecord, error) {
+	intent = defaultSaveIntentMap(intent)
 	if err := validateNewSaveIntent(intent); err != nil { return SaveJournalRecord{}, err }
 	if expectedRevision == ^uint64(0) { return SaveJournalRecord{}, ErrRevisionOverflow }
 	j.mu.Lock(); defer j.mu.Unlock()
