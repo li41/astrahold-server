@@ -12,8 +12,14 @@ type MapID string
 type MapKind string
 
 const (
-	MapKindOverworld  MapKind = "overworld"
+	// MapIDGMRoom 是封閉 GM 密室的正式穩定 identity。
+	MapIDGMRoom MapID = "map0"
+	// MapIDStarterVillage 是玩家新手村的正式穩定 identity，也是舊存檔缺少 map identity 時的回退點。
+	MapIDStarterVillage MapID = "map1"
+
+	MapKindOverworld   MapKind = "overworld"
 	MapKindUnderground MapKind = "underground"
+	MapKindIsolated    MapKind = "isolated"
 )
 
 type MapScaleClass string
@@ -78,6 +84,10 @@ func validateMaps(d Definition) error {
 		}
 		ids[m.ID] = struct{}{}
 
+		if m.ID == MapIDGMRoom && m.Kind != MapKindIsolated {
+			return fmt.Errorf("map %q must be isolated", m.ID)
+		}
+
 		switch m.Kind {
 		case MapKindOverworld:
 			if m.Envelope == nil || m.PlanningRange != nil {
@@ -92,6 +102,13 @@ func validateMaps(d Definition) error {
 			}
 			if (m.Envelope == nil) == (m.PlanningRange == nil) {
 				return fmt.Errorf("map %q requires exactly one of envelope/planning_range", m.ID)
+			}
+		case MapKindIsolated:
+			if m.Envelope == nil || m.PlanningRange != nil {
+				return fmt.Errorf("map %q isolated map requires exact envelope", m.ID)
+			}
+			if m.Entrance != nil {
+				return fmt.Errorf("map %q isolated map cannot expose a world entrance", m.ID)
 			}
 		default:
 			return fmt.Errorf("map %q invalid kind %q", m.ID, m.Kind)
