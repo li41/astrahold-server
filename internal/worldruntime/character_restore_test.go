@@ -38,6 +38,7 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 		CharacterID: identity.ID,
 		Revision: 7,
 		World: characterRestoreWorld,
+		MapID: "map1",
 		HP: 640, MaxHP: 1200,
 		MP: 45, MaxMP: 100,
 		PrimaryStats: primary,
@@ -49,22 +50,14 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 	report := rt.Step(1, 50*time.Millisecond)
 	if len(report.CommandErrors) != 0 { t.Fatalf("join errors=%#v", report.CommandErrors) }
 	state, ok := rt.characters.State(1)
-	if !ok || state.HP != 640 || state.MaxHP != 1200 || state.MP != 45 || state.MaxMP != 100 || state.Defeated || state.PrimaryStats != primary {
-		t.Fatalf("character state=%#v ok=%v", state, ok)
-	}
+	if !ok || state.HP != 640 || state.MaxHP != 1200 || state.MP != 45 || state.MaxMP != 100 || state.Defeated || state.PrimaryStats != primary { t.Fatalf("character state=%#v ok=%v", state, ok) }
 	entity, ok := rt.world.Entity(1)
 	if !ok || entity.Transform != restore.Transform { t.Fatalf("entity=%#v ok=%v", entity, ok) }
 	if got, ok := rt.sessions.Get(1); !ok || got != sess { t.Fatalf("session=%#v ok=%v", got, ok) }
-	if got := rt.characterSkills.appearanceID(1); got != appearance.PeasantGirl {
-		t.Fatalf("runtime skin=%q want=%q", got, appearance.PeasantGirl)
-	}
+	if got := rt.characterSkills.appearanceID(1); got != appearance.PeasantGirl { t.Fatalf("runtime skin=%q want=%q", got, appearance.PeasantGirl) }
 	binding, snapshot, ok := rt.captureCharacterStateSnapshot(sess.ID, sess.EntityID, nil)
-	if !ok {
-		t.Fatal("capture restored character state failed")
-	}
-	if binding.ID != identity.ID || snapshot.SkinID != appearance.PeasantGirl {
-		t.Fatalf("captured binding=%#v skin=%q want binding=%q skin=%q", binding, snapshot.SkinID, identity.ID, appearance.PeasantGirl)
-	}
+	if !ok { t.Fatal("capture restored character state failed") }
+	if binding.ID != identity.ID || snapshot.SkinID != appearance.PeasantGirl || snapshot.World.MapID != "map1" { t.Fatalf("captured binding=%#v snapshot=%#v", binding, snapshot) }
 }
 
 func TestJoinRejectsRestoreWorldMismatchBeforeSpawn(t *testing.T) {
@@ -72,19 +65,22 @@ func TestJoinRejectsRestoreWorldMismatchBeforeSpawn(t *testing.T) {
 	identity, _ := characteridentity.NewTrusted("character:restore-world")
 	conn := session.NewQueueConnection(32, 32)
 	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, conn)
-	restore := CharacterRestore{
-		SchemaVersion: characterstate.SchemaVersion,
-		CharacterID: identity.ID,
-		Revision: 1,
-		World: protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "other", GameplaySHA256: characterRestoreTestSHA},
-		HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100,
-		PrimaryStats: characterstats.DefaultPrimary(),
-		Transform: world.Transform{Position: world.Position{Layer: 4}},
-	}
+	restore := CharacterRestore{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, World: protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "other", GameplaySHA256: characterRestoreTestSHA}, MapID: "map1", HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100, PrimaryStats: characterstats.DefaultPrimary(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
 	request := JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}
 	if err := rt.EnqueueJoin(request); err != nil { t.Fatal(err) }
 	report := rt.Step(1, 50*time.Millisecond)
 	if len(report.CommandErrors) != 1 || !errors.Is(report.CommandErrors[0].Err, ErrCharacterRestoreWorldMismatch) { t.Fatalf("errors=%#v", report.CommandErrors) }
+	assertRestoreJoinDidNotPartiallySpawn(t, rt)
+}
+
+func TestJoinRejectsRestoreMapMismatchBeforeSpawn(t *testing.T) {
+	rt := makeRestoreRuntime(t)
+	identity, _ := characteridentity.NewTrusted("character:restore-map")
+	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, session.NewQueueConnection(32, 32))
+	restore := CharacterRestore{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, World: characterRestoreWorld, MapID: "map0", HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100, PrimaryStats: characterstats.DefaultPrimary(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
+	if err := rt.EnqueueJoin(JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}); err != nil { t.Fatal(err) }
+	report := rt.Step(1, 50*time.Millisecond)
+	if len(report.CommandErrors) != 1 || !errors.Is(report.CommandErrors[0].Err, ErrCharacterRestoreMapMismatch) { t.Fatalf("errors=%#v", report.CommandErrors) }
 	assertRestoreJoinDidNotPartiallySpawn(t, rt)
 }
 
@@ -93,15 +89,7 @@ func TestJoinRejectsDefeatedRestoreBeforeSpawn(t *testing.T) {
 	identity, _ := characteridentity.NewTrusted("character:restore-defeated")
 	conn := session.NewQueueConnection(32, 32)
 	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, conn)
-	restore := CharacterRestore{
-		CharacterID: identity.ID,
-		Revision: 2,
-		World: characterRestoreWorld,
-		HP: 0, MaxHP: 1000, MP: 100, MaxMP: 100,
-		Defeated: true,
-		PrimaryStats: characterstats.DefaultPrimary(),
-		Transform: world.Transform{Position: world.Position{Layer: 4}},
-	}
+	restore := CharacterRestore{CharacterID: identity.ID, Revision: 2, World: characterRestoreWorld, MapID: "map1", HP: 0, MaxHP: 1000, MP: 100, MaxMP: 100, Defeated: true, PrimaryStats: characterstats.DefaultPrimary(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
 	request := JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}
 	if err := rt.EnqueueJoin(request); err != nil { t.Fatal(err) }
 	report := rt.Step(1, 50*time.Millisecond)
@@ -111,34 +99,26 @@ func TestJoinRejectsDefeatedRestoreBeforeSpawn(t *testing.T) {
 
 func TestValidateCharacterRestoreRequiresTrustedMatchingIdentity(t *testing.T) {
 	trusted, _ := characteridentity.NewTrusted("character:trusted")
-	restore := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, HP: 1, MaxHP: 1, MP: 1, MaxMP: 1, PrimaryStats: characterstats.DefaultPrimary()}
+	restore := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, MapID: "map1", HP: 1, MaxHP: 1, MP: 1, MaxMP: 1, PrimaryStats: characterstats.DefaultPrimary()}
 	if err := ValidateCharacterRestore(trusted, restore, characterRestoreWorld); err != nil { t.Fatal(err) }
 	other, _ := characteridentity.NewTrusted("character:other")
 	if err := ValidateCharacterRestore(other, restore, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreIdentityMismatch) { t.Fatalf("identity err=%v", err) }
 	ephemeral, _ := characteridentity.NewEphemeral()
 	if err := ValidateCharacterRestore(ephemeral, restore, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreRequiresTrustedIdentity) { t.Fatalf("ephemeral err=%v", err) }
+	missingMap := restore; missingMap.SchemaVersion = characterstate.SchemaVersion; missingMap.MapID = ""
+	if err := ValidateCharacterRestore(trusted, missingMap, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("missing map err=%v", err) }
 }
 
 func TestValidateCharacterRestoreRejectsStatSmugglingAcrossSchemaBoundary(t *testing.T) {
 	trusted, _ := characteridentity.NewTrusted("character:restore-stat-boundary")
-	base := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, HP: 1, MaxHP: 1, MP: 1, MaxMP: 1, PrimaryStats: characterstats.DefaultPrimary()}
-
-	legacy := base
-	legacy.SchemaVersion = characterstate.ItemInstanceSchemaVersion
-	legacy.PrimaryStats.Strength = 11
+	base := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, MapID: "map1", HP: 1, MaxHP: 1, MP: 1, MaxMP: 1, PrimaryStats: characterstats.DefaultPrimary()}
+	legacy := base; legacy.SchemaVersion = characterstate.ItemInstanceSchemaVersion; legacy.PrimaryStats.Strength = 11
 	if err := ValidateCharacterRestore(trusted, legacy, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("legacy err=%v", err) }
-
-	interim := base
-	interim.SchemaVersion = characterstate.PrimaryStatsSchemaVersion
-	interim.PrimaryStats.Strength = 17
-	interim.PrimaryStats.Agility = 18
+	interim := base; interim.SchemaVersion = characterstate.PrimaryStatsSchemaVersion; interim.PrimaryStats.Strength = 17; interim.PrimaryStats.Agility = 18
 	if err := ValidateCharacterRestore(trusted, interim, characterRestoreWorld); err != nil { t.Fatalf("v11 err=%v", err) }
 	interim.PrimaryStats.Charisma = 11
 	if err := ValidateCharacterRestore(trusted, interim, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("v11 smuggle err=%v", err) }
-
-	current := base
-	current.SchemaVersion = characterstate.SixPrimaryStatsSchemaVersion
-	current.PrimaryStats.Charisma = 11
+	current := base; current.SchemaVersion = characterstate.SixPrimaryStatsSchemaVersion; current.PrimaryStats.Charisma = 11
 	if err := ValidateCharacterRestore(trusted, current, characterRestoreWorld); err != nil { t.Fatalf("v12 err=%v", err) }
 }
 
@@ -146,9 +126,8 @@ func makeRestoreRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	nav := navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100, Layer: 4}
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, 0.1))
-	cfg := DefaultConfig()
-	cfg.SnapshotEveryTicks = 1
-	worldRef := characterstate.WorldRef{WorldID: characterRestoreWorld.WorldID, Revision: characterRestoreWorld.Revision, GameplaySHA256: characterRestoreWorld.GameplaySHA256}
+	cfg := DefaultConfig(); cfg.SnapshotEveryTicks = 1
+	worldRef := characterstate.WorldRef{MapID: "map1", WorldID: characterRestoreWorld.WorldID, Revision: characterRestoreWorld.Revision, GameplaySHA256: characterRestoreWorld.GameplaySHA256}
 	return New(sim, cfg, WithCharacterStateOutbox(nil, worldRef))
 }
 
