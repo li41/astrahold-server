@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-func TestProtocolV29EquipmentSlots(t *testing.T) {
-	if Version != 29 {
-		t.Fatalf("protocol version = %d, want 29", Version)
+func TestProtocolV30EquipmentSlots(t *testing.T) {
+	if Version != 30 {
+		t.Fatalf("protocol version = %d, want 30", Version)
 	}
 	want := []EquipmentSlot{
 		EquipmentSlotMainHand,
