@@ -21,8 +21,15 @@ func durableWarehouseState(storage *warehouse.Storage) characterstate.WarehouseS
 }
 
 func canonicalWarehouseState(state characterstate.WarehouseState) (characterstate.WarehouseState, bool) {
+	// CharacterRestore is a trusted Server-internal compatibility boundary. Records written before
+	// warehouse schema v15 legitimately carry the zero value, and older internal bootstrap fixtures
+	// do the same. Normalize only that exact zero value to an initialized empty personal warehouse.
+	// Durable current-schema records remain strict in characterstate.validateSnapshotForSchema.
+	if !state.Initialized && len(state.Items) == 0 {
+		return characterstate.EmptyWarehouseState(), true
+	}
 	canonical, err := characterstate.CanonicalWarehouseState(state)
-	if err != nil || !canonical.Initialized || !state.Initialized || len(canonical.Items) != len(state.Items) {
+	if err != nil || !canonical.Initialized || len(canonical.Items) != len(state.Items) {
 		return characterstate.WarehouseState{}, false
 	}
 	for index := range canonical.Items {
