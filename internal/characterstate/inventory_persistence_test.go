@@ -70,6 +70,8 @@ func TestSaveJournalV3InventoryRoundTripAndV2Migration(t *testing.T) {
 	if !SaveIntentsEqual(decoded, intent) { t.Fatalf("decoded=%#v intent=%#v", decoded, intent) }
 
 	legacySnapshot := snapshotToSaveJournalWire(testSnapshot())
+	legacySnapshot.MapID = ""
+	legacySnapshot.Warehouse = WarehouseState{}
 	legacySnapshot.Inventory = InventoryState{}
 	legacySnapshot.PrimaryStats = nil
 	legacyWire := saveJournalWireRecord{
