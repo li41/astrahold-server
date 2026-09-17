@@ -27,6 +27,8 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in clientEquipmentInstanceCommand; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperation(in.Operation), Slot: protocol.EquipmentSlot(in.Slot), ItemInstanceID: in.ItemInstanceID}, nil
 	case protocol.MessageClientEnhanceEquipment:
 		var in clientEnhanceEquipment; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientEnhanceEquipment{ScrollItemArchetypeID: in.ScrollItemArchetypeID, ItemInstanceID: in.ItemInstanceID}, nil
+	case protocol.MessageClientWarehouseCommand:
+		var in clientWarehouseCommand; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientWarehouseCommand{Operation: protocol.WarehouseOperation(in.Operation), ItemArchetypeID: in.ItemArchetypeID, Quantity: in.Quantity}, nil
 	case protocol.MessageClientPickupItem:
 		var in clientPickupItem; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientPickupItem{DropEntityID: world.EntityID(in.DropEntityID)}, nil
 	case protocol.MessageClientUseItem:
@@ -47,6 +49,10 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in itemUseResult; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ItemUseResult{ClientActionSequence: in.ClientActionSequence, ItemArchetypeID: in.ItemArchetypeID, Outcome: protocol.ItemUseOutcome(in.Outcome), Reason: protocol.ItemUseRejectionReason(in.Reason), AppliedAmount: in.AppliedAmount, CooldownReadyTick: in.CooldownReadyTick}, nil
 	case protocol.MessageEquipmentEnhancementResult:
 		var in equipmentEnhancementResult; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.EquipmentEnhancementResult{ClientActionSequence: in.ClientActionSequence, ScrollItemArchetypeID: in.ScrollItemArchetypeID, ItemInstanceID: in.ItemInstanceID, Outcome: protocol.EquipmentEnhancementOutcome(in.Outcome), Reason: protocol.EquipmentEnhancementRejectionReason(in.Reason), PreviousLevel: in.PreviousLevel, CurrentLevel: in.CurrentLevel, ScrollConsumed: in.ScrollConsumed}, nil
+	case protocol.MessageWarehouseResult:
+		var in warehouseResult; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.WarehouseResult{ClientActionSequence: in.ClientActionSequence, Operation: protocol.WarehouseOperation(in.Operation), Outcome: protocol.WarehouseOutcome(in.Outcome), Reason: protocol.WarehouseRejectionReason(in.Reason), ItemArchetypeID: in.ItemArchetypeID, Quantity: in.Quantity}, nil
+	case protocol.MessageWarehouseSnapshot:
+		var in warehouseSnapshot; if err := decodeStrict(data, &in); err != nil { return nil, err }; items := make([]protocol.WarehouseItemStack, len(in.Items)); for i, item := range in.Items { items[i] = protocol.WarehouseItemStack{ItemArchetypeID: item.ItemArchetypeID, Quantity: item.Quantity} }; return protocol.WarehouseSnapshot{Items: items}, nil
 	case protocol.MessageCharacterClassState:
 		var in characterClassState; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.CharacterClassState{ClassID: in.ClassID}, nil
 	case protocol.MessageCharacterClassResourceState:
