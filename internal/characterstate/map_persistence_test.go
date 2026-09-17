@@ -12,7 +12,7 @@ func TestStoreCurrentRoundTripsMapID(t *testing.T) {
 	store, err := Open(t.TempDir()); if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:map-current"); snapshot := testSnapshot(); snapshot.World.MapID = "map0"
 	saved, err := store.Save(identity, 0, snapshot); if err != nil { t.Fatal(err) }
-	if saved.SchemaVersion != MapSchemaVersion { t.Fatalf("schema=%d want=%d", saved.SchemaVersion, MapSchemaVersion) }
+	if saved.SchemaVersion != SchemaVersion { t.Fatalf("schema=%d want=%d", saved.SchemaVersion, SchemaVersion) }
 	loaded, ok, err := store.Load(identity); if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
 	if loaded.Snapshot.World.MapID != "map0" { t.Fatalf("map=%q want=map0", loaded.Snapshot.World.MapID) }
 }
@@ -47,6 +47,7 @@ func TestSaveJournalMapRoundTripAndLegacyFallback(t *testing.T) {
 	if len(records) != 1 || records[0].Intent.Snapshot.World.MapID != "map0" { t.Fatalf("records=%#v", records) }
 	legacyWire := saveJournalWireRecord{SchemaVersion: AppearanceSaveJournalSchemaVersion, RecordID: 1, ExpectedRevision: 0, IntentID: 72, CharacterID: string(trusted(t, "character:map-journal-legacy").ID), Snapshot: snapshotToSaveJournalWire(testSnapshot())}
 	legacyWire.Snapshot.MapID = ""
+	legacyWire.Snapshot.Warehouse = WarehouseState{}
 	payload, err := json.Marshal(legacyWire); if err != nil { t.Fatal(err) }
 	_, _, decoded, err := decodeSaveJournalRecord(payload); if err != nil { t.Fatal(err) }
 	if decoded.Snapshot.World.MapID != LegacyDefaultMapID { t.Fatalf("legacy journal map=%q want=%q", decoded.Snapshot.World.MapID, LegacyDefaultMapID) }
