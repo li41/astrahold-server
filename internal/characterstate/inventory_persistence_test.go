@@ -21,7 +21,7 @@ func TestStoreV4InventoryRoundTripPreservesStacksAndMainHand(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded != saved { t.Fatalf("loaded=%#v saved=%#v", loaded, saved) }
+	if !RecordsEqual(loaded, saved) { t.Fatalf("loaded=%#v saved=%#v", loaded, saved) }
 	equipment, err := loaded.Snapshot.Inventory.Equipment()
 	if err != nil { t.Fatal(err) }
 	if !loaded.Snapshot.Inventory.Initialized || len(equipment) != 1 || equipment[0].Slot != "main_hand" || equipment[0].ItemArchetypeID != "item_training_blade" {
@@ -67,7 +67,7 @@ func TestSaveJournalV3InventoryRoundTripAndV2Migration(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	_, _, decoded, err := decodeSaveJournalRecord(payload)
 	if err != nil { t.Fatal(err) }
-	if decoded != intent { t.Fatalf("decoded=%#v intent=%#v", decoded, intent) }
+	if !SaveIntentsEqual(decoded, intent) { t.Fatalf("decoded=%#v intent=%#v", decoded, intent) }
 
 	legacySnapshot := snapshotToSaveJournalWire(testSnapshot())
 	legacySnapshot.Inventory = InventoryState{}
