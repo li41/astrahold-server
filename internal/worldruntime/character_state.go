@@ -54,6 +54,7 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 		recordCharacterStateSaveFailure(report, sessionID, err)
 		return characteridentity.Binding{}, characterstate.Snapshot{}, false
 	}
+	warehouseState := durableWarehouseState(r.warehouses[binding.ID])
 	learnedSkills, combatLoadout, err := r.characterSkills.capture(entityID)
 	if err != nil {
 		recordCharacterStateSaveFailure(report, sessionID, err)
@@ -70,6 +71,7 @@ func (r *Runtime) captureCharacterStateSnapshot(sessionID session.ID, entityID w
 		Position:      entity.Transform.Position,
 		Yaw:           entity.Transform.Yaw,
 		Inventory:     inventoryState,
+		Warehouse:     warehouseState,
 		CombatLoadout: combatLoadout,
 		LearnedSkills: learnedSkills,
 		PrimaryStats:  state.PrimaryStats,
