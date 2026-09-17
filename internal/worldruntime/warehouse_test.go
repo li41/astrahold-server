@@ -59,25 +59,28 @@ func TestGMWarehouseSubjectOneWithdrawsInfiniteEnhancementScrollsExactlyOncePerS
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 1, warehouse: &withdraw}); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("first withdraw errors=%#v", report.CommandErrors) }
 	if got := rt.inventories[identity.ID].Quantity(WeaponEnhancementScrollItemArchetypeID); got != 2 { t.Fatalf("first withdraw quantity=%d want=2", got) }
+	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("first result flush errors=%#v", report.CommandErrors) }
 	result := requireWarehouseResult(t, drainWarehouseMessages(connection))
 	if result.Outcome != protocol.WarehouseOutcomeWithdrawn || result.Quantity != 2 { t.Fatalf("first result=%#v", result) }
 
 	// Reliable replay must never mint a second copy from the infinite source.
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 1, warehouse: &withdraw}); err != nil { t.Fatal(err) }
-	replay := rt.Step(3, 50*time.Millisecond)
+	replay := rt.Step(4, 50*time.Millisecond)
 	if len(replay.CommandErrors) != 1 || !errors.Is(replay.CommandErrors[0].Err, session.ErrStaleAction) { t.Fatalf("replay errors=%#v", replay.CommandErrors) }
 	if got := rt.inventories[identity.ID].Quantity(WeaponEnhancementScrollItemArchetypeID); got != 2 { t.Fatalf("replay minted quantity=%d", got) }
 	drainWarehouseMessages(connection)
 
 	// A new sequence may withdraw the same fixed GM source again; the source is never decremented.
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 2, warehouse: &withdraw}); err != nil { t.Fatal(err) }
-	if report := rt.Step(4, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("second withdraw errors=%#v", report.CommandErrors) }
+	if report := rt.Step(5, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("second withdraw errors=%#v", report.CommandErrors) }
 	if got := rt.inventories[identity.ID].Quantity(WeaponEnhancementScrollItemArchetypeID); got != 4 { t.Fatalf("second withdraw quantity=%d want=4", got) }
+	if report := rt.Step(6, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("second result flush errors=%#v", report.CommandErrors) }
 	drainWarehouseMessages(connection)
 
 	open := protocol.ClientWarehouseCommand{Operation: protocol.WarehouseOperationOpenGM}
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 3, warehouse: &open}); err != nil { t.Fatal(err) }
-	if report := rt.Step(5, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("open errors=%#v", report.CommandErrors) }
+	if report := rt.Step(7, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("open errors=%#v", report.CommandErrors) }
+	if report := rt.Step(8, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("open result flush errors=%#v", report.CommandErrors) }
 	messages := drainWarehouseMessages(connection)
 	snapshot := requireWarehouseSnapshot(t, messages)
 	if len(snapshot.Items) != 2 || snapshot.Items[0].Quantity != 0 || snapshot.Items[1].Quantity != 0 { t.Fatalf("GM snapshot=%#v", snapshot) }
@@ -91,6 +94,7 @@ func TestGMWarehouseRejectsNonSubjectOneWithoutInventoryMutation(t *testing.T) {
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 1, warehouse: &intent}); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("errors=%#v", report.CommandErrors) }
 	if got := rt.inventories[identity.ID].Quantity(ArmorEnhancementScrollItemArchetypeID); got != 0 { t.Fatalf("unauthorized quantity=%d", got) }
+	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("reject result flush errors=%#v", report.CommandErrors) }
 	result := requireWarehouseResult(t, drainWarehouseMessages(connection))
 	if result.Outcome != protocol.WarehouseOutcomeRejected || result.Reason != protocol.WarehouseRejectionNotAuthorized { t.Fatalf("result=%#v", result) }
 }
@@ -99,20 +103,21 @@ func TestPersonalWarehouseDepositWithdrawPersistsInCharacterSnapshot(t *testing.
 	rt, s, identity, connection := makeTeleportRuneRuntime(t, nil, map0TestWorld, "2", false)
 	rt.dynamic = newWarehouseTestDynamicWorld()
 	const itemID = "item_minor_healing_potion"
-	if err := rt.inventories[identity.ID].Add(itemID, 5); err != nil { t.Fatal(err) }
 
 	deposit := protocol.ClientWarehouseCommand{Operation: protocol.WarehouseOperationDepositPersonal, ItemArchetypeID: itemID, Quantity: 3}
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 1, warehouse: &deposit}); err != nil { t.Fatal(err) }
 	if report := rt.Step(2, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("deposit errors=%#v", report.CommandErrors) }
 	if got := rt.inventories[identity.ID].Quantity(itemID); got != 2 { t.Fatalf("inventory after deposit=%d", got) }
 	if got := rt.warehouses[identity.ID].Quantity(itemID); got != 3 { t.Fatalf("warehouse after deposit=%d", got) }
+	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("deposit result flush errors=%#v", report.CommandErrors) }
 	if result := requireWarehouseResult(t, drainWarehouseMessages(connection)); result.Outcome != protocol.WarehouseOutcomeDeposited { t.Fatalf("deposit result=%#v", result) }
 
 	withdraw := protocol.ClientWarehouseCommand{Operation: protocol.WarehouseOperationWithdrawPersonal, ItemArchetypeID: itemID, Quantity: 2}
 	if err := rt.queue.tryPush(useActionCommand{sessionID: s.ID, sequence: 2, warehouse: &withdraw}); err != nil { t.Fatal(err) }
-	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("withdraw errors=%#v", report.CommandErrors) }
+	if report := rt.Step(4, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("withdraw errors=%#v", report.CommandErrors) }
 	if got := rt.inventories[identity.ID].Quantity(itemID); got != 4 { t.Fatalf("inventory after withdraw=%d", got) }
 	if got := rt.warehouses[identity.ID].Quantity(itemID); got != 1 { t.Fatalf("warehouse after withdraw=%d", got) }
+	if report := rt.Step(5, 50*time.Millisecond); len(report.CommandErrors) != 0 { t.Fatalf("withdraw result flush errors=%#v", report.CommandErrors) }
 	drainWarehouseMessages(connection)
 
 	_, snapshot, ok := rt.captureCharacterStateSnapshot(s.ID, s.EntityID, &StepReport{})

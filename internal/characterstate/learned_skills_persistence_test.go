@@ -175,6 +175,9 @@ func TestSaveJournalV6InfersLearnedSkillsOnlyFromCombatLoadout(t *testing.T) {
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
 	wireSnapshot.LearnedSkills = nil
 	wireSnapshot.PrimaryStats = nil
+	wireSnapshot.SkinID = ""
+	wireSnapshot.MapID = ""
+	wireSnapshot.Warehouse = WarehouseState{}
 	wire := saveJournalWireRecord{
 		SchemaVersion: LoadoutSaveJournalSchemaVersion,
 		RecordID: 1, ExpectedRevision: 0, IntentID: 1,

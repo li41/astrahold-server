@@ -138,8 +138,13 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 		if restore.Warehouse.Initialized || len(restore.Warehouse.Items) != 0 {
 			return ErrCharacterRestoreInvalid
 		}
-	} else if _, ok := canonicalWarehouseState(restore.Warehouse); !ok {
-		return ErrCharacterRestoreInvalid
+	} else {
+		if !restore.Warehouse.Initialized {
+			return ErrCharacterRestoreInvalid
+		}
+		if _, ok := canonicalWarehouseState(restore.Warehouse); !ok {
+			return ErrCharacterRestoreInvalid
+		}
 	}
 	if err := validateCharacterSkillRestore(restore.SchemaVersion, restore.LearnedSkills, restore.CombatLoadout); err != nil {
 		return err
