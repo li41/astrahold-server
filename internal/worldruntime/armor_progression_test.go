@@ -83,6 +83,7 @@ func TestDurableRestoreRevalidatesHighArmorRequirementAgainstBaseStat(t *testing
 		MP:            100,
 		MaxMP:         100,
 		Inventory:     inventoryState,
+		Warehouse:     characterstate.EmptyWarehouseState(),
 		PrimaryStats:  characterstats.DefaultPrimary(),
 	}
 	if err := ValidateCharacterRestore(identity, restore, characterRestoreWorld); !errors.Is(err, ErrEquipmentRequirementsNotMet) {

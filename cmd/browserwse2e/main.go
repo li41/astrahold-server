@@ -313,6 +313,7 @@ func e2eCharacterRestore(identity characteridentity.Binding, worldIdentity proto
 		MaxMP:         100,
 		Transform:     world.Transform{Position: world.Position{Layer: 0}},
 		Inventory:     inventory,
+		Warehouse:     characterstate.EmptyWarehouseState(),
 		PrimaryStats:  characterstats.DefaultPrimary(),
 	}, nil
 }

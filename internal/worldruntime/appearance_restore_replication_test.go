@@ -29,6 +29,7 @@ func TestTrustedRestoreBootstrapReplicatesActiveSkinWeaponAffinity(t *testing.T)
 		World: characterRestoreWorld,
 		HP: 1000, MaxHP: 1000, MP: 100, MaxMP: 100,
 		Inventory: inventoryState,
+		Warehouse: characterstate.EmptyWarehouseState(),
 		PrimaryStats: characterstats.DefaultPrimary(),
 		SkinID: appearance.KnightDPelegrini,
 		Transform: world.Transform{Position: world.Position{Layer: 4}},
