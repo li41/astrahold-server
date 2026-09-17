@@ -8,11 +8,15 @@ import (
 )
 
 func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uint64, delta time.Duration, report *StepReport) {
-	// Equipment, pickup, item-use and respawn share the existing bounded Reliable client-intent
-	// carrier, but remain distinct typed payloads and never enter combat preparation or the
-	// skill/action path.
+	// Equipment, enhancement, pickup, item-use and respawn share the existing bounded Reliable
+	// client-intent carrier, but remain distinct typed payloads and never enter combat preparation or
+	// the skill/action path.
 	if command.equipmentInstance != nil {
 		r.applyEquipmentInstanceCommand(name, command, report)
+		return
+	}
+	if command.enhancement != nil {
+		r.applyEnhanceEquipment(name, command, report)
 		return
 	}
 	if command.equipment != nil {
@@ -50,8 +54,6 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
-	// Action sequence 代表 intent 已被 Server 處理；即使 actor 已 Defeated 而被 gameplay
-	// rule 拒絕，也必須消耗 sequence，避免同一 intent 在 revive/respawn 後被重播。
 	s.MarkProcessedAction(command.sequence)
 	if _, ok := r.world.Entity(s.EntityID); !ok {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: ErrSessionEntityNotFound})
@@ -66,9 +68,6 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		r.rejectClientAction(name, command.sessionID, command.sequence, s.EntityID, command.action.ActionID, command.action.TargetKind, character.ErrCharacterDefeated, tick, report)
 		return
 	}
-
-	// Class/profession identity no longer participates in production action authorization.
-	// Action legality is owned by the authoritative combat/skill/equipment systems below.
 	intent := combatIntentFromClientAction(s.EntityID, command.action)
 	r.prepareAndDispatchAction(name, command.sessionID, command.sequence, intent, tick, delta, report)
 }
