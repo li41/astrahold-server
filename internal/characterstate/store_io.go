@@ -60,6 +60,9 @@ func (s *Store) Save(identity characteridentity.Binding, expectedRevision uint64
 		return Record{}, err
 	}
 	snapshot.Inventory = inventoryState
+	if !snapshot.Warehouse.Initialized && len(snapshot.Warehouse.Items) == 0 {
+		snapshot.Warehouse = EmptyWarehouseState()
+	}
 	warehouseState, err := CanonicalWarehouseState(snapshot.Warehouse)
 	if err != nil {
 		return Record{}, err
@@ -167,7 +170,6 @@ func (s *Store) loadLocked(identity characteridentity.Binding) (Record, bool, er
 	if wire.SchemaVersion >= SixPrimaryStatsSchemaVersion && !hasSixPrimaryWireFields(wire.PrimaryStats) {
 		return Record{}, false, ErrCorruptRecord
 	}
-
 	if wire.SchemaVersion >= ClassSchemaVersion && wire.SchemaVersion < ClasslessSchemaVersion && wire.ClassID != "" {
 		if _, ok := classid.Parse(wire.ClassID); !ok {
 			return Record{}, false, fmt.Errorf("%w: %v", ErrCorruptRecord, ErrInvalidSnapshot)
@@ -295,7 +297,11 @@ func (s *Store) writeLocked(record Record) error {
 	if err != nil {
 		return err
 	}
-	warehouseState, err := CanonicalWarehouseState(record.Snapshot.Warehouse)
+	warehouseState := record.Snapshot.Warehouse
+	if !warehouseState.Initialized && len(warehouseState.Items) == 0 {
+		warehouseState = EmptyWarehouseState()
+	}
+	warehouseState, err = CanonicalWarehouseState(warehouseState)
 	if err != nil || !warehouseState.Initialized {
 		return ErrInvalidSnapshot
 	}
