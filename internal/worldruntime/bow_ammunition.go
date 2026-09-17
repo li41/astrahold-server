@@ -108,20 +108,28 @@ func rollBowAndArrowDamage(definition equipmentcatalog.Definition, size equipmen
 	return uint32(total)
 }
 
-// rollEquippedBasicAttackWeaponDamage keeps all non-bow weapons on their existing damage path. Bow
-// hits instead combine the bow range and the selected arrow range, then make exactly one uniform
-// roll across that combined interval. The fired arrow is consumed once the roll is materialized.
-func (r *Runtime) rollEquippedBasicAttackWeaponDamage(actorID world.EntityID, sourceSessionID session.ID, definition equipmentcatalog.Definition, size equipmentcatalog.BodySize) uint32 {
+// rollEquippedBasicAttackWeaponDamageWithAmmunition keeps all non-bow weapons on their existing
+// damage path. Bow hits combine bow + exact selected arrow into one uniform roll, consume that exact
+// arrow, and return its material alongside damage so later material rules use the fired ammunition
+// rather than guessing from post-consumption inventory state.
+func (r *Runtime) rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID world.EntityID, sourceSessionID session.ID, definition equipmentcatalog.Definition, size equipmentcatalog.BodySize) (uint32, equipmentcatalog.MaterialID) {
 	if definition.Weapon == nil || definition.Weapon.WeaponType != equipmentcatalog.WeaponTypeBow {
-		return rollWeaponDamage(definition, size, rand.Uint32())
+		return rollWeaponDamage(definition, size, rand.Uint32()), ""
 	}
 	arrow, required, available := r.selectedBowArrow(actorID, sourceSessionID)
 	if !required || !available {
-		return 0
+		return 0, ""
 	}
 	damage := rollBowAndArrowDamage(definition, size, arrow, rand.Uint32())
 	if damage == 0 || !r.consumeExactArrow(sourceSessionID, actorID, arrow) {
-		return 0
+		return 0, ""
 	}
+	return damage, arrow.Material
+}
+
+// rollEquippedBasicAttackWeaponDamage remains the compatibility wrapper for callers that only need
+// the materialized weapon damage and do not participate in ammunition-specific material effects.
+func (r *Runtime) rollEquippedBasicAttackWeaponDamage(actorID world.EntityID, sourceSessionID session.ID, definition equipmentcatalog.Definition, size equipmentcatalog.BodySize) uint32 {
+	damage, _ := r.rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID, sourceSessionID, definition, size)
 	return damage
 }
