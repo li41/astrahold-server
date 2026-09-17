@@ -9,14 +9,17 @@ import (
 )
 
 const (
-	ItemLowArrow  = "item_low_arrow"
-	ItemMidArrow  = "item_mid_arrow"
-	ItemHighArrow = "item_high_arrow"
+	// ItemWoodArrow keeps the existing stable item identity used by the first playable bow loop.
+	ItemWoodArrow = "item_low_arrow"
+	ItemSilverArrow = "item_silver_arrow"
+
+	// ItemLowArrow is retained as a source-compatible alias for the existing wooden-arrow ID.
+	// New Server code should use ItemWoodArrow so ammunition is not modeled as a tier ladder.
+	ItemLowArrow = ItemWoodArrow
 )
 
 type Definition struct {
 	ItemArchetypeID string
-	Tier            equipmentcatalog.Tier
 	Material        equipmentcatalog.MaterialID
 	Damage          equipmentcatalog.DamageRange
 	// UnitWeight is authoritative inventory weight per arrow. V1 arrows deliberately use zero
@@ -25,10 +28,14 @@ type Definition struct {
 	UnitWeight uint32
 }
 
+// V1 has exactly two production arrow identities. Wood is consumed before silver when both are
+// present so ordinary ammunition is never silently replaced by the silver stack.
+//
+// Both arrows currently contribute the same base arrow damage. The existing silver-main-hand
+// versus undead rule is not inferred from ammunition material and remains a separate contract.
 var v1Definitions = []Definition{
-	{ItemArchetypeID: ItemLowArrow, Tier: equipmentcatalog.TierLow, Material: equipmentcatalog.MaterialWood, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
-	{ItemArchetypeID: ItemMidArrow, Tier: equipmentcatalog.TierMid, Material: equipmentcatalog.MaterialSteel, Damage: equipmentcatalog.DamageRange{Min: 8, Max: 11}},
-	{ItemArchetypeID: ItemHighArrow, Tier: equipmentcatalog.TierHigh, Material: equipmentcatalog.MaterialStarsteel, Damage: equipmentcatalog.DamageRange{Min: 10, Max: 15}},
+	{ItemArchetypeID: ItemWoodArrow, Material: equipmentcatalog.MaterialWood, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
+	{ItemArchetypeID: ItemSilverArrow, Material: equipmentcatalog.MaterialSilver, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
 }
 
 var v1ByItem = mustV1ByItem()
@@ -48,8 +55,7 @@ func mustV1ByItem() map[string]Definition {
 	return byItem
 }
 
-// Definitions returns the deterministic V1 arrow priority. The Server consumes lower-tier arrows
-// first so carrying ordinary arrows does not silently burn rarer ammunition.
+// Definitions returns the deterministic V1 consumption priority: wood, then silver.
 func Definitions() []Definition {
 	out := make([]Definition, len(v1Definitions))
 	copy(out, v1Definitions)

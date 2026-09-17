@@ -4,13 +4,14 @@ import "strings"
 
 var defaultBowBaseDamageByItem = map[string]DamageRange{
 	"item_hunter_shortbow": {Min: 2, Max: 3},
-	"item_mid_bow":         {Min: 3, Max: 4},
-	"item_high_bow":        {Min: 4, Max: 5},
+	"item_mid_bow":         {Min: 5, Max: 7},
+	"item_high_bow":        {Min: 8, Max: 12},
 }
 
-// applyDefaultBowAmmunitionBalance moves most bow base damage into ammunition while preserving the
-// current total bow+matching-arrow progression. Only the three production bow archetypes are
-// rewritten; crossbows, slings and all other weapons keep their authored damage unchanged.
+// applyDefaultBowAmmunitionBalance moves a fixed 6-8 portion of bow base damage into ammunition
+// while preserving the authored total progression for either approved V1 arrow (wood or silver).
+// Only the three production bow archetypes are rewritten; crossbows, slings and all other weapons
+// keep their authored damage unchanged.
 func applyDefaultBowAmmunitionBalance(items []Definition) error {
 	seen := make(map[string]struct{}, len(defaultBowBaseDamageByItem))
 	for i := range items {

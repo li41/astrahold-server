@@ -2,15 +2,15 @@ package equipmentcatalog
 
 import "testing"
 
-func TestDefaultBowsSplitBaseDamageForArrowSystem(t *testing.T) {
+func TestDefaultBowsSplitBaseDamageForTwoArrowSystem(t *testing.T) {
 	catalog, err := Default()
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]DamageRange{
 		"item_hunter_shortbow": {Min: 2, Max: 3},
-		"item_mid_bow":         {Min: 3, Max: 4},
-		"item_high_bow":        {Min: 4, Max: 5},
+		"item_mid_bow":         {Min: 5, Max: 7},
+		"item_high_bow":        {Min: 8, Max: 12},
 	}
 	for itemID, expected := range want {
 		definition, ok := catalog.Resolve(itemID)

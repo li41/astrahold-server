@@ -21,9 +21,9 @@ func TestBowAndArrowDamageUsesOneCombinedUniformRange(t *testing.T) {
 			LargeDamage: equipmentcatalog.DamageRange{Min: 2, Max: 3},
 		},
 	}
-	arrow, ok := ammunition.Resolve(ammunition.ItemLowArrow)
+	arrow, ok := ammunition.Resolve(ammunition.ItemWoodArrow)
 	if !ok {
-		t.Fatal("low arrow missing")
+		t.Fatal("wood arrow missing")
 	}
 	want := []uint32{8, 9, 10, 11, 8}
 	for roll, expected := range want {
@@ -33,42 +33,45 @@ func TestBowAndArrowDamageUsesOneCombinedUniformRange(t *testing.T) {
 	}
 }
 
-func TestMatchingTierBowAndArrowPreservesAuthoredTotalProgression(t *testing.T) {
-	cases := []struct {
+func TestProductionBowTotalsRemainAuthoredWithEitherApprovedArrow(t *testing.T) {
+	bows := []struct {
 		bowID   string
-		arrowID string
 		wantMin uint32
 		wantMax uint32
 	}{
-		{"item_hunter_shortbow", ammunition.ItemLowArrow, 8, 11},
-		{"item_mid_bow", ammunition.ItemMidArrow, 11, 15},
-		{"item_high_bow", ammunition.ItemHighArrow, 14, 20},
+		{"item_hunter_shortbow", 8, 11},
+		{"item_mid_bow", 11, 15},
+		{"item_high_bow", 14, 20},
 	}
-	for _, tc := range cases {
-		bow, ok := defaultEquipmentCatalog.Resolve(tc.bowID)
+	for _, arrowID := range []string{ammunition.ItemWoodArrow, ammunition.ItemSilverArrow} {
+		arrow, ok := ammunition.Resolve(arrowID)
 		if !ok {
-			t.Fatalf("bow %q missing", tc.bowID)
+			t.Fatalf("arrow %q missing", arrowID)
 		}
-		arrow, ok := ammunition.Resolve(tc.arrowID)
-		if !ok {
-			t.Fatalf("arrow %q missing", tc.arrowID)
-		}
-		if got := rollBowAndArrowDamage(bow, equipmentcatalog.BodySizeSmall, arrow, 0); got != tc.wantMin {
-			t.Fatalf("%s + %s minimum=%d want %d", tc.bowID, tc.arrowID, got, tc.wantMin)
-		}
-		span := tc.wantMax - tc.wantMin + 1
-		if got := rollBowAndArrowDamage(bow, equipmentcatalog.BodySizeSmall, arrow, span-1); got != tc.wantMax {
-			t.Fatalf("%s + %s maximum=%d want %d", tc.bowID, tc.arrowID, got, tc.wantMax)
+		for _, tc := range bows {
+			bow, ok := defaultEquipmentCatalog.Resolve(tc.bowID)
+			if !ok {
+				t.Fatalf("bow %q missing", tc.bowID)
+			}
+			if got := rollBowAndArrowDamage(bow, equipmentcatalog.BodySizeSmall, arrow, 0); got != tc.wantMin {
+				t.Fatalf("%s + %s minimum=%d want %d", tc.bowID, arrowID, got, tc.wantMin)
+			}
+			span := tc.wantMax - tc.wantMin + 1
+			if got := rollBowAndArrowDamage(bow, equipmentcatalog.BodySizeSmall, arrow, span-1); got != tc.wantMax {
+				t.Fatalf("%s + %s maximum=%d want %d", tc.bowID, arrowID, got, tc.wantMax)
+			}
 		}
 	}
 }
 
-func TestCharacterInventoryTreatsV1ArrowsAsZeroWeightStacks(t *testing.T) {
+func TestCharacterInventoryTreatsApprovedArrowsAsZeroWeightStacks(t *testing.T) {
 	inv := newCharacterInventory(8)
-	if err := inv.Add(ammunition.ItemLowArrow, 1000); err != nil {
-		t.Fatal(err)
+	for _, itemID := range []string{ammunition.ItemWoodArrow, ammunition.ItemSilverArrow} {
+		if err := inv.Add(itemID, 1000); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if inv.CurrentWeight() != 0 {
-		t.Fatalf("1000 arrows carry weight=%d want 0", inv.CurrentWeight())
+		t.Fatalf("approved arrows carry weight=%d want 0", inv.CurrentWeight())
 	}
 }

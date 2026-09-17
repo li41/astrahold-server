@@ -6,15 +6,14 @@ import (
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 )
 
-func TestV1ArrowDefinitions(t *testing.T) {
+func TestV1ArrowDefinitionsAreWoodAndSilverOnly(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 3 {
-		t.Fatalf("definitions=%d want 3", len(definitions))
+	if len(definitions) != 2 {
+		t.Fatalf("definitions=%d want 2", len(definitions))
 	}
 	want := []Definition{
-		{ItemArchetypeID: ItemLowArrow, Tier: equipmentcatalog.TierLow, Material: equipmentcatalog.MaterialWood, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
-		{ItemArchetypeID: ItemMidArrow, Tier: equipmentcatalog.TierMid, Material: equipmentcatalog.MaterialSteel, Damage: equipmentcatalog.DamageRange{Min: 8, Max: 11}},
-		{ItemArchetypeID: ItemHighArrow, Tier: equipmentcatalog.TierHigh, Material: equipmentcatalog.MaterialStarsteel, Damage: equipmentcatalog.DamageRange{Min: 10, Max: 15}},
+		{ItemArchetypeID: ItemWoodArrow, Material: equipmentcatalog.MaterialWood, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
+		{ItemArchetypeID: ItemSilverArrow, Material: equipmentcatalog.MaterialSilver, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
 	}
 	for i, expected := range want {
 		got := definitions[i]
@@ -27,6 +26,11 @@ func TestV1ArrowDefinitions(t *testing.T) {
 		}
 		if got.UnitWeight != 0 {
 			t.Fatalf("arrow %q unit weight=%d want 0", got.ItemArchetypeID, got.UnitWeight)
+		}
+	}
+	for _, removed := range []string{"item_mid_arrow", "item_high_arrow", "item_starsteel_arrow"} {
+		if _, ok := Resolve(removed); ok {
+			t.Fatalf("removed arrow %q still resolves", removed)
 		}
 	}
 }

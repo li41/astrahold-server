@@ -140,7 +140,7 @@ func TestBowWithoutArrowRejectsShotWithoutCooldownThenFiresAfterArrowArrives(t *
 		t.Fatalf("no-arrow shot changed target state=%+v ok=%v", state, ok)
 	}
 
-	if err := inv.Add(ammunition.ItemLowArrow, 1); err != nil {
+	if err := inv.Add(ammunition.ItemWoodArrow, 1); err != nil {
 		t.Fatal(err)
 	}
 	// Tick 4 is only 50ms after the rejected attempt. A bow cooldown would still be active here if
@@ -159,8 +159,8 @@ func TestBowWithoutArrowRejectsShotWithoutCooldownThenFiresAfterArrowArrives(t *
 	if event.Damage < 8 || event.Damage > 11 {
 		t.Fatalf("low bow+arrow damage=%d want 8..11", event.Damage)
 	}
-	if inv.Quantity(ammunition.ItemLowArrow) != 0 {
-		t.Fatalf("arrow quantity=%d want 0", inv.Quantity(ammunition.ItemLowArrow))
+	if inv.Quantity(ammunition.ItemWoodArrow) != 0 {
+		t.Fatalf("arrow quantity=%d want 0", inv.Quantity(ammunition.ItemWoodArrow))
 	}
 }
 
@@ -171,7 +171,7 @@ func TestBowMissConsumesExactlyOneArrow(t *testing.T) {
 
 	rt, s, conn, _ := newBowAmmunitionRuntime(t, 6)
 	inv := rt.inventories[s.CharacterIdentity.ID]
-	if err := inv.Add(ammunition.ItemLowArrow, 2); err != nil {
+	if err := inv.Add(ammunition.ItemWoodArrow, 2); err != nil {
 		t.Fatal(err)
 	}
 	attack := protocol.ClientUseAction{ActionID: basicAttackActionID, TargetKind: protocol.ActionTargetEntity, TargetID: "9101"}
@@ -186,15 +186,15 @@ func TestBowMissConsumesExactlyOneArrow(t *testing.T) {
 	if event.Result != protocol.CombatEventMiss {
 		t.Fatalf("event=%#v want miss", event)
 	}
-	if inv.Quantity(ammunition.ItemLowArrow) != 1 {
-		t.Fatalf("arrow quantity after miss=%d want 1", inv.Quantity(ammunition.ItemLowArrow))
+	if inv.Quantity(ammunition.ItemWoodArrow) != 1 {
+		t.Fatalf("arrow quantity after miss=%d want 1", inv.Quantity(ammunition.ItemWoodArrow))
 	}
 }
 
 func TestOutOfRangeBowAttackDoesNotConsumeArrow(t *testing.T) {
 	rt, s, _, _ := newBowAmmunitionRuntime(t, 19)
 	inv := rt.inventories[s.CharacterIdentity.ID]
-	if err := inv.Add(ammunition.ItemLowArrow, 1); err != nil {
+	if err := inv.Add(ammunition.ItemWoodArrow, 1); err != nil {
 		t.Fatal(err)
 	}
 	attack := protocol.ClientUseAction{ActionID: basicAttackActionID, TargetKind: protocol.ActionTargetEntity, TargetID: "9101"}
@@ -205,19 +205,19 @@ func TestOutOfRangeBowAttackDoesNotConsumeArrow(t *testing.T) {
 	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 1 {
 		t.Fatalf("out-of-range report=%#v", report)
 	}
-	if inv.Quantity(ammunition.ItemLowArrow) != 1 {
-		t.Fatalf("out-of-range attack consumed arrow, quantity=%d", inv.Quantity(ammunition.ItemLowArrow))
+	if inv.Quantity(ammunition.ItemWoodArrow) != 1 {
+		t.Fatalf("out-of-range attack consumed arrow, quantity=%d", inv.Quantity(ammunition.ItemWoodArrow))
 	}
 }
 
-func TestBowConsumesLowerTierArrowBeforeRarerArrow(t *testing.T) {
+func TestBowConsumesWoodBeforeSilver(t *testing.T) {
 	oldAccuracyRoll := weaponAccuracyRoll
 	weaponAccuracyRoll = func() uint32 { return 0 }
 	t.Cleanup(func() { weaponAccuracyRoll = oldAccuracyRoll })
 
 	rt, s, _, _ := newBowAmmunitionRuntime(t, 6)
 	inv := rt.inventories[s.CharacterIdentity.ID]
-	for _, itemID := range []string{ammunition.ItemLowArrow, ammunition.ItemMidArrow, ammunition.ItemHighArrow} {
+	for _, itemID := range []string{ammunition.ItemWoodArrow, ammunition.ItemSilverArrow} {
 		if err := inv.Add(itemID, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -230,7 +230,25 @@ func TestBowConsumesLowerTierArrowBeforeRarerArrow(t *testing.T) {
 	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 0 {
 		t.Fatalf("attack report=%#v", report)
 	}
-	if inv.Quantity(ammunition.ItemLowArrow) != 0 || inv.Quantity(ammunition.ItemMidArrow) != 1 || inv.Quantity(ammunition.ItemHighArrow) != 1 {
-		t.Fatalf("arrow priority low=%d mid=%d high=%d", inv.Quantity(ammunition.ItemLowArrow), inv.Quantity(ammunition.ItemMidArrow), inv.Quantity(ammunition.ItemHighArrow))
+	if inv.Quantity(ammunition.ItemWoodArrow) != 0 || inv.Quantity(ammunition.ItemSilverArrow) != 1 {
+		t.Fatalf("arrow priority wood=%d silver=%d", inv.Quantity(ammunition.ItemWoodArrow), inv.Quantity(ammunition.ItemSilverArrow))
+	}
+}
+
+func TestRemovedSteelAndStarsteelArrowIDsDoNotSatisfyBowRequirement(t *testing.T) {
+	rt, s, _, _ := newBowAmmunitionRuntime(t, 6)
+	inv := rt.inventories[s.CharacterIdentity.ID]
+	for _, removed := range []string{"item_mid_arrow", "item_high_arrow", "item_starsteel_arrow"} {
+		if err := inv.Add(removed, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	attack := protocol.ClientUseAction{ActionID: basicAttackActionID, TargetKind: protocol.ActionTargetEntity, TargetID: "9101"}
+	if err := rt.EnqueueUseAction(s.ID, 2, attack); err != nil {
+		t.Fatal(err)
+	}
+	report := rt.Step(3, 50*time.Millisecond)
+	if len(report.CommandErrors) != 0 || len(report.ActionRejections) != 1 || !errors.Is(report.ActionRejections[0].Err, ErrBowArrowRequired) {
+		t.Fatalf("removed-arrow report=%#v", report)
 	}
 }
