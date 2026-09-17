@@ -9,6 +9,7 @@ import (
 
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
+// v30: authoritative unique-equipment enhancement intent/result plus replicated enhancement level.
 // v29: equipment expands to seven formal slots: main_hand/off_hand/helmet/chest/gloves/legs/boots.
 // v28: activates exact unique-equipment Type119-121 plus Reliable AppearanceSnapshot Type122.
 // v27: Shadowblade adds authoritative source-target resource state for per-target Flaw.
@@ -28,7 +29,7 @@ import (
 // v13: EntityVitalsState adds authoritative MP/MaxMP and insufficient_resource rejection.
 // v12: valid point-target ClientUseAction ingress semantics are compatibility-fenced.
 // v11: Reliable ActionRejected returns authoritative action rejection reason.
-const Version uint16 = 29
+const Version uint16 = 30
 
 const MaxSnapshotEntitiesPerChunk = 43
 
