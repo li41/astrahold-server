@@ -25,6 +25,7 @@ type PickupCommandSink interface { EnqueuePickupItem(session.ID, uint32, protoco
 type ItemUseCommandSink interface { EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error }
 type NPCCommandSink interface { EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error }
 type ShopCommandSink interface { EnqueueShopCommand(session.ID, uint32, protocol.ClientShopCommand) error }
+type WarehouseCommandSink interface { EnqueueWarehouseCommand(session.ID, uint32, protocol.ClientWarehouseCommand) error }
 type RespawnCommandSink interface { EnqueueRespawnRequest(session.ID, uint32, protocol.ClientRespawnRequest) error }
 
 type Ingress struct{ sink MoveCommandSink }
@@ -106,6 +107,13 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil || !validShopCommand(*message) { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueShopCommand(sessionID, envelope.Sequence, *message)
+	case protocol.ClientWarehouseCommand:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		return g.enqueueWarehouseCommand(sessionID, envelope.Sequence, message)
+	case *protocol.ClientWarehouseCommand:
+		if message == nil { return ErrInvalidClientEnvelope }
+		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
+		return g.enqueueWarehouseCommand(sessionID, envelope.Sequence, *message)
 	case protocol.ClientRespawnRequest:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueRespawnRequest(sessionID, envelope.Sequence, message)
@@ -203,6 +211,9 @@ func (g *Ingress) enqueueInteractNPC(sessionID session.ID, sequence uint32, inte
 }
 func (g *Ingress) enqueueShopCommand(sessionID session.ID, sequence uint32, intent protocol.ClientShopCommand) error {
 	sink, ok := g.sink.(ShopCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueShopCommand(sessionID, sequence, intent)
+}
+func (g *Ingress) enqueueWarehouseCommand(sessionID session.ID, sequence uint32, intent protocol.ClientWarehouseCommand) error {
+	sink, ok := g.sink.(WarehouseCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueWarehouseCommand(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueRespawnRequest(sessionID session.ID, sequence uint32, intent protocol.ClientRespawnRequest) error {
 	sink, ok := g.sink.(RespawnCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueRespawnRequest(sessionID, sequence, intent)
