@@ -11,7 +11,7 @@ func toItemAffixState(in protocol.ItemAffixState) itemAffixState {
 }
 
 func toItemInstanceState(in protocol.ItemInstanceState) itemInstanceState {
-	out := itemInstanceState{ItemInstanceID: in.ItemInstanceID, ItemArchetypeID: in.ItemArchetypeID, Affixes: make([]itemAffixState, len(in.Affixes))}
+	out := itemInstanceState{ItemInstanceID: in.ItemInstanceID, ItemArchetypeID: in.ItemArchetypeID, EnhancementLevel: in.EnhancementLevel, Affixes: make([]itemAffixState, len(in.Affixes))}
 	for i := range in.Affixes { out.Affixes[i] = toItemAffixState(in.Affixes[i]) }
 	return out
 }
@@ -38,6 +38,11 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case *protocol.ClientEquipmentInstanceCommand:
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientEquipmentInstanceCommand{Operation: string(m.Operation), Slot: string(m.Slot), ItemInstanceID: m.ItemInstanceID})
+	case protocol.ClientEnhanceEquipment:
+		return json.Marshal(clientEnhanceEquipment{ScrollItemArchetypeID: m.ScrollItemArchetypeID, ItemInstanceID: m.ItemInstanceID})
+	case *protocol.ClientEnhanceEquipment:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientEnhanceEquipment{ScrollItemArchetypeID: m.ScrollItemArchetypeID, ItemInstanceID: m.ItemInstanceID})
 	case protocol.ClientPickupItem:
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
 	case *protocol.ClientPickupItem:
@@ -74,6 +79,8 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(actionRejected{ClientActionSequence: m.ClientActionSequence, ActorEntityID: uint64(m.ActorEntityID), ActionID: m.ActionID, TargetKind: string(m.TargetKind), Reason: string(m.Reason), CooldownReadyTick: m.CooldownReadyTick})
 	case protocol.ItemUseResult:
 		return json.Marshal(itemUseResult{ClientActionSequence: m.ClientActionSequence, ItemArchetypeID: m.ItemArchetypeID, Outcome: string(m.Outcome), Reason: string(m.Reason), AppliedAmount: m.AppliedAmount, CooldownReadyTick: m.CooldownReadyTick})
+	case protocol.EquipmentEnhancementResult:
+		return json.Marshal(equipmentEnhancementResult{ClientActionSequence: m.ClientActionSequence, ScrollItemArchetypeID: m.ScrollItemArchetypeID, ItemInstanceID: m.ItemInstanceID, Outcome: string(m.Outcome), Reason: string(m.Reason), PreviousLevel: m.PreviousLevel, CurrentLevel: m.CurrentLevel, ScrollConsumed: m.ScrollConsumed})
 	case protocol.CharacterClassState:
 		return json.Marshal(characterClassState{ClassID: m.ClassID})
 	case protocol.CharacterClassResourceState:
