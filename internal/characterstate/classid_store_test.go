@@ -18,12 +18,12 @@ func TestStoreV10SnapshotIsClassless(t *testing.T) {
 	snapshot := testSnapshot()
 	record, err := store.Save(identity, 0, snapshot)
 	if err != nil { t.Fatal(err) }
-	if record.SchemaVersion != SchemaVersion || record.Snapshot != snapshot { t.Fatalf("record=%#v", record) }
+	if record.SchemaVersion != SchemaVersion || !SnapshotsEqual(record.Snapshot, snapshot) { t.Fatalf("record=%#v", record) }
 	data, err := os.ReadFile(store.recordPath(identity.ID)); if err != nil { t.Fatal(err) }
 	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("v10 durable record still contains class_id: %s", data) }
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.Snapshot != snapshot { t.Fatalf("loaded snapshot=%#v want=%#v", loaded.Snapshot, snapshot) }
+	if !SnapshotsEqual(loaded.Snapshot, snapshot) { t.Fatalf("loaded snapshot=%#v want=%#v", loaded.Snapshot, snapshot) }
 }
 
 func TestStoreV8ValidatesThenDiscardsLegacyClassID(t *testing.T) {
@@ -33,7 +33,7 @@ func TestStoreV8ValidatesThenDiscardsLegacyClassID(t *testing.T) {
 	writeClassIDStoreRecord(t, store, identity, LearnedSkillsSchemaVersion, string(classid.Breaker))
 	loaded, ok, err := store.Load(identity)
 	if err != nil || !ok { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
-	if loaded.SchemaVersion != LearnedSkillsSchemaVersion || loaded.Snapshot != snapshot { t.Fatalf("legacy loaded=%#v", loaded) }
+	if loaded.SchemaVersion != LearnedSkillsSchemaVersion || !SnapshotsEqual(loaded.Snapshot, snapshot) { t.Fatalf("legacy loaded=%#v", loaded) }
 }
 
 func TestStoreRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
