@@ -7,6 +7,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
+	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/iteminstance"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -126,6 +127,53 @@ func resolveEquipmentEnhancementRoll(kind equipmentcatalog.Kind, level uint16, r
 	return protocol.EquipmentEnhancementOutcomeBroken, true
 }
 
+// commitEquipmentEnhancementOutcome applies exactly one already-resolved legal enhancement attempt.
+// It owns scroll consumption and exact target mutation atomically enough for the world-owner path:
+// if target mutation fails, the removed scroll is restored before returning an error.
+func commitEquipmentEnhancementOutcome(inv *inventory.Inventory, scrollID string, instance iteminstance.Instance, outcome protocol.EquipmentEnhancementOutcome) (uint16, error) {
+	if inv == nil {
+		return instance.EnhancementLevel, ErrEquipmentEnhancementRejected
+	}
+	switch outcome {
+	case protocol.EquipmentEnhancementOutcomeEnhanced, protocol.EquipmentEnhancementOutcomeNoChange, protocol.EquipmentEnhancementOutcomeBroken:
+	default:
+		return instance.EnhancementLevel, ErrEquipmentEnhancementRejected
+	}
+	if err := inv.Remove(scrollID, 1); err != nil {
+		return instance.EnhancementLevel, err
+	}
+	restoreScroll := func() {
+		_ = inv.Add(scrollID, 1)
+	}
+
+	switch outcome {
+	case protocol.EquipmentEnhancementOutcomeEnhanced:
+		// uint16 is only the current persistence/wire representation, never a gameplay max.
+		// Do not wrap it; representation migration is required before this boundary becomes reachable.
+		if instance.EnhancementLevel == ^uint16(0) {
+			restoreScroll()
+			return instance.EnhancementLevel, ErrEquipmentEnhancementRejected
+		}
+		updated := instance
+		updated.EnhancementLevel++
+		if _, err := inv.ReplaceOwnedInstance(updated); err != nil {
+			restoreScroll()
+			return instance.EnhancementLevel, err
+		}
+		return updated.EnhancementLevel, nil
+	case protocol.EquipmentEnhancementOutcomeNoChange:
+		return instance.EnhancementLevel, nil
+	case protocol.EquipmentEnhancementOutcomeBroken:
+		if _, _, err := inv.RemoveOwnedInstance(instance.ID); err != nil {
+			restoreScroll()
+			return instance.EnhancementLevel, err
+		}
+		return instance.EnhancementLevel, nil
+	default:
+		panic("unreachable equipment enhancement outcome")
+	}
+}
+
 func (r *Runtime) queueEquipmentEnhancementResult(sessionID session.ID, result protocol.EquipmentEnhancementResult) {
 	r.pendingResourceMessages[sessionID] = append(r.pendingResourceMessages[sessionID], result)
 }
@@ -201,45 +249,20 @@ func (r *Runtime) applyEnhanceEquipment(name string, command useActionCommand, r
 	}
 
 	previous := instance.EnhancementLevel
-	if err := inv.Remove(intent.ScrollItemArchetypeID, 1); err != nil {
-		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionMissingScroll, previous)
-		return
-	}
 	outcome, ok := resolveEquipmentEnhancementRoll(definition.Kind, previous, rand.Intn(100)+1)
 	if !ok {
-		_ = inv.Add(intent.ScrollItemArchetypeID, 1)
 		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
 		return
 	}
-
-	current := previous
-	switch outcome {
-	case protocol.EquipmentEnhancementOutcomeEnhanced:
-		// uint16 is the current wire/storage representation, not a gameplay cap. Never wrap it.
-		if previous == ^uint16(0) {
-			_ = inv.Add(intent.ScrollItemArchetypeID, 1)
-			r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
-			return
+	current, err := commitEquipmentEnhancementOutcome(inv, intent.ScrollItemArchetypeID, instance, outcome)
+	if err != nil {
+		reason := protocol.EquipmentEnhancementRejectionServerRejected
+		if inv.Quantity(intent.ScrollItemArchetypeID) == 0 {
+			// This is only observable if ownership changed unexpectedly inside the world-owner path.
+			// The legal precheck above normally guarantees the scroll exists.
+			reason = protocol.EquipmentEnhancementRejectionMissingScroll
 		}
-		updated := instance
-		updated.EnhancementLevel++
-		if _, err := inv.ReplaceOwnedInstance(updated); err != nil {
-			_ = inv.Add(intent.ScrollItemArchetypeID, 1)
-			r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
-			return
-		}
-		current = updated.EnhancementLevel
-	case protocol.EquipmentEnhancementOutcomeNoChange:
-		// Scroll consumption is the only authoritative mutation.
-	case protocol.EquipmentEnhancementOutcomeBroken:
-		if _, _, err := inv.RemoveOwnedInstance(instance.ID); err != nil {
-			_ = inv.Add(intent.ScrollItemArchetypeID, 1)
-			r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
-			return
-		}
-	default:
-		_ = inv.Add(intent.ScrollItemArchetypeID, 1)
-		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
+		r.rejectEquipmentEnhancement(command, reason, previous)
 		return
 	}
 
