@@ -234,18 +234,22 @@ func (r *Runtime) matchingSkinBasicAttackDamageBonus(actorID world.EntityID, wea
 // authoritative weapon damage, then apply only the WeaponType's formally authored primary-attribute
 // scaling, then the selected-skin WeaponType affinity flat +1. All direct entity damage finally
 // receives the matching equipped unique-instance flat modifier: PhysicalDamage for physical damage
-// and MagicPower for magic damage. For a silver main-hand physical basic attack against a current
-// Server-classified undead target, the complete raw aggregate is then multiplied by 1.20 with floor.
-// Critical and target mitigation happen later in the owner path.
+// and MagicPower for magic damage. For either a silver main-hand or the exact fired silver arrow
+// against a current Server-classified undead target, the complete raw aggregate is then multiplied
+// by 1.20 with floor. The silver material multiplier is applied at most once. Critical and target
+// mitigation happen later in the owner path.
 func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourceSessionID session.ID, targetID world.EntityID, prepared combat.PreparedAction) uint32 {
 	if prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
 	}
 
 	damage := prepared.Damage.Amount
+	var ammunitionMaterial equipmentcatalog.MaterialID
 	if prepared.Definition.ID == basicAttackActionID {
 		if definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID); ok {
-			if weaponDamage := r.rollEquippedBasicAttackWeaponDamage(actorID, sourceSessionID, definition, r.entityWeaponBodySize(targetID)); weaponDamage != 0 {
+			weaponDamage, firedAmmunitionMaterial := r.rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID, sourceSessionID, definition, r.entityWeaponBodySize(targetID))
+			if weaponDamage != 0 {
+				ammunitionMaterial = firedAmmunitionMaterial
 				damage = weaponDamage
 				if prepared.Damage.Type == combat.DamagePhysical {
 					if attribute, authored := defaultEquipmentCatalog.BasicAttackDamageAttributeForItem(definition.ItemArchetypeID); authored {
@@ -269,5 +273,5 @@ func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourc
 	case combat.DamageMagic:
 		damage = saturatingAddUint32(damage, modifiers.MagicPower)
 	}
-	return r.applySilverUndeadBasicAttackBonus(actorID, sourceSessionID, targetID, prepared, damage)
+	return r.applySilverUndeadBasicAttackBonusWithAmmunition(actorID, sourceSessionID, targetID, prepared, ammunitionMaterial, damage)
 }
