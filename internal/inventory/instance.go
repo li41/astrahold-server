@@ -57,6 +57,41 @@ func (i *Inventory) Instance(instanceID iteminstance.ID) (iteminstance.Instance,
 	return cloneInstance(instance), true
 }
 
+// OwnedInstance resolves one exact unique instance whether it is currently carried or equipped.
+func (i *Inventory) OwnedInstance(instanceID iteminstance.ID) (iteminstance.Instance, bool, bool) {
+	if i == nil { return iteminstance.Instance{}, false, false }
+	instanceID = iteminstance.ID(strings.TrimSpace(string(instanceID)))
+	if instance, ok := i.instances[instanceID]; ok { return cloneInstance(instance), false, true }
+	for _, slot := range equipmentSlots {
+		if instance := i.equippedInstances[slot]; instance.ID == instanceID { return cloneInstance(instance), true, true }
+	}
+	return iteminstance.Instance{}, false, false
+}
+
+// ReplaceOwnedInstance atomically replaces mutable state on one already-owned unique instance.
+// Identity and archetype are immutable; equipped replacements also advance equipment revision so
+// derived gameplay stats and replication observe the enhancement immediately.
+func (i *Inventory) ReplaceOwnedInstance(instance iteminstance.Instance) (bool, error) {
+	if i == nil { return false, ErrInstanceNotFound }
+	if err := iteminstance.ValidateShape(instance); err != nil { return false, ErrInvalidInstance }
+	if current, ok := i.instances[instance.ID]; ok {
+		if current.ItemArchetypeID != instance.ItemArchetypeID { return false, ErrInvalidInstance }
+		i.instances[instance.ID] = cloneInstance(instance)
+		i.revision++
+		return false, nil
+	}
+	for _, slot := range equipmentSlots {
+		current := i.equippedInstances[slot]
+		if current.ID != instance.ID { continue }
+		if current.ItemArchetypeID != instance.ItemArchetypeID { return false, ErrInvalidInstance }
+		i.equippedInstances[slot] = cloneInstance(instance)
+		i.revision++
+		i.equipmentRevision++
+		return true, nil
+	}
+	return false, ErrInstanceNotFound
+}
+
 func (i *Inventory) InstanceSnapshot() []iteminstance.Instance {
 	if i == nil || len(i.instances) == 0 { return nil }
 	out := make([]iteminstance.Instance, 0, len(i.instances))
