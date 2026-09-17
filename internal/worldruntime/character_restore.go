@@ -42,6 +42,7 @@ type CharacterRestore struct {
 	Transform     world.Transform
 	Respawn       characterstate.DefeatedRespawn
 	Inventory     characterstate.InventoryState
+	Warehouse     characterstate.WarehouseState
 	CombatLoadout skillloadout.Slots
 	LearnedSkills learnedskills.Set
 	PrimaryStats  characterstats.Primary
@@ -63,6 +64,7 @@ func CharacterRestoreFromRecord(record characterstate.Record) CharacterRestore {
 		Transform:     world.Transform{Position: record.Snapshot.Position, Yaw: record.Snapshot.Yaw},
 		Respawn:       record.Snapshot.Respawn,
 		Inventory:     record.Snapshot.Inventory,
+		Warehouse:     record.Snapshot.Warehouse,
 		CombatLoadout: record.Snapshot.CombatLoadout,
 		LearnedSkills: record.Snapshot.LearnedSkills,
 		PrimaryStats:  record.Snapshot.PrimaryStats,
@@ -130,6 +132,13 @@ func ValidateCharacterRestore(identity characteridentity.Binding, restore Charac
 			return err
 		}
 	} else if restore.Inventory != (characterstate.InventoryState{}) {
+		return ErrCharacterRestoreInvalid
+	}
+	if restore.SchemaVersion < characterstate.WarehouseSchemaVersion {
+		if restore.Warehouse.Initialized || len(restore.Warehouse.Items) != 0 {
+			return ErrCharacterRestoreInvalid
+		}
+	} else if _, ok := canonicalWarehouseState(restore.Warehouse); !ok {
 		return ErrCharacterRestoreInvalid
 	}
 	if err := validateCharacterSkillRestore(restore.SchemaVersion, restore.LearnedSkills, restore.CombatLoadout); err != nil {
