@@ -14,24 +14,24 @@ type fencedEquipmentInstanceSink interface {
 	EnqueueFencedEquipmentInstanceCommand(worldruntime.SessionOwnershipFence, uint32, protocol.ClientEquipmentInstanceCommand) error
 }
 
+type fencedEquipmentEnhancementSink interface {
+	EnqueueFencedEnhanceEquipment(worldruntime.SessionOwnershipFence, uint32, protocol.ClientEnhanceEquipment) error
+}
+
 func (s peerCommandSink) EnqueueEquipmentCommand(id session.ID, sequence uint32, command protocol.ClientEquipmentCommand) error {
-	if !s.ownership.Valid() || id != s.ownership.SessionID {
-		return worldruntime.ErrCharacterOwnershipFenceInvalid
-	}
-	sink, ok := s.runtime.(fencedEquipmentSink)
-	if !ok {
-		return worldruntime.ErrCharacterOwnershipFenceInvalid
-	}
+	if !s.ownership.Valid() || id != s.ownership.SessionID { return worldruntime.ErrCharacterOwnershipFenceInvalid }
+	sink, ok := s.runtime.(fencedEquipmentSink); if !ok { return worldruntime.ErrCharacterOwnershipFenceInvalid }
 	return sink.EnqueueFencedEquipmentCommand(s.ownership, sequence, command)
 }
 
 func (s peerCommandSink) EnqueueEquipmentInstanceCommand(id session.ID, sequence uint32, command protocol.ClientEquipmentInstanceCommand) error {
-	if !s.ownership.Valid() || id != s.ownership.SessionID {
-		return worldruntime.ErrCharacterOwnershipFenceInvalid
-	}
-	sink, ok := s.runtime.(fencedEquipmentInstanceSink)
-	if !ok {
-		return worldruntime.ErrCharacterOwnershipFenceInvalid
-	}
+	if !s.ownership.Valid() || id != s.ownership.SessionID { return worldruntime.ErrCharacterOwnershipFenceInvalid }
+	sink, ok := s.runtime.(fencedEquipmentInstanceSink); if !ok { return worldruntime.ErrCharacterOwnershipFenceInvalid }
 	return sink.EnqueueFencedEquipmentInstanceCommand(s.ownership, sequence, command)
+}
+
+func (s peerCommandSink) EnqueueEnhanceEquipment(id session.ID, sequence uint32, command protocol.ClientEnhanceEquipment) error {
+	if !s.ownership.Valid() || id != s.ownership.SessionID { return worldruntime.ErrCharacterOwnershipFenceInvalid }
+	sink, ok := s.runtime.(fencedEquipmentEnhancementSink); if !ok { return worldruntime.ErrCharacterOwnershipFenceInvalid }
+	return sink.EnqueueFencedEnhanceEquipment(s.ownership, sequence, command)
 }
