@@ -20,9 +20,22 @@ func durableWarehouseState(storage *warehouse.Storage) characterstate.WarehouseS
 	return characterstate.WarehouseState{Initialized: true, Items: items}
 }
 
-func restoreCharacterWarehouse(state characterstate.WarehouseState) (*warehouse.Storage, error) {
+func canonicalWarehouseState(state characterstate.WarehouseState) (characterstate.WarehouseState, bool) {
 	canonical, err := characterstate.CanonicalWarehouseState(state)
-	if err != nil || !canonical.Initialized {
+	if err != nil || !canonical.Initialized || !state.Initialized || len(canonical.Items) != len(state.Items) {
+		return characterstate.WarehouseState{}, false
+	}
+	for index := range canonical.Items {
+		if canonical.Items[index] != state.Items[index] {
+			return characterstate.WarehouseState{}, false
+		}
+	}
+	return canonical, true
+}
+
+func restoreCharacterWarehouse(state characterstate.WarehouseState) (*warehouse.Storage, error) {
+	canonical, ok := canonicalWarehouseState(state)
+	if !ok {
 		return nil, ErrCharacterRestoreInvalid
 	}
 	stacks := make([]warehouse.Stack, 0, len(canonical.Items))
