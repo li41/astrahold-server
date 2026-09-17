@@ -34,6 +34,28 @@ func TestSilverUndeadBasicAttackDamageV1RequiresAllFormalConditions(t *testing.T
 	}
 }
 
+func TestSilverUndeadBasicAttackDamageAcceptsSilverArrowExactlyOnce(t *testing.T) {
+	const raw = uint32(11)
+	cases := []struct {
+		name               string
+		weaponMaterial     equipmentcatalog.MaterialID
+		ammunitionMaterial equipmentcatalog.MaterialID
+		want               uint32
+	}{
+		{"wood weapon silver arrow", equipmentcatalog.MaterialWood, equipmentcatalog.MaterialSilver, 13},
+		{"silver weapon wood arrow", equipmentcatalog.MaterialSilver, equipmentcatalog.MaterialWood, 13},
+		{"silver weapon silver arrow does not stack", equipmentcatalog.MaterialSilver, equipmentcatalog.MaterialSilver, 13},
+		{"wood weapon wood arrow", equipmentcatalog.MaterialWood, equipmentcatalog.MaterialWood, raw},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := silverUndeadBasicAttackDamageWithAmmunitionV1(tc.weaponMaterial, tc.ammunitionMaterial, world.EntityClassificationUndead, basicAttackActionID, combat.DamagePhysical, raw); got != tc.want {
+				t.Fatalf("damage=%d want=%d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSilverUndeadRawPhysicalDamageV1FloorsAndSaturates(t *testing.T) {
 	if got := silverUndeadRawPhysicalDamageV1(11); got != 13 {
 		t.Fatalf("floor damage=%d want=13", got)
