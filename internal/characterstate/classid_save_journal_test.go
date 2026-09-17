@@ -30,6 +30,8 @@ func TestSaveJournalCurrentSnapshotIsClassless(t *testing.T) {
 func TestSaveJournalV7ValidatesThenDiscardsLegacyClassID(t *testing.T) {
 	snapshot := testSnapshot()
 	wireSnapshot := snapshotToSaveJournalWire(snapshot)
+	wireSnapshot.MapID = ""
+	wireSnapshot.Warehouse = WarehouseState{}
 	wireSnapshot.PrimaryStats = nil
 	wireSnapshot.ClassID = string(classid.Oathguard)
 	wire := saveJournalWireRecord{SchemaVersion: LearnedSkillsSaveJournalSchemaVersion, RecordID: 1, ExpectedRevision: 0, IntentID: 1, CharacterID: string(trusted(t, "character:journal-v7-class").ID), Snapshot: wireSnapshot}
