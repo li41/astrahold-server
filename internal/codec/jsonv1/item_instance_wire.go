@@ -7,9 +7,10 @@ type itemAffixState struct {
 }
 
 type itemInstanceState struct {
-	ItemInstanceID  string           `json:"item_instance_id"`
-	ItemArchetypeID string           `json:"item_archetype_id"`
-	Affixes         []itemAffixState `json:"affixes"`
+	ItemInstanceID   string           `json:"item_instance_id"`
+	ItemArchetypeID  string           `json:"item_archetype_id"`
+	EnhancementLevel uint16           `json:"enhancement_level"`
+	Affixes           []itemAffixState `json:"affixes"`
 }
 
 type clientEquipmentInstanceCommand struct {
