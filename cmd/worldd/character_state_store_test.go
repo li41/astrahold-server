@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
@@ -69,7 +70,7 @@ func TestJournalCharacterStateOutboxHeadFsyncsBeforeConfirmAndStoreApply(t *test
 		t.Fatalf("checkpoint=%#v", checkpoint)
 	}
 	loaded, exists, err := store.Load(identity)
-	if err != nil || !exists || loaded.Revision != 1 || loaded.Snapshot != snapshot {
+	if err != nil || !exists || loaded.Revision != 1 || !characterstate.SnapshotsEqual(loaded.Snapshot, snapshot) {
 		t.Fatalf("loaded=%#v exists=%v err=%v intent=%#v", loaded, exists, err, intent)
 	}
 }
@@ -95,7 +96,7 @@ func TestCharacterStateJournalIdenticalSequentialIntentsStillAdvanceRevision(t *
 		t.Fatalf("processed=%d depth=%d checkpoint=%#v err=%v", processed, outbox.Depth(), checkpoint, err)
 	}
 	loaded, exists, err := store.Load(identity)
-	if err != nil || !exists || loaded.Revision != 2 || loaded.Snapshot != snapshot {
+	if err != nil || !exists || loaded.Revision != 2 || !characterstate.SnapshotsEqual(loaded.Snapshot, snapshot) {
 		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 	records, err := journal.RecordsAfter(journal.InitialCheckpoint(), 0)
@@ -139,7 +140,7 @@ func TestRecoverCharacterStateSaveJournalReplaysDurableUncheckpointedIntent(t *t
 		t.Fatalf("checkpoint=%#v recovered=%d err=%v", checkpoint, recovered, err)
 	}
 	loaded, exists, err := store.Load(identity)
-	if err != nil || !exists || loaded.Revision != 1 || loaded.Snapshot != snapshot {
+	if err != nil || !exists || loaded.Revision != 1 || !characterstate.SnapshotsEqual(loaded.Snapshot, snapshot) {
 		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 }
@@ -168,7 +169,7 @@ func TestRecoverCharacterStateSaveJournalRecognizesStoreSaveBeforeCheckpoint(t *
 		t.Fatalf("checkpoint=%#v recovered=%d err=%v", checkpoint, recovered, err)
 	}
 	after, exists, err := store.Load(identity)
-	if err != nil || !exists || after.Revision != 1 || after.Snapshot != snapshot {
+	if err != nil || !exists || after.Revision != 1 || !characterstate.SnapshotsEqual(after.Snapshot, snapshot) {
 		t.Fatalf("after=%#v exists=%v err=%v", after, exists, err)
 	}
 }
@@ -199,7 +200,7 @@ func TestRecoverCharacterStateSaveJournalFailsClosedOnRevisionDivergence(t *test
 		t.Fatalf("checkpoint advanced=%#v", checkpoint)
 	}
 	loaded, exists, err := store.Load(identity)
-	if err != nil || !exists || loaded.Revision != 1 || loaded.Snapshot != other {
+	if err != nil || !exists || loaded.Revision != 1 || !characterstate.SnapshotsEqual(loaded.Snapshot, other) {
 		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 }
@@ -228,7 +229,7 @@ func TestLoadRestoreFlushesPendingLeaveThroughJournalBeforeRead(t *testing.T) {
 		t.Fatalf("restore=%#v depth=%d checkpoint=%#v", restore, outbox.Depth(), persistence.checkpoint)
 	}
 	loaded, exists, err := store.Load(identity)
-	if err != nil || !exists || loaded.Revision != 2 || loaded.Snapshot != latest {
+	if err != nil || !exists || loaded.Revision != 2 || !characterstate.SnapshotsEqual(loaded.Snapshot, latest) {
 		t.Fatalf("loaded=%#v exists=%v err=%v", loaded, exists, err)
 	}
 }
@@ -284,7 +285,7 @@ func TestLoadRestoreMissingRecordUsesFreshBootstrap(t *testing.T) {
 	persistence := newWorlddCharacterPersistence(t, dir, outbox, store)
 	defer persistence.journal.Close()
 	identity := worlddTrustedIdentity(t, "character:new")
-	if restore, ok, err := persistence.LoadRestore(identity); err != nil || ok || restore != (worldruntime.CharacterRestore{}) {
+	if restore, ok, err := persistence.LoadRestore(identity); err != nil || ok || !reflect.DeepEqual(restore, worldruntime.CharacterRestore{}) {
 		t.Fatalf("restore=%#v ok=%v err=%v", restore, ok, err)
 	}
 }
@@ -353,6 +354,7 @@ func worlddCharacterSnapshot(hp uint32) characterstate.Snapshot {
 		Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1},
 		Yaw:      0.75,
 		Inventory: characterstate.InventoryState{Initialized: true},
+		Warehouse: characterstate.EmptyWarehouseState(),
 		PrimaryStats: characterstats.DefaultPrimary(),
 	}
 }
