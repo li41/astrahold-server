@@ -21,9 +21,10 @@ var (
 type ID string
 
 type Instance struct {
-	ID              ID                     `json:"item_instance_id"`
-	ItemArchetypeID string                 `json:"item_archetype_id"`
-	Affixes         []equipmentaffix.Affix `json:"affixes,omitempty"`
+	ID               ID                     `json:"item_instance_id"`
+	ItemArchetypeID  string                 `json:"item_archetype_id"`
+	EnhancementLevel uint16                 `json:"enhancement_level,omitempty"`
+	Affixes          []equipmentaffix.Affix `json:"affixes,omitempty"`
 }
 
 // Create creates one authoritative equipment instance and rolls its affixes exactly once.
@@ -93,9 +94,10 @@ func Validate(instance Instance, definition equipmentcatalog.Definition) error {
 
 func canonicalShape(instance Instance) (Instance, error) {
 	canonical := Instance{
-		ID:              instance.ID,
-		ItemArchetypeID: instance.ItemArchetypeID,
-		Affixes:         cloneAffixes(instance.Affixes),
+		ID:               instance.ID,
+		ItemArchetypeID:  instance.ItemArchetypeID,
+		EnhancementLevel: instance.EnhancementLevel,
+		Affixes:          cloneAffixes(instance.Affixes),
 	}
 	sort.Slice(canonical.Affixes, func(i, j int) bool { return canonical.Affixes[i].ID < canonical.Affixes[j].ID })
 	if len(canonical.Affixes) == 0 {
