@@ -1,7 +1,7 @@
 package protocol
 
 const (
-	MessageClientEnhanceEquipment    MessageType = 123
+	MessageClientEnhanceEquipment      MessageType = 123
 	MessageEquipmentEnhancementResult MessageType = 124
 )
 
@@ -19,22 +19,24 @@ type EquipmentEnhancementOutcome string
 
 const (
 	EquipmentEnhancementOutcomeEnhanced EquipmentEnhancementOutcome = "enhanced"
+	EquipmentEnhancementOutcomeNoChange EquipmentEnhancementOutcome = "nochange"
+	EquipmentEnhancementOutcomeBroken   EquipmentEnhancementOutcome = "broken"
 	EquipmentEnhancementOutcomeRejected EquipmentEnhancementOutcome = "rejected"
 )
 
 type EquipmentEnhancementRejectionReason string
 
 const (
-	EquipmentEnhancementRejectionMissingScroll EquipmentEnhancementRejectionReason = "missing_scroll"
-	EquipmentEnhancementRejectionMissingTarget EquipmentEnhancementRejectionReason = "missing_target"
-	EquipmentEnhancementRejectionWrongScroll   EquipmentEnhancementRejectionReason = "wrong_scroll"
-	EquipmentEnhancementRejectionDefeated      EquipmentEnhancementRejectionReason = "defeated"
-	EquipmentEnhancementRejectionAtLimit       EquipmentEnhancementRejectionReason = "at_limit"
-	EquipmentEnhancementRejectionServerRejected EquipmentEnhancementRejectionReason = "server_rejected"
+	EquipmentEnhancementRejectionMissingScroll   EquipmentEnhancementRejectionReason = "missing_scroll"
+	EquipmentEnhancementRejectionMissingTarget   EquipmentEnhancementRejectionReason = "missing_target"
+	EquipmentEnhancementRejectionWrongScroll     EquipmentEnhancementRejectionReason = "wrong_scroll"
+	EquipmentEnhancementRejectionDefeated        EquipmentEnhancementRejectionReason = "defeated"
+	EquipmentEnhancementRejectionServerRejected  EquipmentEnhancementRejectionReason = "server_rejected"
 )
 
 // EquipmentEnhancementResult is source-session feedback for one processed Reliable intent.
-// Item-instance and inventory snapshots remain gameplay truth.
+// Item-instance and inventory snapshots remain gameplay truth. Broken results report the target's
+// last enhancement level in CurrentLevel; the authoritative inventory snapshot confirms removal.
 type EquipmentEnhancementResult struct {
 	ClientActionSequence  uint32
 	ScrollItemArchetypeID string
