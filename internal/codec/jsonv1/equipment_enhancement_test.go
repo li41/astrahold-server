@@ -31,7 +31,7 @@ func TestEquipmentEnhancementResultRoundTrip(t *testing.T) {
 
 func TestItemInstanceEnhancementLevelRoundTrip(t *testing.T) {
 	codec := Codec{}
-	want := protocol.InventoryInstanceSnapshot{Revision: 4, Items: []protocol.ItemInstanceState{{ItemInstanceID: "instance:weapon", ItemArchetypeID: "item_weapon", EnhancementLevel: 6}}}
+	want := protocol.InventoryInstanceSnapshot{Revision: 4, Items: []protocol.ItemInstanceState{{ItemInstanceID: "instance:weapon", ItemArchetypeID: "item_weapon", EnhancementLevel: 6, Affixes: []protocol.ItemAffixState{}}}}
 	data, err := codec.Marshal(want)
 	if err != nil { t.Fatal(err) }
 	message, err := codec.Unmarshal(protocol.MessageInventoryInstanceSnapshot, data)
