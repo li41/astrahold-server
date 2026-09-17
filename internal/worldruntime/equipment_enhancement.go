@@ -2,11 +2,11 @@ package worldruntime
 
 import (
 	"errors"
+	"math/rand"
 	"strings"
 
 	"github.com/li41/astrahold-server/internal/character"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
-	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/iteminstance"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -15,8 +15,13 @@ import (
 const (
 	WeaponEnhancementScrollItemArchetypeID = "item_astrahold_weapon_enhancement_scroll"
 	ArmorEnhancementScrollItemArchetypeID  = "item_astrahold_armor_enhancement_scroll"
-	MaxEquipmentEnhancementLevel    uint16  = 10
 )
+
+type equipmentEnhancementChances struct {
+	Success  int
+	NoChange int
+	Break    int
+}
 
 var ErrEquipmentEnhancementRejected = errors.New("worldruntime: equipment enhancement rejected")
 
@@ -71,6 +76,56 @@ func enhancementScrollAllows(scrollID string, kind equipmentcatalog.Kind) bool {
 	}
 }
 
+// equipmentEnhancementChanceFor is the formal normal-scroll probability table.
+// There is intentionally no gameplay maximum enhancement level. Tail levels keep using 1/39/60.
+func equipmentEnhancementChanceFor(kind equipmentcatalog.Kind, level uint16) (equipmentEnhancementChances, bool) {
+	switch kind {
+	case equipmentcatalog.KindWeapon:
+		if level < 6 {
+			return equipmentEnhancementChances{Success: 100}, true
+		}
+		if level >= 12 {
+			return equipmentEnhancementChances{Success: 1, NoChange: 39, Break: 60}, true
+		}
+		step := int(level - 6)
+		success := 60 - step*10
+		noChange := 20 + step*5
+		return equipmentEnhancementChances{Success: success, NoChange: noChange, Break: 100 - success - noChange}, true
+	case equipmentcatalog.KindArmor, equipmentcatalog.KindShield:
+		if level < 4 {
+			return equipmentEnhancementChances{Success: 100}, true
+		}
+		if level >= 10 {
+			return equipmentEnhancementChances{Success: 1, NoChange: 39, Break: 60}, true
+		}
+		step := int(level - 4)
+		success := 60 - step*10
+		noChange := 15 + step*5
+		return equipmentEnhancementChances{Success: success, NoChange: noChange, Break: 100 - success - noChange}, true
+	default:
+		return equipmentEnhancementChances{}, false
+	}
+}
+
+// resolveEquipmentEnhancementRoll is pure so probability boundaries can be deterministically tested.
+// roll is the Server-owned percentile roll in [1,100].
+func resolveEquipmentEnhancementRoll(kind equipmentcatalog.Kind, level uint16, roll int) (protocol.EquipmentEnhancementOutcome, bool) {
+	if roll < 1 || roll > 100 {
+		return "", false
+	}
+	chance, ok := equipmentEnhancementChanceFor(kind, level)
+	if !ok {
+		return "", false
+	}
+	if roll <= chance.Success {
+		return protocol.EquipmentEnhancementOutcomeEnhanced, true
+	}
+	if roll <= chance.Success+chance.NoChange {
+		return protocol.EquipmentEnhancementOutcomeNoChange, true
+	}
+	return protocol.EquipmentEnhancementOutcomeBroken, true
+}
+
 func (r *Runtime) queueEquipmentEnhancementResult(sessionID session.ID, result protocol.EquipmentEnhancementResult) {
 	r.pendingResourceMessages[sessionID] = append(r.pendingResourceMessages[sessionID], result)
 }
@@ -78,14 +133,14 @@ func (r *Runtime) queueEquipmentEnhancementResult(sessionID session.ID, result p
 func (r *Runtime) rejectEquipmentEnhancement(command useActionCommand, reason protocol.EquipmentEnhancementRejectionReason, previous uint16) {
 	intent := *command.enhancement
 	r.queueEquipmentEnhancementResult(command.sessionID, protocol.EquipmentEnhancementResult{
-		ClientActionSequence: command.sequence,
+		ClientActionSequence:  command.sequence,
 		ScrollItemArchetypeID: intent.ScrollItemArchetypeID,
-		ItemInstanceID: intent.ItemInstanceID,
-		Outcome: protocol.EquipmentEnhancementOutcomeRejected,
-		Reason: reason,
-		PreviousLevel: previous,
-		CurrentLevel: previous,
-		ScrollConsumed: false,
+		ItemInstanceID:        intent.ItemInstanceID,
+		Outcome:               protocol.EquipmentEnhancementOutcomeRejected,
+		Reason:                reason,
+		PreviousLevel:         previous,
+		CurrentLevel:          previous,
+		ScrollConsumed:        false,
 	})
 }
 
@@ -144,35 +199,58 @@ func (r *Runtime) applyEnhanceEquipment(name string, command useActionCommand, r
 		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, instance.EnhancementLevel)
 		return
 	}
-	if instance.EnhancementLevel >= MaxEquipmentEnhancementLevel {
-		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionAtLimit, instance.EnhancementLevel)
-		return
-	}
 
 	previous := instance.EnhancementLevel
-	updated := instance
-	updated.EnhancementLevel++
 	if err := inv.Remove(intent.ScrollItemArchetypeID, 1); err != nil {
 		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionMissingScroll, previous)
 		return
 	}
-	if _, err := inv.ReplaceOwnedInstance(updated); err != nil {
-		// Single-owner execution makes this path exceptional. Roll back the consumed stack rather
-		// than creating a loss window if an invariant is ever violated.
+	outcome, ok := resolveEquipmentEnhancementRoll(definition.Kind, previous, rand.Intn(100)+1)
+	if !ok {
 		_ = inv.Add(intent.ScrollItemArchetypeID, 1)
 		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
 		return
 	}
+
+	current := previous
+	switch outcome {
+	case protocol.EquipmentEnhancementOutcomeEnhanced:
+		// uint16 is the current wire/storage representation, not a gameplay cap. Never wrap it.
+		if previous == ^uint16(0) {
+			_ = inv.Add(intent.ScrollItemArchetypeID, 1)
+			r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
+			return
+		}
+		updated := instance
+		updated.EnhancementLevel++
+		if _, err := inv.ReplaceOwnedInstance(updated); err != nil {
+			_ = inv.Add(intent.ScrollItemArchetypeID, 1)
+			r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
+			return
+		}
+		current = updated.EnhancementLevel
+	case protocol.EquipmentEnhancementOutcomeNoChange:
+		// Scroll consumption is the only authoritative mutation.
+	case protocol.EquipmentEnhancementOutcomeBroken:
+		if _, _, err := inv.RemoveOwnedInstance(instance.ID); err != nil {
+			_ = inv.Add(intent.ScrollItemArchetypeID, 1)
+			r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
+			return
+		}
+	default:
+		_ = inv.Add(intent.ScrollItemArchetypeID, 1)
+		r.rejectEquipmentEnhancement(command, protocol.EquipmentEnhancementRejectionServerRejected, previous)
+		return
+	}
+
 	r.sessionInventoryPending[command.sessionID] = struct{}{}
 	r.queueEquipmentEnhancementResult(command.sessionID, protocol.EquipmentEnhancementResult{
-		ClientActionSequence: command.sequence,
+		ClientActionSequence:  command.sequence,
 		ScrollItemArchetypeID: intent.ScrollItemArchetypeID,
-		ItemInstanceID: intent.ItemInstanceID,
-		Outcome: protocol.EquipmentEnhancementOutcomeEnhanced,
-		PreviousLevel: previous,
-		CurrentLevel: updated.EnhancementLevel,
-		ScrollConsumed: true,
+		ItemInstanceID:        intent.ItemInstanceID,
+		Outcome:               outcome,
+		PreviousLevel:         previous,
+		CurrentLevel:          current,
+		ScrollConsumed:        true,
 	})
 }
-
-var _ = inventory.ErrInstanceNotFound
