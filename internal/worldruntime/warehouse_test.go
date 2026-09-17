@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/protocol"
 	"github.com/li41/astrahold-server/internal/session"
@@ -116,9 +117,9 @@ func TestPersonalWarehouseDepositWithdrawPersistsInCharacterSnapshot(t *testing.
 
 	_, snapshot, ok := rt.captureCharacterStateSnapshot(s.ID, s.EntityID, &StepReport{})
 	if !ok { t.Fatal("failed to capture durable character snapshot") }
-	stacks, err := snapshot.Warehouse.Stacks()
+	canonical, err := characterstate.CanonicalWarehouseState(snapshot.Warehouse)
 	if err != nil { t.Fatal(err) }
-	if len(stacks) != 1 || stacks[0].ItemArchetypeID != itemID || stacks[0].Quantity != 1 { t.Fatalf("durable warehouse=%#v", stacks) }
+	if len(canonical.Items) != 1 || canonical.Items[0].ItemArchetypeID != itemID || canonical.Items[0].Quantity != 1 { t.Fatalf("durable warehouse=%#v", canonical.Items) }
 	restored, err := restoreCharacterWarehouse(snapshot.Warehouse)
 	if err != nil { t.Fatal(err) }
 	if got := restored.Quantity(itemID); got != 1 { t.Fatalf("restored warehouse quantity=%d", got) }
