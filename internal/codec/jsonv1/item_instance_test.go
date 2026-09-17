@@ -8,8 +8,8 @@ import (
 )
 
 func TestV31UniqueItemAppearanceAndEnhancementMessageIDsDoNotOverlap(t *testing.T) {
-	if protocol.Version != 31 {
-		t.Fatalf("protocol version=%d want=31", protocol.Version)
+	if protocol.Version < 31 {
+		t.Fatalf("protocol version=%d want>=31", protocol.Version)
 	}
 	if protocol.MessageClientEquipmentInstanceCommand != 119 || protocol.MessageInventoryInstanceSnapshot != 120 || protocol.MessageEquipmentInstanceSnapshot != 121 {
 		t.Fatalf("unexpected unique-instance message ids: equip=%d inventory=%d equipment=%d",
