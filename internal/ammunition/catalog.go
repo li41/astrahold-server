@@ -31,8 +31,8 @@ type Definition struct {
 // V1 has exactly two production arrow identities. Wood is consumed before silver when both are
 // present so ordinary ammunition is never silently replaced by the silver stack.
 //
-// Both arrows currently contribute the same base arrow damage. The existing silver-main-hand
-// versus undead rule is not inferred from ammunition material and remains a separate contract.
+// Both arrows contribute the same 6-8 base arrow damage. SilverArrow additionally qualifies the
+// fired bow basic attack for the shared Server-owned silver-vs-undead +20% raw physical damage rule.
 var v1Definitions = []Definition{
 	{ItemArchetypeID: ItemWoodArrow, Material: equipmentcatalog.MaterialWood, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
 	{ItemArchetypeID: ItemSilverArrow, Material: equipmentcatalog.MaterialSilver, Damage: equipmentcatalog.DamageRange{Min: 6, Max: 8}},
