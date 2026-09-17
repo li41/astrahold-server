@@ -28,7 +28,8 @@ const (
 	SixPrimaryStatsSchemaVersion uint16 = 12
 	AppearanceSchemaVersion      uint16 = 13
 	MapSchemaVersion             uint16 = 14
-	SchemaVersion                uint16 = MapSchemaVersion
+	WarehouseSchemaVersion       uint16 = 15
+	SchemaVersion                uint16 = WarehouseSchemaVersion
 	LegacyDefaultMaxMP           uint32 = 100
 	LegacyDefaultMapID                  = "map1"
 )
@@ -60,9 +61,9 @@ type DefeatedRespawn struct {
 
 // Snapshot is the current durable character-state contract. Profession/ClassID is deliberately
 // absent. Schema v11 was a short-lived two-attribute Strength/Agility foundation, schema v12 owns
-// all six formal classless base attributes, schema v13 adds the Server-owned selected SkinID, and
-// schema v14 adds the Server-owned MapID. Allocation provenance/level points remain separate future
-// state until a formal character-level owner exists.
+// all six formal classless base attributes, schema v13 adds the Server-owned selected SkinID,
+// schema v14 adds the Server-owned MapID, and schema v15 adds CharacterID-bound stack warehouse
+// state. Allocation provenance/level points remain separate future state until a formal owner exists.
 type Snapshot struct {
 	World         WorldRef
 	HP            uint32
@@ -74,6 +75,7 @@ type Snapshot struct {
 	Yaw           float32
 	Respawn       DefeatedRespawn
 	Inventory     InventoryState
+	Warehouse     WarehouseState
 	CombatLoadout skillloadout.Slots
 	LearnedSkills learnedskills.Set
 	PrimaryStats  characterstats.Primary
@@ -135,6 +137,7 @@ type wireRecord struct {
 	Yaw             float32              `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
 	Inventory       InventoryState       `json:"inventory,omitempty"`
+	Warehouse       WarehouseState       `json:"warehouse,omitempty"`
 	CombatLoadout   []string             `json:"combat_loadout,omitempty"`
 	LearnedSkills   []string             `json:"learned_skills,omitempty"`
 	PrimaryStats    *wirePrimaryStats    `json:"primary_stats,omitempty"`
