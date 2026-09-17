@@ -21,6 +21,7 @@ import (
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
+	"github.com/li41/astrahold-server/internal/warehouse"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -211,6 +212,7 @@ type Runtime struct {
 	characterStateAutosaveNextTick uint64
 	characterSkills                characterSkillRuntime
 	inventories                    map[characteridentity.ID]*inventory.Inventory
+	warehouses                     map[characteridentity.ID]*warehouse.Storage
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
 	pendingResourceMessages        map[session.ID][]protocol.Message
@@ -320,6 +322,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characterIdentities:            newCharacterIdentityRegistry(),
 		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
 		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
+		warehouses:                     make(map[characteridentity.ID]*warehouse.Storage),
 		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),
 		pendingResourceMessages:        make(map[session.ID][]protocol.Message),
