@@ -12,6 +12,10 @@ const (
 	SlotGloves   EquipmentSlot = "gloves"
 	SlotLegs     EquipmentSlot = "legs"
 	SlotBoots    EquipmentSlot = "boots"
+	SlotNecklace EquipmentSlot = "necklace"
+	SlotRing1    EquipmentSlot = "ring_1"
+	SlotRing2    EquipmentSlot = "ring_2"
+	SlotBelt     EquipmentSlot = "belt"
 )
 
 var equipmentSlots = [...]EquipmentSlot{
@@ -22,6 +26,10 @@ var equipmentSlots = [...]EquipmentSlot{
 	SlotGloves,
 	SlotLegs,
 	SlotBoots,
+	SlotNecklace,
+	SlotRing1,
+	SlotRing2,
+	SlotBelt,
 }
 
 func EquipmentSlots() []EquipmentSlot {
@@ -32,7 +40,8 @@ func EquipmentSlots() []EquipmentSlot {
 
 func ValidEquipmentSlot(slot EquipmentSlot) bool {
 	switch slot {
-	case SlotMainHand, SlotOffHand, SlotHelmet, SlotChest, SlotGloves, SlotLegs, SlotBoots:
+	case SlotMainHand, SlotOffHand, SlotHelmet, SlotChest, SlotGloves, SlotLegs, SlotBoots,
+		SlotNecklace, SlotRing1, SlotRing2, SlotBelt:
 		return true
 	default:
 		return false
