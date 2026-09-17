@@ -7,9 +7,9 @@ import (
 	"github.com/li41/astrahold-server/internal/protocol"
 )
 
-func TestV29UniqueItemAndAppearanceMessageIDsDoNotOverlap(t *testing.T) {
-	if protocol.Version != 29 {
-		t.Fatalf("protocol version=%d want=29", protocol.Version)
+func TestV30UniqueItemAndAppearanceMessageIDsDoNotOverlap(t *testing.T) {
+	if protocol.Version != 30 {
+		t.Fatalf("protocol version=%d want=30", protocol.Version)
 	}
 	if protocol.MessageClientEquipmentInstanceCommand != 119 || protocol.MessageInventoryInstanceSnapshot != 120 || protocol.MessageEquipmentInstanceSnapshot != 121 {
 		t.Fatalf("unexpected unique-instance message ids: equip=%d inventory=%d equipment=%d",
@@ -20,6 +20,9 @@ func TestV29UniqueItemAndAppearanceMessageIDsDoNotOverlap(t *testing.T) {
 	}
 	if protocol.MessageAppearanceSnapshot != 122 {
 		t.Fatalf("appearance message id=%d want=122", protocol.MessageAppearanceSnapshot)
+	}
+	if protocol.MessageClientEnhanceEquipment != 123 || protocol.MessageEquipmentEnhancementResult != 124 {
+		t.Fatalf("enhancement message ids: intent=%d result=%d", protocol.MessageClientEnhanceEquipment, protocol.MessageEquipmentEnhancementResult)
 	}
 }
 
