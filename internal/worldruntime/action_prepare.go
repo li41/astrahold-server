@@ -8,15 +8,19 @@ import (
 )
 
 func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uint64, delta time.Duration, report *StepReport) {
-	// Equipment, enhancement, pickup, item-use and respawn share the existing bounded Reliable
-	// client-intent carrier, but remain distinct typed payloads and never enter combat preparation or
-	// the skill/action path.
+	// Equipment, enhancement, warehouse, pickup, item-use and respawn share the existing bounded
+	// Reliable client-intent carrier, but remain distinct typed payloads and never enter combat
+	// preparation or the skill/action path.
 	if command.equipmentInstance != nil {
 		r.applyEquipmentInstanceCommand(name, command, report)
 		return
 	}
 	if command.enhancement != nil {
 		r.applyEnhanceEquipment(name, command, report)
+		return
+	}
+	if command.warehouse != nil {
+		r.applyWarehouseCommand(name, command, report)
 		return
 	}
 	if command.equipment != nil {

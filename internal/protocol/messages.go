@@ -9,6 +9,8 @@ import (
 
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
+// v32: GM-room warehouse service scope becomes explicit (services/GM/personal); GM snapshots may
+// carry Quantity==0 as an unlimited Server-owned source. v31 equipment semantics are unchanged.
 // v31: equipment expands to eleven formal slots by adding necklace/ring_1/ring_2/belt accessories.
 // v30: authoritative unique-equipment enhancement intent/result plus replicated enhancement level.
 // v29: equipment expands to seven formal slots: main_hand/off_hand/helmet/chest/gloves/legs/boots.
@@ -30,7 +32,7 @@ import (
 // v13: EntityVitalsState adds authoritative MP/MaxMP and insufficient_resource rejection.
 // v12: valid point-target ClientUseAction ingress semantics are compatibility-fenced.
 // v11: Reliable ActionRejected returns authoritative action rejection reason.
-const Version uint16 = 31
+const Version uint16 = 32
 
 const MaxSnapshotEntitiesPerChunk = 43
 
@@ -155,13 +157,13 @@ type ActionRejected struct {
 func (ActionRejected) Type() MessageType { return MessageActionRejected }
 
 type SessionWelcome struct {
-	SessionID       uint64
-	EntityID        world.EntityID
-	RealtimePort    uint16
-	RealtimeToken   string
-	TickRateHz      uint16
-	SnapshotRateHz  uint16
-	World           WorldIdentity
+	SessionID      uint64
+	EntityID       world.EntityID
+	RealtimePort   uint16
+	RealtimeToken  string
+	TickRateHz     uint16
+	SnapshotRateHz uint16
+	World          WorldIdentity
 }
 
 func (SessionWelcome) Type() MessageType { return MessageSessionWelcome }

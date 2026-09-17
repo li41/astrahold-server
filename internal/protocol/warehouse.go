@@ -9,6 +9,15 @@ const (
 type WarehouseOperation string
 
 const (
+	WarehouseOperationServices         WarehouseOperation = "services"
+	WarehouseOperationOpenGM           WarehouseOperation = "open_gm"
+	WarehouseOperationOpenPersonal     WarehouseOperation = "open_personal"
+	WarehouseOperationDepositPersonal  WarehouseOperation = "deposit_personal"
+	WarehouseOperationWithdrawPersonal WarehouseOperation = "withdraw_personal"
+	WarehouseOperationWithdrawGM       WarehouseOperation = "withdraw_gm"
+
+	// Kept only for source compatibility with pre-v32 callers/tests. The v32 authoritative
+	// GM-room handler rejects these ambiguous operations and requires an explicit warehouse scope.
 	WarehouseOperationOpen     WarehouseOperation = "open"
 	WarehouseOperationDeposit  WarehouseOperation = "deposit"
 	WarehouseOperationWithdraw WarehouseOperation = "withdraw"
@@ -44,6 +53,7 @@ const (
 	WarehouseRejectionInsufficientInventory WarehouseRejectionReason = "insufficient_inventory"
 	WarehouseRejectionInsufficientWarehouse WarehouseRejectionReason = "insufficient_warehouse"
 	WarehouseRejectionInventoryRejected     WarehouseRejectionReason = "inventory_rejected"
+	WarehouseRejectionInvalidRequest        WarehouseRejectionReason = "invalid_request"
 	WarehouseRejectionServerRejected        WarehouseRejectionReason = "server_rejected"
 )
 
@@ -62,11 +72,14 @@ func (WarehouseResult) Type() MessageType { return MessageWarehouseResult }
 
 type WarehouseItemStack struct {
 	ItemArchetypeID string
-	Quantity        uint32
+	// Quantity == 0 is reserved for entries in the GM warehouse snapshot and means unlimited
+	// supply. Personal warehouse snapshots never contain zero-quantity entries.
+	Quantity uint32
 }
 
 // WarehouseSnapshot is a complete replacement snapshot. An empty Items slice clears stale Client
-// presentation state.
+// presentation state. A successful open_gm/withdraw_gm result immediately preceding this snapshot
+// scopes Quantity==0 entries as unlimited GM sources; personal snapshots are finite quantities.
 type WarehouseSnapshot struct {
 	Items []WarehouseItemStack
 }
