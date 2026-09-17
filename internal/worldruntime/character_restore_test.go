@@ -45,6 +45,7 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 		PrimaryStats: primary,
 		SkinID: appearance.PeasantGirl,
 		Transform: world.Transform{Position: world.Position{X: 21, Y: 0, Z: -8, Layer: 4}, Yaw: 1.5},
+		Warehouse: characterstate.WarehouseState{Initialized: true, Items: []characterstate.WarehouseStack{{ItemArchetypeID: "item_minor_healing_potion", Quantity: 9}}},
 	}
 	bootstrap := world.EntityState{ID: 1, Kind: world.EntityPlayer, Transform: world.Transform{Position: world.Position{X: -50, Layer: 4}}}
 	if err := rt.EnqueueJoin(JoinRequest{Session: sess, Entity: bootstrap, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}); err != nil { t.Fatal(err) }
@@ -56,9 +57,12 @@ func TestJoinRestoresTrustedAliveCharacterAtomically(t *testing.T) {
 	if !ok || entity.Transform != restore.Transform { t.Fatalf("entity=%#v ok=%v", entity, ok) }
 	if got, ok := rt.sessions.Get(1); !ok || got != sess { t.Fatalf("session=%#v ok=%v", got, ok) }
 	if got := rt.characterSkills.appearanceID(1); got != appearance.PeasantGirl { t.Fatalf("runtime skin=%q want=%q", got, appearance.PeasantGirl) }
+	storage := rt.warehouses[identity.ID]
+	if storage == nil || storage.Quantity("item_minor_healing_potion") != 9 { t.Fatalf("runtime warehouse=%#v", storage) }
 	binding, snapshot, ok := rt.captureCharacterStateSnapshot(sess.ID, sess.EntityID, nil)
 	if !ok { t.Fatal("capture restored character state failed") }
 	if binding.ID != identity.ID || snapshot.SkinID != appearance.PeasantGirl || snapshot.World.MapID != "map1" { t.Fatalf("captured binding=%#v snapshot=%#v", binding, snapshot) }
+	if len(snapshot.Warehouse.Items) != 1 || snapshot.Warehouse.Items[0].ItemArchetypeID != "item_minor_healing_potion" || snapshot.Warehouse.Items[0].Quantity != 9 { t.Fatalf("captured warehouse=%#v", snapshot.Warehouse) }
 }
 
 func TestJoinRejectsRestoreWorldMismatchBeforeSpawn(t *testing.T) {
@@ -66,7 +70,7 @@ func TestJoinRejectsRestoreWorldMismatchBeforeSpawn(t *testing.T) {
 	identity, _ := characteridentity.NewTrusted("character:restore-world")
 	conn := session.NewQueueConnection(32, 32)
 	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, conn)
-	restore := CharacterRestore{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, World: protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "other", GameplaySHA256: characterRestoreTestSHA}, MapID: "map1", HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100, PrimaryStats: characterstats.DefaultPrimary(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
+	restore := CharacterRestore{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, World: protocol.WorldIdentity{WorldID: "castle-sandbox", Revision: "other", GameplaySHA256: characterRestoreTestSHA}, MapID: "map1", HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100, PrimaryStats: characterstats.DefaultPrimary(), Warehouse: characterstate.EmptyWarehouseState(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
 	request := JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}
 	if err := rt.EnqueueJoin(request); err != nil { t.Fatal(err) }
 	report := rt.Step(1, 50*time.Millisecond)
@@ -78,7 +82,7 @@ func TestJoinRejectsRestoreMapMismatchBeforeSpawn(t *testing.T) {
 	rt := makeRestoreRuntime(t)
 	identity, _ := characteridentity.NewTrusted("character:restore-map")
 	sess, _ := session.NewWithCharacterIdentity(1, 1, identity, 64, session.NewQueueConnection(32, 32))
-	restore := CharacterRestore{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, World: characterRestoreWorld, MapID: "map0", HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100, PrimaryStats: characterstats.DefaultPrimary(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
+	restore := CharacterRestore{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, World: characterRestoreWorld, MapID: "map0", HP: 500, MaxHP: 1000, MP: 100, MaxMP: 100, PrimaryStats: characterstats.DefaultPrimary(), Warehouse: characterstate.EmptyWarehouseState(), Transform: world.Transform{Position: world.Position{Layer: 4}}}
 	if err := rt.EnqueueJoin(JoinRequest{Session: sess, Entity: world.EntityState{ID: 1, Kind: world.EntityPlayer}, Speed: 6, Radius: 0.35, MaxStepHeight: 0.5, Restore: &restore}); err != nil { t.Fatal(err) }
 	report := rt.Step(1, 50*time.Millisecond)
 	if len(report.CommandErrors) != 1 || !errors.Is(report.CommandErrors[0].Err, ErrCharacterRestoreMapMismatch) { t.Fatalf("errors=%#v", report.CommandErrors) }
@@ -106,10 +110,23 @@ func TestValidateCharacterRestoreRequiresTrustedMatchingIdentity(t *testing.T) {
 	if err := ValidateCharacterRestore(other, restore, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreIdentityMismatch) { t.Fatalf("identity err=%v", err) }
 	ephemeral, _ := characteridentity.NewEphemeral()
 	if err := ValidateCharacterRestore(ephemeral, restore, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreRequiresTrustedIdentity) { t.Fatalf("ephemeral err=%v", err) }
-	missingMap := restore; missingMap.SchemaVersion = characterstate.SchemaVersion; missingMap.MapID = ""
+	missingMap := restore; missingMap.SchemaVersion = characterstate.SchemaVersion; missingMap.MapID = ""; missingMap.Warehouse = characterstate.EmptyWarehouseState()
 	if err := ValidateCharacterRestore(trusted, missingMap, characterRestoreWorld); err != nil { t.Fatalf("missing in-memory map should default to map1: %v", err) }
 	mapID, ok := resolvedRestoreMapID(missingMap, characterRestoreWorld)
 	if !ok || mapID != gameplayworld.MapIDStarterVillage { t.Fatalf("resolved map=%q ok=%v", mapID, ok) }
+}
+
+func TestValidateCharacterRestoreRejectsWarehouseAcrossSchemaBoundary(t *testing.T) {
+	trusted, _ := characteridentity.NewTrusted("character:restore-warehouse-boundary")
+	base := CharacterRestore{CharacterID: trusted.ID, Revision: 1, World: characterRestoreWorld, MapID: "map1", HP: 1, MaxHP: 1, MP: 1, MaxMP: 1, PrimaryStats: characterstats.DefaultPrimary()}
+	legacy := base; legacy.SchemaVersion = characterstate.MapSchemaVersion; legacy.Warehouse = characterstate.EmptyWarehouseState()
+	if err := ValidateCharacterRestore(trusted, legacy, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("legacy warehouse err=%v", err) }
+	current := base; current.SchemaVersion = characterstate.SchemaVersion
+	if err := ValidateCharacterRestore(trusted, current, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("uninitialized v15 warehouse err=%v", err) }
+	current.Warehouse = characterstate.WarehouseState{Initialized: true, Items: []characterstate.WarehouseStack{{ItemArchetypeID: "z_item", Quantity: 1}, {ItemArchetypeID: "a_item", Quantity: 2}}}
+	if err := ValidateCharacterRestore(trusted, current, characterRestoreWorld); !errors.Is(err, ErrCharacterRestoreInvalid) { t.Fatalf("noncanonical v15 warehouse err=%v", err) }
+	current.Warehouse = characterstate.WarehouseState{Initialized: true, Items: []characterstate.WarehouseStack{{ItemArchetypeID: "a_item", Quantity: 2}, {ItemArchetypeID: "z_item", Quantity: 1}}}
+	if err := ValidateCharacterRestore(trusted, current, characterRestoreWorld); err != nil { t.Fatalf("canonical v15 warehouse err=%v", err) }
 }
 
 func TestValidateCharacterRestoreRejectsStatSmugglingAcrossSchemaBoundary(t *testing.T) {
@@ -130,7 +147,7 @@ func makeRestoreRuntime(t *testing.T) *Runtime {
 	nav := navigation.Plane{MinX: -100, MaxX: 100, MinZ: -100, MaxZ: 100, Layer: 4}
 	sim := simulation.New(spatial.NewGrid(16), movement.NewService(nav, 0.1))
 	cfg := DefaultConfig(); cfg.SnapshotEveryTicks = 1
-	worldRef := characterstate.WorldRef{MapID: "map1", WorldID: characterRestoreWorld.WorldID, Revision: characterRestoreWorld.Revision, GameplaySHA256: characterRestoreWorld.GameplaySHA256}
+	worldRef := characterstate.WorldRef{MapID: "map1", WorldID: characterRestoreWorld.WorldID, Revision: characterRestoreWorld.Revision, GameplaySHA256: characterRestoreTestSHA}
 	return New(sim, cfg, WithCharacterStateOutbox(nil, worldRef))
 }
 
