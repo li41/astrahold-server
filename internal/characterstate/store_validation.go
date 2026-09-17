@@ -73,6 +73,14 @@ func validateTrustedIdentity(identity characteridentity.Binding) error {
 	return nil
 }
 
+func validateSnapshotV15(snapshot Snapshot) error {
+	warehouse, err := CanonicalWarehouseState(snapshot.Warehouse)
+	if err != nil || !warehouse.Initialized {
+		return ErrInvalidSnapshot
+	}
+	return validateSnapshotV14(snapshot)
+}
+
 func validateSnapshotV14(snapshot Snapshot) error {
 	if !validMapID(snapshot.World.MapID) {
 		return ErrInvalidSnapshot
