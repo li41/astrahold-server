@@ -22,14 +22,14 @@ func TestStoreCreateUpdateReopenAndCAS(t *testing.T) {
 	if _, ok, err := store.Load(identity); err != nil || ok { t.Fatalf("missing load ok=%v err=%v", ok, err) }
 	firstSnapshot := testSnapshot()
 	first, err := store.Save(identity, 0, firstSnapshot); if err != nil { t.Fatal(err) }
-	if first.Revision != 1 || first.CharacterID != identity.ID || first.Snapshot != firstSnapshot { t.Fatalf("first=%#v", first) }
+	if first.Revision != 1 || first.CharacterID != identity.ID || !SnapshotsEqual(first.Snapshot, firstSnapshot) { t.Fatalf("first=%#v", first) }
 	updatedSnapshot := firstSnapshot; updatedSnapshot.HP = 700; updatedSnapshot.MP = 40; updatedSnapshot.Position = world.Position{X: 12, Y: 3, Z: -4, Layer: 2}; updatedSnapshot.Yaw = 1.25
 	second, err := store.Save(identity, first.Revision, updatedSnapshot); if err != nil { t.Fatal(err) }
-	if second.Revision != 2 || second.Snapshot != updatedSnapshot { t.Fatalf("second=%#v", second) }
+	if second.Revision != 2 || !SnapshotsEqual(second.Snapshot, updatedSnapshot) { t.Fatalf("second=%#v", second) }
 	if _, err := store.Save(identity, 1, firstSnapshot); !errors.Is(err, ErrRevisionConflict) { t.Fatalf("stale save err=%v", err) }
-	current, ok, err := store.Load(identity); if err != nil || !ok || current != second { t.Fatalf("current=%#v ok=%v err=%v", current, ok, err) }
+	current, ok, err := store.Load(identity); if err != nil || !ok || !RecordsEqual(current, second) { t.Fatalf("current=%#v ok=%v err=%v", current, ok, err) }
 	reopened, err := Open(root); if err != nil { t.Fatal(err) }
-	loaded, ok, err := reopened.Load(identity); if err != nil || !ok || loaded != second { t.Fatalf("reopened=%#v ok=%v err=%v", loaded, ok, err) }
+	loaded, ok, err := reopened.Load(identity); if err != nil || !ok || !RecordsEqual(loaded, second) { t.Fatalf("reopened=%#v ok=%v err=%v", loaded, ok, err) }
 }
 
 func TestStoreMigratesV2RecordToFullMP(t *testing.T) {
@@ -51,7 +51,7 @@ func TestStoreCreateOnlyConflictDoesNotOverwrite(t *testing.T) {
 	first, err := store.Save(identity, 0, testSnapshot()); if err != nil { t.Fatal(err) }
 	changed := testSnapshot(); changed.HP = 500
 	if _, err := store.Save(identity, 0, changed); !errors.Is(err, ErrRevisionConflict) { t.Fatalf("create-only err=%v", err) }
-	loaded, ok, err := store.Load(identity); if err != nil || !ok || loaded != first { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
+	loaded, ok, err := store.Load(identity); if err != nil || !ok || !RecordsEqual(loaded, first) { t.Fatalf("loaded=%#v ok=%v err=%v", loaded, ok, err) }
 }
 
 func TestStoreRejectsEphemeralIdentity(t *testing.T) {
@@ -89,7 +89,7 @@ func TestStoreFailsClosedOnUnknownTrailingOrMismatchedRecord(t *testing.T) {
 func TestStoreRevisionOverflowDoesNotAdvanceTruth(t *testing.T) {
 	store, err := Open(t.TempDir()); if err != nil { t.Fatal(err) }
 	identity := trusted(t, "character:max-revision"); snapshot := testSnapshot()
-	wire := wireRecord{SchemaVersion: SchemaVersion, CharacterID: string(identity.ID), Revision: ^uint64(0), WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256, MapID: snapshot.World.MapID, HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated, X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw, Inventory: snapshot.Inventory, PrimaryStats: primaryStatsToWire(snapshot.PrimaryStats)}
+	wire := wireRecord{SchemaVersion: SchemaVersion, CharacterID: string(identity.ID), Revision: ^uint64(0), WorldID: snapshot.World.WorldID, WorldRevision: snapshot.World.Revision, GameplaySHA256: snapshot.World.GameplaySHA256, MapID: snapshot.World.MapID, HP: snapshot.HP, MaxHP: snapshot.MaxHP, MP: snapshot.MP, MaxMP: snapshot.MaxMP, Defeated: snapshot.Defeated, X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z, Layer: snapshot.Position.Layer, Yaw: snapshot.Yaw, Inventory: snapshot.Inventory, Warehouse: snapshot.Warehouse, PrimaryStats: primaryStatsToWire(snapshot.PrimaryStats)}
 	data, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 	if err := os.WriteFile(store.recordPath(identity.ID), append(data, '\n'), 0o600); err != nil { t.Fatal(err) }
 	if _, err := store.Save(identity, ^uint64(0), snapshot); !errors.Is(err, ErrRevisionOverflow) { t.Fatalf("overflow err=%v", err) }
@@ -111,5 +111,5 @@ func TestStoreUsesHashedFilenamesAndSeparatesCharacters(t *testing.T) {
 func trusted(t *testing.T, id string) characteridentity.Binding { t.Helper(); binding, err := characteridentity.NewTrusted(id); if err != nil { t.Fatal(err) }; return binding }
 
 func testSnapshot() Snapshot {
-	return Snapshot{World: WorldRef{MapID: "map1", WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: testGameplaySHA}, HP: 900, MaxHP: 1000, MP: 100, MaxMP: 100, Defeated: false, Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1}, Yaw: 0.75, Inventory: InventoryState{Initialized: true}, PrimaryStats: characterstats.DefaultPrimary()}
+	return Snapshot{World: WorldRef{MapID: "map1", WorldID: "castle-sandbox", Revision: "s3d-001", GameplaySHA256: testGameplaySHA}, HP: 900, MaxHP: 1000, MP: 100, MaxMP: 100, Defeated: false, Position: world.Position{X: 4, Y: 2, Z: -7, Layer: 1}, Yaw: 0.75, Inventory: InventoryState{Initialized: true}, Warehouse: EmptyWarehouseState(), PrimaryStats: characterstats.DefaultPrimary()}
 }
