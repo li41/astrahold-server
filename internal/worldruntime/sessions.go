@@ -5,6 +5,7 @@ import (
 	"github.com/li41/astrahold-server/internal/inventory"
 	"github.com/li41/astrahold-server/internal/movement"
 	"github.com/li41/astrahold-server/internal/session"
+	"github.com/li41/astrahold-server/internal/warehouse"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -55,6 +56,9 @@ func (r *Runtime) applyRegister(name string, c registerSessionCommand, report *S
 	r.markCharacterStateAutosaveBaseline(c.session.EntityID, report.Tick)
 	r.replication.Register(c.session.ID)
 	r.ensureSessionInventory(c.session)
+	if _, ok := r.warehouses[c.session.CharacterIdentity.ID]; !ok {
+		r.warehouses[c.session.CharacterIdentity.ID] = warehouse.New()
+	}
 }
 
 func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, report *StepReport) {
@@ -99,6 +103,7 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	var restoredState *character.State
 	var defeatedRestore *preparedDefeatedRestore
 	var restoredInventory *inventory.Inventory
+	var restoredWarehouse *warehouse.Storage
 	if request.Restore != nil {
 		if err := r.validateCharacterRestore(request.Session, *request.Restore); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
@@ -106,6 +111,13 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 		}
 		if request.Restore.Inventory.Initialized {
 			restoredInventory, err = restoreCharacterInventory(r.config.InventoryMaxStacks, request.Restore.Inventory)
+			if err != nil {
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
+				return
+			}
+		}
+		if request.Restore.Warehouse.Initialized {
+			restoredWarehouse, err = restoreCharacterWarehouse(request.Restore.Warehouse)
 			if err != nil {
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: request.Session.ID, Err: err})
 				return
@@ -203,6 +215,11 @@ func (r *Runtime) applyJoin(name string, request JoinRequest, report *StepReport
 	}
 	if restoredInventory != nil {
 		r.inventories[request.Session.CharacterIdentity.ID] = restoredInventory
+	}
+	if restoredWarehouse != nil {
+		r.warehouses[request.Session.CharacterIdentity.ID] = restoredWarehouse
+	} else if _, ok := r.warehouses[request.Session.CharacterIdentity.ID]; !ok {
+		r.warehouses[request.Session.CharacterIdentity.ID] = warehouse.New()
 	}
 	r.characterIdentities.bindSession(request.Session)
 	if request.AdmissionLease != nil {
