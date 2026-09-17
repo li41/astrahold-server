@@ -43,6 +43,11 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 	case *protocol.ClientEnhanceEquipment:
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientEnhanceEquipment{ScrollItemArchetypeID: m.ScrollItemArchetypeID, ItemInstanceID: m.ItemInstanceID})
+	case protocol.ClientWarehouseCommand:
+		return json.Marshal(clientWarehouseCommand{Operation: string(m.Operation), ItemArchetypeID: m.ItemArchetypeID, Quantity: m.Quantity})
+	case *protocol.ClientWarehouseCommand:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientWarehouseCommand{Operation: string(m.Operation), ItemArchetypeID: m.ItemArchetypeID, Quantity: m.Quantity})
 	case protocol.ClientPickupItem:
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
 	case *protocol.ClientPickupItem:
@@ -81,6 +86,12 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(itemUseResult{ClientActionSequence: m.ClientActionSequence, ItemArchetypeID: m.ItemArchetypeID, Outcome: string(m.Outcome), Reason: string(m.Reason), AppliedAmount: m.AppliedAmount, CooldownReadyTick: m.CooldownReadyTick})
 	case protocol.EquipmentEnhancementResult:
 		return json.Marshal(equipmentEnhancementResult{ClientActionSequence: m.ClientActionSequence, ScrollItemArchetypeID: m.ScrollItemArchetypeID, ItemInstanceID: m.ItemInstanceID, Outcome: string(m.Outcome), Reason: string(m.Reason), PreviousLevel: m.PreviousLevel, CurrentLevel: m.CurrentLevel, ScrollConsumed: m.ScrollConsumed})
+	case protocol.WarehouseResult:
+		return json.Marshal(warehouseResult{ClientActionSequence: m.ClientActionSequence, Operation: string(m.Operation), Outcome: string(m.Outcome), Reason: string(m.Reason), ItemArchetypeID: m.ItemArchetypeID, Quantity: m.Quantity})
+	case protocol.WarehouseSnapshot:
+		out := warehouseSnapshot{Items: make([]warehouseItemStack, len(m.Items))}
+		for i, item := range m.Items { out.Items[i] = warehouseItemStack{ItemArchetypeID: item.ItemArchetypeID, Quantity: item.Quantity} }
+		return json.Marshal(out)
 	case protocol.CharacterClassState:
 		return json.Marshal(characterClassState{ClassID: m.ClassID})
 	case protocol.CharacterClassResourceState:
