@@ -16,51 +16,26 @@ var (
 	ErrUnsupportedClientMessage = errors.New("gateway: unsupported client message")
 )
 
-type MoveCommandSink interface {
-	EnqueueMove(session.ID, uint32, protocol.ClientMoveInput) error
-}
-type ActionCommandSink interface {
-	EnqueueUseAction(session.ID, uint32, protocol.ClientUseAction) error
-}
-type EquipmentCommandSink interface {
-	EnqueueEquipmentCommand(session.ID, uint32, protocol.ClientEquipmentCommand) error
-}
-type EquipmentInstanceCommandSink interface {
-	EnqueueEquipmentInstanceCommand(session.ID, uint32, protocol.ClientEquipmentInstanceCommand) error
-}
-type PickupCommandSink interface {
-	EnqueuePickupItem(session.ID, uint32, protocol.ClientPickupItem) error
-}
-type ItemUseCommandSink interface {
-	EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error
-}
-type NPCCommandSink interface {
-	EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error
-}
-type ShopCommandSink interface {
-	EnqueueShopCommand(session.ID, uint32, protocol.ClientShopCommand) error
-}
-type RespawnCommandSink interface {
-	EnqueueRespawnRequest(session.ID, uint32, protocol.ClientRespawnRequest) error
-}
+type MoveCommandSink interface { EnqueueMove(session.ID, uint32, protocol.ClientMoveInput) error }
+type ActionCommandSink interface { EnqueueUseAction(session.ID, uint32, protocol.ClientUseAction) error }
+type EquipmentCommandSink interface { EnqueueEquipmentCommand(session.ID, uint32, protocol.ClientEquipmentCommand) error }
+type EquipmentInstanceCommandSink interface { EnqueueEquipmentInstanceCommand(session.ID, uint32, protocol.ClientEquipmentInstanceCommand) error }
+type EquipmentEnhancementCommandSink interface { EnqueueEnhanceEquipment(session.ID, uint32, protocol.ClientEnhanceEquipment) error }
+type PickupCommandSink interface { EnqueuePickupItem(session.ID, uint32, protocol.ClientPickupItem) error }
+type ItemUseCommandSink interface { EnqueueUseItem(session.ID, uint32, protocol.ClientUseItem) error }
+type NPCCommandSink interface { EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error }
+type ShopCommandSink interface { EnqueueShopCommand(session.ID, uint32, protocol.ClientShopCommand) error }
+type RespawnCommandSink interface { EnqueueRespawnRequest(session.ID, uint32, protocol.ClientRespawnRequest) error }
 
 type Ingress struct{ sink MoveCommandSink }
 
 func NewIngress(sink MoveCommandSink) *Ingress {
-	if sink == nil {
-		panic("gateway: move command sink is required")
-	}
+	if sink == nil { panic("gateway: move command sink is required") }
 	return &Ingress{sink: sink}
 }
 
-// Handle validates the client-owned message/delivery boundary before entering the bounded runtime queue.
-// Fixed-class selection is intentionally unsupported by production ingress. Its compatibility wire
-// type may remain decodable, but class/profession selection is no longer a gameplay command.
 func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error {
-	if sessionID == 0 || envelope.Sequence == 0 || envelope.Message == nil {
-		return ErrInvalidClientEnvelope
-	}
-
+	if sessionID == 0 || envelope.Sequence == 0 || envelope.Message == nil { return ErrInvalidClientEnvelope }
 	switch message := envelope.Message.(type) {
 	case protocol.ClientMoveInput:
 		if envelope.Delivery != protocol.DeliveryRealtimeSequenced { return ErrInvalidClientDelivery }
@@ -93,6 +68,12 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil || !validEquipmentInstanceCommand(*message) { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueEquipmentInstanceCommand(sessionID, envelope.Sequence, *message)
+	case protocol.ClientEnhanceEquipment:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered || !validEquipmentEnhancement(message) { return ErrInvalidClientEnvelope }
+		return g.enqueueEquipmentEnhancement(sessionID, envelope.Sequence, message)
+	case *protocol.ClientEnhanceEquipment:
+		if message == nil || envelope.Delivery != protocol.DeliveryReliableOrdered || !validEquipmentEnhancement(*message) { return ErrInvalidClientEnvelope }
+		return g.enqueueEquipmentEnhancement(sessionID, envelope.Sequence, *message)
 	case protocol.ClientPickupItem:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		if message.DropEntityID == 0 { return ErrInvalidClientEnvelope }
@@ -179,6 +160,10 @@ func validEquipmentInstanceCommand(command protocol.ClientEquipmentInstanceComma
 	}
 }
 
+func validEquipmentEnhancement(command protocol.ClientEnhanceEquipment) bool {
+	return strings.TrimSpace(command.ScrollItemArchetypeID) != "" && strings.TrimSpace(command.ScrollItemArchetypeID) == command.ScrollItemArchetypeID && strings.TrimSpace(command.ItemInstanceID) != "" && strings.TrimSpace(command.ItemInstanceID) == command.ItemInstanceID
+}
+
 func validShopCommand(command protocol.ClientShopCommand) bool {
 	if command.NPCEntityID == 0 { return false }
 	switch command.Operation {
@@ -192,38 +177,33 @@ func validShopCommand(command protocol.ClientShopCommand) bool {
 }
 
 func finiteFloat32(value float32) bool { return !float32NaN(value) && !float32Inf(value) }
-func float32NaN(value float32) bool    { return math.IsNaN(float64(value)) }
-func float32Inf(value float32) bool    { return math.IsInf(float64(value), 0) }
+func float32NaN(value float32) bool { return math.IsNaN(float64(value)) }
+func float32Inf(value float32) bool { return math.IsInf(float64(value), 0) }
 
 func (g *Ingress) enqueueUseAction(sessionID session.ID, sequence uint32, action protocol.ClientUseAction) error {
-	sink, ok := g.sink.(ActionCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueUseAction(sessionID, sequence, action)
+	sink, ok := g.sink.(ActionCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueUseAction(sessionID, sequence, action)
 }
 func (g *Ingress) enqueueEquipmentCommand(sessionID session.ID, sequence uint32, command protocol.ClientEquipmentCommand) error {
-	sink, ok := g.sink.(EquipmentCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueEquipmentCommand(sessionID, sequence, command)
+	sink, ok := g.sink.(EquipmentCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueEquipmentCommand(sessionID, sequence, command)
 }
 func (g *Ingress) enqueueEquipmentInstanceCommand(sessionID session.ID, sequence uint32, command protocol.ClientEquipmentInstanceCommand) error {
-	sink, ok := g.sink.(EquipmentInstanceCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueEquipmentInstanceCommand(sessionID, sequence, command)
+	sink, ok := g.sink.(EquipmentInstanceCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueEquipmentInstanceCommand(sessionID, sequence, command)
+}
+func (g *Ingress) enqueueEquipmentEnhancement(sessionID session.ID, sequence uint32, command protocol.ClientEnhanceEquipment) error {
+	sink, ok := g.sink.(EquipmentEnhancementCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueEnhanceEquipment(sessionID, sequence, command)
 }
 func (g *Ingress) enqueuePickupItem(sessionID session.ID, sequence uint32, intent protocol.ClientPickupItem) error {
-	sink, ok := g.sink.(PickupCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueuePickupItem(sessionID, sequence, intent)
+	sink, ok := g.sink.(PickupCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueuePickupItem(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueUseItem(sessionID session.ID, sequence uint32, intent protocol.ClientUseItem) error {
-	sink, ok := g.sink.(ItemUseCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueUseItem(sessionID, sequence, intent)
+	sink, ok := g.sink.(ItemUseCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueUseItem(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueInteractNPC(sessionID session.ID, sequence uint32, intent protocol.ClientInteractNPC) error {
-	sink, ok := g.sink.(NPCCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueInteractNPC(sessionID, sequence, intent)
+	sink, ok := g.sink.(NPCCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueInteractNPC(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueShopCommand(sessionID session.ID, sequence uint32, intent protocol.ClientShopCommand) error {
-	sink, ok := g.sink.(ShopCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueShopCommand(sessionID, sequence, intent)
+	sink, ok := g.sink.(ShopCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueShopCommand(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueRespawnRequest(sessionID session.ID, sequence uint32, intent protocol.ClientRespawnRequest) error {
-	sink, ok := g.sink.(RespawnCommandSink); if !ok { return ErrUnsupportedClientMessage }
-	return sink.EnqueueRespawnRequest(sessionID, sequence, intent)
+	sink, ok := g.sink.(RespawnCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueRespawnRequest(sessionID, sequence, intent)
 }
