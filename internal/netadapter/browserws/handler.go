@@ -48,10 +48,12 @@ type PlayerSpec struct {
 type PlayerFactory func(session.ID, world.EntityID) PlayerSpec
 
 // TrustedE2EBootstrap is a Server-owned test harness value. The Client never supplies it.
-// Restore must describe the same trusted CharacterID and current WorldIdentity.
+// AuthenticationSubject is optional Server-authenticated provenance used only by loopback E2E
+// fixtures. Restore must describe the same trusted CharacterID and current WorldIdentity.
 type TrustedE2EBootstrap struct {
-	Identity characteridentity.Binding
-	Restore  worldruntime.CharacterRestore
+	Identity              characteridentity.Binding
+	AuthenticationSubject string
+	Restore               worldruntime.CharacterRestore
 }
 
 type TrustedE2EBootstrapFactory func(session.ID, world.EntityID) (TrustedE2EBootstrap, error)
@@ -171,7 +173,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = conn.Close(websocket.StatusInternalError, ErrInvalidTrustedE2EBootstrap.Error())
 			return
 		}
-		sess, err = session.NewWithCharacterIdentity(sid, entityID, bootstrap.Identity, spec.AOIRadius, outbound)
+		sess, err = session.NewWithCharacterIdentityAndAuthenticationSubject(sid, entityID, bootstrap.Identity, bootstrap.AuthenticationSubject, spec.AOIRadius, outbound)
 		candidate := bootstrap.Restore
 		restore = &candidate
 	}
