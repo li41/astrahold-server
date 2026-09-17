@@ -17,14 +17,14 @@ func TestSaveJournalCurrentSnapshotIsClassless(t *testing.T) {
 	snapshot := testSnapshot()
 	intent := SaveIntent{IntentID: 1, Identity: trusted(t, "character:journal-classless"), Snapshot: snapshot}
 	record, err := journal.Append(intent, 0); if err != nil { t.Fatal(err) }
-	if record.Intent.Snapshot != snapshot { t.Fatalf("append snapshot=%#v want=%#v", record.Intent.Snapshot, snapshot) }
+	if !SnapshotsEqual(record.Intent.Snapshot, snapshot) { t.Fatalf("append snapshot=%#v want=%#v", record.Intent.Snapshot, snapshot) }
 	if err := journal.Close(); err != nil { t.Fatal(err) }
 	data, err := os.ReadFile(path); if err != nil { t.Fatal(err) }
 	if bytes.Contains(data, []byte("class_id")) { t.Fatalf("current journal still contains class_id") }
 	reopened, err := OpenSaveJournal(path); if err != nil { t.Fatal(err) }
 	defer reopened.Close()
 	records, err := reopened.RecordsAfter(reopened.InitialCheckpoint(), 0); if err != nil { t.Fatal(err) }
-	if len(records) != 1 || records[0].RecordID != record.RecordID || records[0].Intent.Snapshot != snapshot { t.Fatalf("records=%#v", records) }
+	if len(records) != 1 || records[0].RecordID != record.RecordID || !SnapshotsEqual(records[0].Intent.Snapshot, snapshot) { t.Fatalf("records=%#v", records) }
 }
 
 func TestSaveJournalV7ValidatesThenDiscardsLegacyClassID(t *testing.T) {
@@ -35,7 +35,7 @@ func TestSaveJournalV7ValidatesThenDiscardsLegacyClassID(t *testing.T) {
 	wire := saveJournalWireRecord{SchemaVersion: LearnedSkillsSaveJournalSchemaVersion, RecordID: 1, ExpectedRevision: 0, IntentID: 1, CharacterID: string(trusted(t, "character:journal-v7-class").ID), Snapshot: wireSnapshot}
 	payload, err := json.Marshal(wire); if err != nil { t.Fatal(err) }
 	_, _, intent, err := decodeSaveJournalRecord(payload); if err != nil { t.Fatal(err) }
-	if intent.Snapshot != snapshot { t.Fatalf("legacy snapshot=%#v want=%#v", intent.Snapshot, snapshot) }
+	if !SnapshotsEqual(intent.Snapshot, snapshot) { t.Fatalf("legacy snapshot=%#v want=%#v", intent.Snapshot, snapshot) }
 }
 
 func TestSaveJournalRejectsClassIDThatDoesNotMatchSchema(t *testing.T) {
