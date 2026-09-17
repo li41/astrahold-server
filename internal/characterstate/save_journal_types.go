@@ -23,7 +23,8 @@ const (
 	SixPrimaryStatsSaveJournalSchemaVersion uint16 = 11
 	AppearanceSaveJournalSchemaVersion      uint16 = 12
 	MapSaveJournalSchemaVersion             uint16 = 13
-	SaveJournalSchemaVersion                uint16 = MapSaveJournalSchemaVersion
+	WarehouseSaveJournalSchemaVersion       uint16 = 14
+	SaveJournalSchemaVersion                uint16 = WarehouseSaveJournalSchemaVersion
 	saveCheckpointSchemaVersion             uint16 = 1
 	saveJournalIDSize                              = 16
 	maxSaveJournalPayload                          = 1 << 20
@@ -102,6 +103,7 @@ type saveJournalWireSnapshot struct {
 	Yaw             float32              `json:"yaw"`
 	DefeatedRespawn *wireDefeatedRespawn `json:"defeated_respawn,omitempty"`
 	Inventory       InventoryState       `json:"inventory,omitempty"`
+	Warehouse       WarehouseState       `json:"warehouse,omitempty"`
 	CombatLoadout   []string             `json:"combat_loadout,omitempty"`
 	LearnedSkills   []string             `json:"learned_skills,omitempty"`
 	PrimaryStats    *wirePrimaryStats    `json:"primary_stats,omitempty"`
