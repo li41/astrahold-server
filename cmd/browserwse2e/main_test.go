@@ -23,6 +23,13 @@ func TestE2ECharacterRestoreMatchesCurrentContract(t *testing.T) {
 	if err := worldruntime.ValidateCharacterRestore(identity, restore, worldIdentity); err != nil {
 		t.Fatalf("current browserwse2e restore rejected: %v", err)
 	}
+	if restore.MapID != e2eMapID {
+		t.Fatalf("restore map=%q, want %q", restore.MapID, e2eMapID)
+	}
+	stateWorld := e2eCharacterStateWorld(worldIdentity)
+	if stateWorld.MapID != e2eMapID {
+		t.Fatalf("character-state map=%q, want %q", stateWorld.MapID, e2eMapID)
+	}
 	if restore.PrimaryStats != characterstats.DefaultPrimary() {
 		t.Fatalf("primary stats=%+v, want neutral current-schema stats=%+v", restore.PrimaryStats, characterstats.DefaultPrimary())
 	}
