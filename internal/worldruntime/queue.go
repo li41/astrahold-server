@@ -95,8 +95,8 @@ type spawnEntityCommand struct{ request SpawnEntityRequest }
 
 func (spawnEntityCommand) name() string { return "spawn_entity" }
 
-// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment, pickup,
-// item-use and respawn keep their own typed protocol payloads and are routed before combat
+// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment, enhancement,
+// pickup, item-use and respawn keep their own typed protocol payloads and are routed before combat
 // preparation; none is a skill/action alias.
 type useActionCommand struct {
 	sessionID         session.ID
@@ -104,6 +104,7 @@ type useActionCommand struct {
 	action            protocol.ClientUseAction
 	equipment         *protocol.ClientEquipmentCommand
 	equipmentInstance *protocol.ClientEquipmentInstanceCommand
+	enhancement       *protocol.ClientEnhanceEquipment
 	pickup            *protocol.ClientPickupItem
 	useItem           *protocol.ClientUseItem
 	respawn           *protocol.ClientRespawnRequest
@@ -113,6 +114,9 @@ type useActionCommand struct {
 func (c useActionCommand) name() string {
 	if c.equipmentInstance != nil {
 		return "equipment_instance_command"
+	}
+	if c.enhancement != nil {
+		return "enhance_equipment"
 	}
 	if c.equipment != nil {
 		return "equipment_command"
@@ -187,8 +191,6 @@ func (q *commandQueue) drain(max int) []command {
 	for len(out) < max {
 		select {
 		case c := <-q.ch:
-			// A step fence is a queue boundary, not gameplay work. Returning immediately keeps
-			// every later command in the channel for a subsequent authoritative Step.
 			if fence, ok := c.(stepFenceCommand); ok {
 				close(fence.reached)
 				return out
