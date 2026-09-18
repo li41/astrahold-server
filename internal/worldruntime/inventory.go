@@ -16,7 +16,7 @@ const defaultInventoryCarryCapacity = uint64(100)
 var defaultInventoryUnitWeights = mustDefaultInventoryUnitWeights()
 
 func mustDefaultInventoryUnitWeights() map[string]uint32 {
-	weights := map[string]uint32{"item_minor_healing_potion": 1, "item_minor_mana_potion": 1, "item_training_blade": 8, "item_gray_wolf_pelt": 2}
+	weights := map[string]uint32{"item_gold_coin": 0, "item_minor_healing_potion": 1, "item_minor_mana_potion": 1, "item_minor_speed_potion": 1, "item_training_blade": 8, "item_gray_wolf_pelt": 2}
 	for id, weight := range defaultEquipmentCatalog.UnitWeights() {
 		if id == "" || weight == 0 {
 			panic("worldruntime: invalid equipment catalog weight")

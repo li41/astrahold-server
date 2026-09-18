@@ -185,13 +185,18 @@ func (r *Runtime) applyPickupItem(name string, command useActionCommand, report 
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: errors.New("worldruntime: inventory unavailable")})
 		return
 	}
-	// Add enforces both stack and carry-weight capacity before world removal. If it rejects, the
-	// public item remains on the ground and another player may attempt pickup immediately.
-	if err := inv.Add(dropEntity.ArchetypeID, 1); err != nil {
+	payload, err := r.itemDropPayloadForEntity(request.DropEntityID, dropEntity)
+	if err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
 		return
 	}
-	r.world.Remove(request.DropEntityID)
+	// Inventory capacity/weight/instance identity validation happens before world removal. If it
+	// rejects, the public drop and its private payload remain authoritative for another pickup.
+	if err := r.grantItemDropPayload(inv, payload); err != nil {
+		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: command.sessionID, Err: err})
+		return
+	}
+	r.removeItemDrop(request.DropEntityID)
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
 

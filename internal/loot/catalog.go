@@ -11,14 +11,27 @@ var (
 	ErrDuplicateSourceArchetype = errors.New("loot: duplicate source archetype")
 )
 
-// Drop describes one authoritative item-drop entity candidate when a source table resolves.
+type DropKind string
+
+const (
+	DropKindStack             DropKind = "stack"
+	DropKindEquipmentInstance DropKind = "equipment_instance"
+)
+
+// Drop describes one authoritative loot candidate when a source table resolves.
+//
 // ChanceBasisPoints uses 1..10_000 after Catalog construction. Definition input may use zero as
-// a backwards-compatible shorthand for guaranteed (10_000). A 0% entry should simply be omitted.
-// Quantity is intentionally not encoded here because the current item-drop protocol represents one
-// item entity per pickup. Multiple guaranteed units can still be authored as multiple Drop entries.
+// backwards-compatible shorthand for guaranteed (10_000). A 0% entry should be omitted.
+//
+// QuantityMin/QuantityMax are inclusive. Both zero normalize to 1..1 for backwards compatibility.
+// Equipment-instance drops are always exactly one unique instance; stack drops may resolve quantity
+// greater than one while remaining a single public ground entity until pickup.
 type Drop struct {
+	Kind              DropKind
 	ItemArchetypeID   string
 	ChanceBasisPoints uint16
+	QuantityMin       uint32
+	QuantityMax       uint32
 }
 
 func (d Drop) IncludesRoll(roll uint16) bool {
@@ -26,7 +39,7 @@ func (d Drop) IncludesRoll(roll uint16) bool {
 }
 
 // Table maps one gameplay source archetype to its Server-authored drop candidates. Runtime supplies
-// unpredictable Server-private rolls; this package owns the authored probability threshold semantics.
+// unpredictable Server-private rolls; this package owns authored threshold and quantity semantics.
 type Table struct {
 	SourceArchetypeID string
 	Drops             []Drop
@@ -66,6 +79,25 @@ func New(def Definition) (*Catalog, error) {
 			}
 			if drop.ChanceBasisPoints == 0 {
 				drop.ChanceBasisPoints = ChanceBasisPointsScale
+			}
+			if drop.Kind == "" {
+				drop.Kind = DropKindStack
+			}
+			if drop.QuantityMin == 0 && drop.QuantityMax == 0 {
+				drop.QuantityMin = 1
+				drop.QuantityMax = 1
+			}
+			if drop.QuantityMin == 0 || drop.QuantityMax < drop.QuantityMin {
+				return nil, ErrInvalidDefinition
+			}
+			switch drop.Kind {
+			case DropKindStack:
+			case DropKindEquipmentInstance:
+				if drop.QuantityMin != 1 || drop.QuantityMax != 1 {
+					return nil, ErrInvalidDefinition
+				}
+			default:
+				return nil, ErrInvalidDefinition
 			}
 			drops[i] = drop
 		}

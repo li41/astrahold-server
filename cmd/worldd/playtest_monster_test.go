@@ -4,23 +4,33 @@ import (
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/loot"
+	"github.com/li41/astrahold-server/internal/map1loot"
 )
 
-func TestPlaytestMonsterLootCatalogUsesCommonPeltChance(t *testing.T) {
+func TestPlaytestMonsterLootCatalogUsesFormalGrayWolfTable(t *testing.T) {
 	catalog := newPlaytestMonsterLootCatalog()
 	drops, ok := catalog.DropsFor(playtestMonsterArchetypeID)
-	if !ok || len(drops) != 1 {
+	if !ok || len(drops) == 0 {
 		t.Fatalf("wolf loot drops=%#v ok=%v", drops, ok)
 	}
-	drop := drops[0]
-	if drop.ItemArchetypeID != playtestMonsterDropArchetypeID {
-		t.Fatalf("wolf drop archetype=%q want=%q", drop.ItemArchetypeID, playtestMonsterDropArchetypeID)
+	var pelt, gold loot.Drop
+	var sawPelt, sawGold bool
+	for _, drop := range drops {
+		switch drop.ItemArchetypeID {
+		case playtestMonsterDropArchetypeID:
+			pelt, sawPelt = drop, true
+		case map1loot.ItemGoldCoin:
+			gold, sawGold = drop, true
+		}
 	}
-	if drop.ChanceBasisPoints != playtestMonsterDropChanceBasisPoints {
-		t.Fatalf("wolf pelt chance=%d want=%d", drop.ChanceBasisPoints, playtestMonsterDropChanceBasisPoints)
+	if !sawPelt || pelt.ChanceBasisPoints != playtestMonsterDropChanceBasisPoints || pelt.QuantityMin != 1 || pelt.QuantityMax != 1 {
+		t.Fatalf("formal wolf pelt drop=%#v found=%v", pelt, sawPelt)
 	}
-	if drop.ChanceBasisPoints == 0 || drop.ChanceBasisPoints >= loot.ChanceBasisPointsScale {
-		t.Fatalf("wolf pelt chance=%d should be common but non-guaranteed", drop.ChanceBasisPoints)
+	if pelt.ChanceBasisPoints == 0 || pelt.ChanceBasisPoints >= loot.ChanceBasisPointsScale {
+		t.Fatalf("wolf pelt chance=%d should be common but non-guaranteed", pelt.ChanceBasisPoints)
+	}
+	if !sawGold || gold.ChanceBasisPoints != loot.ChanceBasisPointsScale || gold.QuantityMin != 1 || gold.QuantityMax != 3 {
+		t.Fatalf("formal wolf gold drop=%#v found=%v", gold, sawGold)
 	}
 }
 

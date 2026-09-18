@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/loot"
+	"github.com/li41/astrahold-server/internal/map1loot"
 	"github.com/li41/astrahold-server/internal/monstercatalog"
 	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/worldruntime"
@@ -88,16 +89,7 @@ func newPlaytestMonsterLifecycleConfig(agent gameplayworld.AgentDefaults, tickRa
 }
 
 func newPlaytestMonsterLootCatalog() *loot.Catalog {
-	catalog, err := loot.New(loot.Definition{
-		Revision: "playtest-monster-loot-v3",
-		Tables: []loot.Table{{
-			SourceArchetypeID: playtestMonsterArchetypeID,
-			Drops: []loot.Drop{{
-				ItemArchetypeID:   playtestMonsterDropArchetypeID,
-				ChanceBasisPoints: playtestMonsterDropChanceBasisPoints,
-			}},
-		}},
-	})
+	catalog, err := map1loot.Default()
 	if err != nil {
 		panic(err)
 	}

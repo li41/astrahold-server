@@ -239,6 +239,7 @@ type Runtime struct {
 	monsterLootEntityIDs           []world.EntityID
 	nextItemDropEntityID           world.EntityID
 	itemDropExpireTick             map[world.EntityID]uint64
+	itemDropPayloads               map[world.EntityID]itemDropPayload
 	respawnPolicy                  *respawnpolicy.Service
 	deathPenalty                   *deathpenalty.Service
 	deathOutbox                    *deathoutcome.Outbox
@@ -339,6 +340,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
 		nextItemDropEntityID:           firstItemDropEntityID,
 		itemDropExpireTick:             make(map[world.EntityID]uint64),
+		itemDropPayloads:               make(map[world.EntityID]itemDropPayload),
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
 		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),
