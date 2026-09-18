@@ -4,7 +4,7 @@
 
 上位怪物 roster 見 [Map1-怪物規劃](Map1-怪物規劃.md)。
 
-本版已把「武器池／防具池」全部拆成 exact stable ID。實作時每一列都是獨立 Server roll；未寫入 production loot catalog 並實際驗證前，仍屬正式規劃而非已生效 gameplay truth。
+本版已把「武器池／防具池」全部拆成 exact stable ID。Server `07c60110ab1d6d94e176bc0148c965bd9b6a514e` 已將本文件 10 種 Map1 怪物 exact table 實作到 production loot catalog，並由 Server CI run `35347470862` 驗證 Test／Vet／race detector **PASS**。表內機率與 quantity 現已是 authoritative runtime content；尚未完成的是完整 Map1 spawn placement 與真實 economy balance（kills/hour、gold/hour、gear/hour）。
 
 ## 1. Map1 金幣模型
 
@@ -548,9 +548,9 @@ QuantityMax
 
 ### Quantity
 
-金幣與箭 bundle 必須由 Server resolve quantity。
+金幣與箭 bundle 已由 Server 在 `QuantityMin..QuantityMax` 閉區間內 resolve quantity。quantity roll 與 chance／winner selection 使用分離的 Server-private RNG domain。
 
-不要用重複 N 個 Drop entries 模擬 8 支箭或 30 金幣，避免大量地面 entity。
+不使用重複 N 個 Drop entries 模擬 8 支箭或 30 金幣；同一 stack 只 materialize 一個地面 entity。
 
 ### Equipment instance
 
@@ -565,7 +565,7 @@ QuantityMax
 
 ## 9. 金幣與地面物
 
-金幣 V1 建議使用 **單一 stack drop**，不是一枚一個 entity。
+金幣 V1 已使用 **單一 stack drop**，不是一枚一個 entity。
 
 若 nearby contributor inventory 可接收：
 
@@ -596,44 +596,49 @@ QuantityMax
 
 這是 map1 income baseline；正式商店售價、修理、交易手續費等 sink 要以實際 kills/hour 後再定。
 
-## 11. 實作順序
+## 11. 實作狀態／後續
 
-1. **Common stack item / gold identity**
+已完成並由 `07c60110...` / CI `35347470862` 驗證：
+
+1. **Common stack / gold identity**
    - `item_gold_coin`
    - zero weight
-   - inventory / persistence / shop-cost validation
+   - inventory／persistence-compatible stack semantics
 
 2. **Loot Catalog V2**
    - quantity range
-   - candidate kind
+   - `stack` / `equipment_instance`
    - strict validation
    - Server-private deterministic test hooks
 
-3. **Stack ground drop quantity**
+3. **Stack ground-drop quantity**
    - gold
    - arrows
-   - healing / mana / speed potions
+   - potions
    - scrolls
-   - archetype equipment
+   - low-tier archetype equipment
+   - 一個 ground entity 對應一個完整 stack payload
 
 4. **Unique equipment loot**
    - exact ItemInstanceID
    - one-time affix roll
-   - auto-grant / public pickup
-   - persistence continuity
+   - auto-grant / public pickup 同一 instance
+   - durable inventory continuity
 
 5. **Map1 exact tables**
    - 10 monster archetypes
-   - exact IDs and basis points from this document
+   - exact IDs / basis points / quantities 全部進 production catalog
+   - playtest `monster_gray_wolf` 已使用正式 Map1 table
 
-6. **Runtime balance**
-   - gold/hour
-   - potion sustain
-   - arrows/hour
-   - low gear/hour
-   - TierMid unique/hour
-   - scroll/hour
-   - inventory pressure
-   - ground entity count
+後續只剩 **Runtime balance / content rollout**：
+- gold/hour
+- potion sustain
+- arrows/hour
+- low gear/hour
+- TierMid unique/hour
+- scroll/hour
+- inventory pressure
+- ground entity count
+- 其餘 9 種怪待正式 Map1 spawn placement 後做真 runtime 掉落節奏驗證
 
 正式實作後若真 runtime economy 明顯過鬆／過緊，只調 authored quantities / basis points，不重寫 loot authority。
