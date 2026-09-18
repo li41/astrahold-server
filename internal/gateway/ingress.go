@@ -147,7 +147,7 @@ func validAction(action protocol.ClientUseAction) bool {
 }
 
 func validEquipmentCommand(command protocol.ClientEquipmentCommand) bool {
-	if command.Slot != protocol.EquipmentSlotMainHand { return false }
+	if !validEquipmentSlot(command.Slot) { return false }
 	switch command.Operation {
 	case protocol.EquipmentOperationEquip:
 		return command.ItemArchetypeID != ""
@@ -159,11 +159,7 @@ func validEquipmentCommand(command protocol.ClientEquipmentCommand) bool {
 }
 
 func validEquipmentInstanceCommand(command protocol.ClientEquipmentInstanceCommand) bool {
-	switch command.Slot {
-	case protocol.EquipmentSlotMainHand, protocol.EquipmentSlotOffHand:
-	default:
-		return false
-	}
+	if !validEquipmentSlot(command.Slot) { return false }
 	instanceID := strings.TrimSpace(command.ItemInstanceID)
 	switch command.Operation {
 	case protocol.EquipmentOperationEquip:
@@ -173,6 +169,13 @@ func validEquipmentInstanceCommand(command protocol.ClientEquipmentInstanceComma
 	default:
 		return false
 	}
+}
+
+func validEquipmentSlot(slot protocol.EquipmentSlot) bool {
+	for _, candidate := range protocol.EquipmentSlots() {
+		if slot == candidate { return true }
+	}
+	return false
 }
 
 func validEquipmentEnhancement(command protocol.ClientEnhanceEquipment) bool {
