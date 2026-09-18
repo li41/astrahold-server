@@ -9,6 +9,7 @@ import (
 
 // Version increments for wire-incompatible contracts or gameplay protocol semantics that would
 // make old Client/Server pairs ambiguous.
+// v33: Server-authoritative ammunition selection plus shared bow/crossbow arrow requirement.
 // v32: GM-room warehouse service scope becomes explicit (services/GM/personal); GM snapshots may
 // carry Quantity==0 as an unlimited Server-owned source. v31 equipment semantics are unchanged.
 // v31: equipment expands to eleven formal slots by adding necklace/ring_1/ring_2/belt accessories.
@@ -32,7 +33,7 @@ import (
 // v13: EntityVitalsState adds authoritative MP/MaxMP and insufficient_resource rejection.
 // v12: valid point-target ClientUseAction ingress semantics are compatibility-fenced.
 // v11: Reliable ActionRejected returns authoritative action rejection reason.
-const Version uint16 = 32
+const Version uint16 = 33
 
 const MaxSnapshotEntitiesPerChunk = 43
 

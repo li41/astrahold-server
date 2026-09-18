@@ -212,6 +212,7 @@ type Runtime struct {
 	characterStateAutosaveNextTick uint64
 	characterSkills                characterSkillRuntime
 	inventories                    map[characteridentity.ID]*inventory.Inventory
+	sessionAmmunitionSelection     map[session.ID]string
 	warehouses                     map[characteridentity.ID]*warehouse.Storage
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
@@ -322,6 +323,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characterIdentities:            newCharacterIdentityRegistry(),
 		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
 		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
+		sessionAmmunitionSelection:     make(map[session.ID]string),
 		warehouses:                     make(map[characteridentity.ID]*warehouse.Storage),
 		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),

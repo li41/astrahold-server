@@ -20,6 +20,7 @@ type fencedUseItemSink interface { EnqueueFencedUseItem(worldruntime.SessionOwne
 type fencedNPCSink interface { EnqueueFencedInteractNPC(worldruntime.SessionOwnershipFence, uint32, protocol.ClientInteractNPC) error }
 type fencedShopSink interface { EnqueueFencedShopCommand(worldruntime.SessionOwnershipFence, uint32, protocol.ClientShopCommand) error }
 type fencedWarehouseSink interface { EnqueueFencedWarehouseCommand(worldruntime.SessionOwnershipFence, uint32, protocol.ClientWarehouseCommand) error }
+type fencedAmmunitionSink interface { EnqueueFencedAmmunitionCommand(worldruntime.SessionOwnershipFence, uint32, protocol.ClientAmmunitionCommand) error }
 type fencedRespawnSink interface { EnqueueFencedRespawnRequest(worldruntime.SessionOwnershipFence, uint32, protocol.ClientRespawnRequest) error }
 
 func (s ownedCommandSink) validSession(id session.ID) bool { return s.ownership.Valid() && id == s.ownership.SessionID }
@@ -72,6 +73,11 @@ func (s ownedCommandSink) EnqueueWarehouseCommand(id session.ID, sequence uint32
 	sink, ok := s.runtime.(fencedWarehouseSink); if !ok { return gateway.ErrUnsupportedClientMessage }
 	return sink.EnqueueFencedWarehouseCommand(s.ownership, sequence, intent)
 }
+func (s ownedCommandSink) EnqueueAmmunitionCommand(id session.ID, sequence uint32, intent protocol.ClientAmmunitionCommand) error {
+	if !s.validSession(id) { return worldruntime.ErrCharacterOwnershipFenceInvalid }
+	sink, ok := s.runtime.(fencedAmmunitionSink); if !ok { return gateway.ErrUnsupportedClientMessage }
+	return sink.EnqueueFencedAmmunitionCommand(s.ownership, sequence, intent)
+}
 func (s ownedCommandSink) EnqueueRespawnRequest(id session.ID, sequence uint32, intent protocol.ClientRespawnRequest) error {
 	if !s.validSession(id) { return worldruntime.ErrCharacterOwnershipFenceInvalid }
 	sink, ok := s.runtime.(fencedRespawnSink); if !ok { return gateway.ErrUnsupportedClientMessage }
@@ -89,5 +95,6 @@ var (
 	_ gateway.NPCCommandSink = ownedCommandSink{}
 	_ gateway.ShopCommandSink = ownedCommandSink{}
 	_ gateway.WarehouseCommandSink = ownedCommandSink{}
+	_ gateway.AmmunitionCommandSink = ownedCommandSink{}
 	_ gateway.RespawnCommandSink = ownedCommandSink{}
 )

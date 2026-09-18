@@ -57,6 +57,7 @@ const (
 	WeaponTypeOneHandAxe   WeaponType = "one_hand_axe"
 	WeaponTypeMace         WeaponType = "mace"
 	WeaponTypeBow          WeaponType = "bow"
+	WeaponTypeCrossbow     WeaponType = "crossbow"
 )
 
 type DamageRange struct {

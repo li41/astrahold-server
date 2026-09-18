@@ -282,6 +282,7 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 			protocol.EquipmentSnapshot{Revision: inv.EquipmentRevision(), Slots: buildEquipmentArchetypeSlots(inv)},
 			equipmentInstanceMessage,
 			r.appearanceSnapshotForSession(s),
+			r.ammunitionStateForSession(s),
 		}
 		for _, message := range messages {
 			envelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: message}

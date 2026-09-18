@@ -13,11 +13,20 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-var ErrBowArrowRequired = errors.Join(errors.New("worldruntime: bow arrow required"), character.ErrInsufficientResource)
+var (
+	ErrArrowRequired = errors.Join(errors.New("worldruntime: ranged arrow required"), character.ErrInsufficientResource)
+	// ErrBowArrowRequired remains as a source-compatible alias for older tests/callers.
+	ErrBowArrowRequired = ErrArrowRequired
+)
 
-func (r *Runtime) selectedBowArrow(actorID world.EntityID, sourceSessionID session.ID) (ammunition.Definition, bool, bool) {
+func (r *Runtime) selectedRangedArrow(actorID world.EntityID, sourceSessionID session.ID) (ammunition.Definition, bool, bool) {
 	weapon, ok := r.equippedCatalogWeapon(actorID, sourceSessionID)
-	if !ok || weapon.Weapon == nil || weapon.Weapon.WeaponType != equipmentcatalog.WeaponTypeBow {
+	if !ok || weapon.Weapon == nil {
+		return ammunition.Definition{}, false, false
+	}
+	switch weapon.Weapon.WeaponType {
+	case equipmentcatalog.WeaponTypeBow, equipmentcatalog.WeaponTypeCrossbow:
+	default:
 		return ammunition.Definition{}, false, false
 	}
 	s, ok := r.sessions.Get(sourceSessionID)
@@ -28,6 +37,11 @@ func (r *Runtime) selectedBowArrow(actorID world.EntityID, sourceSessionID sessi
 	if inv == nil {
 		return ammunition.Definition{}, true, false
 	}
+	if selected := r.ammunitionStateForSession(s).SelectedItemArchetypeID; selected != "" {
+		if definition, ok := ammunition.Resolve(selected); ok && inv.Quantity(definition.ItemArchetypeID) > 0 {
+			return definition, true, true
+		}
+	}
 	for _, definition := range ammunition.Definitions() {
 		if inv.Quantity(definition.ItemArchetypeID) > 0 {
 			return definition, true, true
@@ -36,7 +50,7 @@ func (r *Runtime) selectedBowArrow(actorID world.EntityID, sourceSessionID sessi
 	return ammunition.Definition{}, true, false
 }
 
-// validateBasicAttackAmmunition rejects a bow attack before dispatch when no arrow exists. Because
+// validateBasicAttackAmmunition rejects a bow/crossbow attack before dispatch when no arrow exists. Because
 // combat cooldown is committed only after an accepted dispatch, this rejection consumes neither
 // ammo nor cooldown and emits no ActionStarted/CombatEvent. Client presentation may still animate
 // its local draw/release attempt; it cannot create an authoritative projectile or damage result.
@@ -44,9 +58,9 @@ func (r *Runtime) validateBasicAttackAmmunition(prepared combat.PreparedAction, 
 	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
 		return nil
 	}
-	_, required, available := r.selectedBowArrow(prepared.ActorEntityID, sourceSessionID)
+	_, required, available := r.selectedRangedArrow(prepared.ActorEntityID, sourceSessionID)
 	if required && !available {
-		return ErrBowArrowRequired
+		return ErrArrowRequired
 	}
 	return nil
 }
@@ -70,14 +84,14 @@ func (r *Runtime) consumeExactArrow(sourceSessionID session.ID, actorID world.En
 	return true
 }
 
-// finalizeBasicAttackHit consumes one arrow on an actual bow miss. Hit shots leave the selected
+// finalizeBasicAttackHit consumes one arrow on an actual bow/crossbow miss. Hit shots leave the selected
 // arrow in place until damage resolution so the exact fired arrow can contribute to the one combined
 // bow+arrow damage roll before that same arrow is consumed.
 func (r *Runtime) finalizeBasicAttackHit(actorID world.EntityID, sourceSessionID session.ID, hit bool) bool {
 	if hit {
 		return true
 	}
-	definition, required, available := r.selectedBowArrow(actorID, sourceSessionID)
+	definition, required, available := r.selectedRangedArrow(actorID, sourceSessionID)
 	if required && available {
 		_ = r.consumeExactArrow(sourceSessionID, actorID, definition)
 	}
@@ -109,18 +123,29 @@ func rollBowAndArrowDamage(definition equipmentcatalog.Definition, size equipmen
 }
 
 // rollEquippedBasicAttackWeaponDamageWithAmmunition keeps all non-bow weapons on their existing
-// damage path. Bow hits combine bow + exact selected arrow into one uniform roll, consume that exact
+// damage path. Bow hits combine bow + exact selected arrow; crossbows keep authored weapon damage while consuming the exact selected arrow into one uniform roll, consume that exact
 // arrow, and return its material alongside damage so later material rules use the fired ammunition
 // rather than guessing from post-consumption inventory state.
 func (r *Runtime) rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID world.EntityID, sourceSessionID session.ID, definition equipmentcatalog.Definition, size equipmentcatalog.BodySize) (uint32, equipmentcatalog.MaterialID) {
-	if definition.Weapon == nil || definition.Weapon.WeaponType != equipmentcatalog.WeaponTypeBow {
+	if definition.Weapon == nil {
 		return rollWeaponDamage(definition, size, rand.Uint32()), ""
 	}
-	arrow, required, available := r.selectedBowArrow(actorID, sourceSessionID)
+	switch definition.Weapon.WeaponType {
+	case equipmentcatalog.WeaponTypeBow, equipmentcatalog.WeaponTypeCrossbow:
+	default:
+		return rollWeaponDamage(definition, size, rand.Uint32()), ""
+	}
+	arrow, required, available := r.selectedRangedArrow(actorID, sourceSessionID)
 	if !required || !available {
 		return 0, ""
 	}
-	damage := rollBowAndArrowDamage(definition, size, arrow, rand.Uint32())
+	var damage uint32
+	if definition.Weapon.WeaponType == equipmentcatalog.WeaponTypeBow {
+		damage = rollBowAndArrowDamage(definition, size, arrow, rand.Uint32())
+	} else {
+		// Crossbows consume the same arrow stacks but keep their existing authored weapon damage.
+		damage = rollWeaponDamage(definition, size, rand.Uint32())
+	}
 	if damage == 0 || !r.consumeExactArrow(sourceSessionID, actorID, arrow) {
 		return 0, ""
 	}

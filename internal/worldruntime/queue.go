@@ -47,6 +47,7 @@ type useActionCommand struct {
 	equipmentInstance *protocol.ClientEquipmentInstanceCommand
 	enhancement       *protocol.ClientEnhanceEquipment
 	warehouse         *protocol.ClientWarehouseCommand
+	ammunition        *protocol.ClientAmmunitionCommand
 	pickup            *protocol.ClientPickupItem
 	useItem           *protocol.ClientUseItem
 	respawn           *protocol.ClientRespawnRequest
@@ -57,6 +58,7 @@ func (c useActionCommand) name() string {
 	if c.equipmentInstance != nil { return "equipment_instance_command" }
 	if c.enhancement != nil { return "enhance_equipment" }
 	if c.warehouse != nil { return "warehouse_command" }
+	if c.ammunition != nil { return "ammunition_command" }
 	if c.equipment != nil { return "equipment_command" }
 	if c.pickup != nil { return "pickup_item" }
 	if c.useItem != nil { return "use_item" }
