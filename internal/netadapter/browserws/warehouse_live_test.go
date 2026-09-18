@@ -54,7 +54,7 @@ func TestWarehouseBrowserWSV32Map0GMRoundTrip(t *testing.T) {
 		ItemArchetypeID: worldruntime.WeaponEnhancementScrollItemArchetypeID,
 		Quantity:        2,
 	})
-	result, snapshot = readWarehouseResultAndSnapshot(t, fixture, true)
+	result, snapshot, inventory := readWarehouseMutationResponse(t, fixture, 2, worldruntime.WeaponEnhancementScrollItemArchetypeID, 2)
 	if result.ClientActionSequence != 2 || result.Operation != protocol.WarehouseOperationWithdrawGM ||
 		result.Outcome != protocol.WarehouseOutcomeWithdrawn || result.ItemArchetypeID != worldruntime.WeaponEnhancementScrollItemArchetypeID ||
 		result.Quantity != 2 {
@@ -62,6 +62,33 @@ func TestWarehouseBrowserWSV32Map0GMRoundTrip(t *testing.T) {
 	}
 	if warehouseSnapshotQuantity(snapshot, worldruntime.WeaponEnhancementScrollItemArchetypeID) != 0 {
 		t.Fatalf("GM infinite source was decremented: %#v", snapshot.Items)
+	}
+	if got := inventorySnapshotQuantity(inventory, worldruntime.WeaponEnhancementScrollItemArchetypeID); got != 2 {
+		t.Fatalf("inventory after first GM withdraw=%d want=2 snapshot=%#v", got, inventory.Items)
+	}
+
+	// Replay the exact Reliable action sequence. The authoritative session sequence fence must
+	// consume no second grant. A following fresh sequence withdraws one more, so inventory must
+	// converge to 3 rather than 5.
+	sendWarehouseCommand(t, fixture, 2, protocol.ClientWarehouseCommand{
+		Operation:       protocol.WarehouseOperationWithdrawGM,
+		ItemArchetypeID: worldruntime.WeaponEnhancementScrollItemArchetypeID,
+		Quantity:        2,
+	})
+	sendWarehouseCommand(t, fixture, 3, protocol.ClientWarehouseCommand{
+		Operation:       protocol.WarehouseOperationWithdrawGM,
+		ItemArchetypeID: worldruntime.WeaponEnhancementScrollItemArchetypeID,
+		Quantity:        1,
+	})
+	result, snapshot, inventory = readWarehouseMutationResponse(t, fixture, 3, worldruntime.WeaponEnhancementScrollItemArchetypeID, 3)
+	if result.ClientActionSequence != 3 || result.Outcome != protocol.WarehouseOutcomeWithdrawn || result.Quantity != 1 {
+		t.Fatalf("post-replay withdraw_gm result=%#v", result)
+	}
+	if got := inventorySnapshotQuantity(inventory, worldruntime.WeaponEnhancementScrollItemArchetypeID); got != 3 {
+		t.Fatalf("Reliable replay duplicated GM grant: inventory=%d want=3 snapshot=%#v", got, inventory.Items)
+	}
+	if warehouseSnapshotQuantity(snapshot, worldruntime.WeaponEnhancementScrollItemArchetypeID) != 0 {
+		t.Fatalf("GM infinite source changed after replay check: %#v", snapshot.Items)
 	}
 }
 
@@ -288,6 +315,52 @@ func readWarehouseResultAndSnapshot(t *testing.T, fixture warehouseLiveFixture, 
 	}
 	t.Fatalf("warehouse response not observed result=%v snapshot=%v", haveResult, haveSnapshot)
 	return protocol.WarehouseResult{}, protocol.WarehouseSnapshot{}
+}
+
+
+func readWarehouseMutationResponse(t *testing.T, fixture warehouseLiveFixture, actionSequence uint32, itemArchetypeID string, wantInventoryQuantity uint32) (protocol.WarehouseResult, protocol.WarehouseSnapshot, protocol.InventorySnapshot) {
+	t.Helper()
+	var (
+		result        protocol.WarehouseResult
+		snapshot      protocol.WarehouseSnapshot
+		inventory     protocol.InventorySnapshot
+		haveResult    bool
+		haveSnapshot  bool
+		haveInventory bool
+	)
+	for i := 0; i < 192; i++ {
+		envelope := readEnvelope(t, fixture.ctx, fixture.conn, fixture.codec)
+		switch message := envelope.Message.(type) {
+		case protocol.WarehouseResult:
+			if message.ClientActionSequence != actionSequence {
+				t.Fatalf("unexpected warehouse result while waiting for sequence %d: %#v", actionSequence, message)
+			}
+			result = message
+			haveResult = true
+		case protocol.WarehouseSnapshot:
+			snapshot = message
+			haveSnapshot = true
+		case protocol.InventorySnapshot:
+			if inventorySnapshotQuantity(message, itemArchetypeID) == wantInventoryQuantity {
+				inventory = message
+				haveInventory = true
+			}
+		}
+		if haveResult && haveSnapshot && haveInventory {
+			return result, snapshot, inventory
+		}
+	}
+	t.Fatalf("warehouse mutation response incomplete sequence=%d result=%v snapshot=%v inventory=%v", actionSequence, haveResult, haveSnapshot, haveInventory)
+	return protocol.WarehouseResult{}, protocol.WarehouseSnapshot{}, protocol.InventorySnapshot{}
+}
+
+func inventorySnapshotQuantity(snapshot protocol.InventorySnapshot, itemArchetypeID string) uint32 {
+	for _, item := range snapshot.Items {
+		if item.ArchetypeID == itemArchetypeID {
+			return item.Quantity
+		}
+	}
+	return 0
 }
 
 func warehouseSnapshotQuantity(snapshot protocol.WarehouseSnapshot, itemArchetypeID string) uint32 {
