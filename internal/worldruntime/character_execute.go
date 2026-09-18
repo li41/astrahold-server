@@ -154,7 +154,6 @@ func (r *Runtime) applyAcceptedActionResource(name string, sessionID session.ID,
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		return
 	}
-	if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentActionResourceState(sourceSession, report) }
 }
 
 func (r *Runtime) applyHitActionResource(name string, sessionID session.ID, actorID world.EntityID, actionID string, report *StepReport) {
@@ -163,14 +162,15 @@ func (r *Runtime) applyHitActionResource(name string, sessionID session.ID, acto
 	if policy.HitResource != "" && policy.HitGain > 0 {
 		if _, err := r.characters.GainActionResource(actorID, policy.HitResource, policy.HitGain); err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
-		} else if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentActionResourceState(sourceSession, report) }
+		}
 	}
 	if policy.HitProgressResource != "" && policy.HitProgressGain > 0 {
 		_, visibleChanged, err := r.characters.GainActionResourceProgress(actorID, policy.HitProgressResource, policy.HitProgressGain)
 		if err != nil {
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sessionID, Err: err})
 		} else if visibleChanged {
-			if sourceSession, ok := r.sessions.Get(sessionID); ok && sourceSession.EntityID == actorID { r.sendCurrentActionResourceState(sourceSession, report) }
+			// The action-resource value remains authoritative Server state; Protocol v34 no longer
+			// publishes the retired Type117 compatibility presentation.
 		}
 	}
 }
