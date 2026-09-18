@@ -73,6 +73,7 @@ func (r *Runtime) applyUnregister(name string, c unregisterSessionCommand, repor
 	r.replication.Remove(c.id)
 	r.removeSessionVitals(c.id)
 	r.removeSessionInventoryDelivery(c.id)
+	delete(r.sessionAmmunitionSelection, c.id)
 	_ = s.Connection().Close()
 }
 
@@ -261,6 +262,7 @@ func (r *Runtime) cleanupRemovedSession(s *session.Session, report *StepReport) 
 	r.replication.Remove(s.ID)
 	r.removeSessionVitals(s.ID)
 	r.removeSessionInventoryDelivery(s.ID)
+	delete(r.sessionAmmunitionSelection, s.ID)
 	r.removeEntityVitals(s.EntityID)
 	r.clearReviveProtection(s.EntityID)
 	r.clearDeathOutcomeState(s.EntityID)
