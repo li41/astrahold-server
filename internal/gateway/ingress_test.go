@@ -138,7 +138,7 @@ func TestIngressRoutesExactEquipmentAcrossFormalSlots(t *testing.T) {
 
 func TestIngressRejectsUnknownEquipmentSlot(t *testing.T) {
 	ingress := NewIngress(&fakeSink{})
-	tests := []any{
+	tests := []protocol.Message{
 		protocol.ClientEquipmentCommand{
 			Operation: protocol.EquipmentOperationUnequip,
 			Slot:      protocol.EquipmentSlot("unknown"),
