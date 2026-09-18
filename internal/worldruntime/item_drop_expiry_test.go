@@ -66,15 +66,22 @@ func TestAutoLootClearsExpiryBookkeeping(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := StepReport{Tick: 1}
+	payload, ok := runtime.itemDropPayloads[dropID]
+	if !ok {
+		t.Fatal("auto-loot test drop missing payload")
+	}
 	if ok := runtime.tryAutoGrantMonsterLoot(monsterLootCandidate{
 		sessionID: s.ID,
 		characterID: s.CharacterIdentity.ID,
 		damage: 1,
-	}, testItemDropArchetypeID, dropID, &report); !ok {
+	}, payload, dropID, &report); !ok {
 		t.Fatalf("auto-loot failed: %#v", report.CommandErrors)
 	}
 	if _, exists := sim.Entity(dropID); exists {
 		t.Fatal("auto-looted drop still exists")
+	}
+	if _, tracked := runtime.itemDropPayloads[dropID]; tracked {
+		t.Fatal("auto-looted drop still has private payload")
 	}
 
 	runtime.Step(2, 50*time.Millisecond)
