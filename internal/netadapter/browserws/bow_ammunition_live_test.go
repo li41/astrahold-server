@@ -35,11 +35,11 @@ type bowAmmunitionLiveFixture struct {
 	playerEntityID world.EntityID
 }
 
-func TestBowAmmunitionBrowserWSV32LiveAuthority(t *testing.T) {
+func TestBowAmmunitionBrowserWSV33LiveAuthority(t *testing.T) {
 	warehouseState, err := characterstate.CanonicalWarehouseState(characterstate.WarehouseState{
 		Initialized: true,
 		Items: []characterstate.WarehouseStack{
-			{ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 1},
+			{ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 2},
 			{ItemArchetypeID: ammunition.ItemSilverArrow, Quantity: 1},
 		},
 	})
@@ -57,9 +57,9 @@ func TestBowAmmunitionBrowserWSV32LiveAuthority(t *testing.T) {
 	}
 
 	sendWarehouseCommand(t, warehouseFixtureView(fixture), 2, protocol.ClientWarehouseCommand{
-		Operation: protocol.WarehouseOperationWithdrawPersonal, ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 1,
+		Operation: protocol.WarehouseOperationWithdrawPersonal, ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 2,
 	})
-	readBowWarehouseMutation(t, fixture, 2, ammunition.ItemWoodArrow, 1, ammunition.ItemSilverArrow, 0)
+	readBowWarehouseMutation(t, fixture, 2, ammunition.ItemWoodArrow, 2, ammunition.ItemSilverArrow, 0)
 
 	sendWarehouseCommand(t, warehouseFixtureView(fixture), 3, protocol.ClientWarehouseCommand{
 		Operation: protocol.WarehouseOperationWithdrawPersonal, ItemArchetypeID: ammunition.ItemSilverArrow, Quantity: 1,
@@ -71,18 +71,21 @@ func TestBowAmmunitionBrowserWSV32LiveAuthority(t *testing.T) {
 	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 4, protocol.ClientUseAction{
 		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: "9201",
 	})
-	first := readBowCombatAndInventory(t, fixture, 4, ammunition.ItemWoodArrow, 0, ammunition.ItemSilverArrow, 1)
+	first := readBowCombatAndInventory(t, fixture, 4, ammunition.ItemWoodArrow, 1, ammunition.ItemSilverArrow, 1)
 	if first.Result != protocol.CombatEventHit && first.Result != protocol.CombatEventMiss {
 		t.Fatalf("wood-arrow combat event=%#v", first)
 	}
 
-	// Bow cadence is 1.2s. Let the authoritative cooldown expire, then the remaining silver arrow
-	// must be consumed by the next established shot.
+	sendAmmunitionCommand(t, fixture, 5, ammunition.ItemSilverArrow)
+	readAmmunitionFeedback(t, fixture, 5, ammunition.ItemSilverArrow)
+
+	// Bow cadence is 1.2s. After it expires, the manual silver selection overrides the remaining
+	// wood arrow. Depleting the selected silver stack returns authoritative state to auto mode.
 	time.Sleep(1300 * time.Millisecond)
-	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 5, protocol.ClientUseAction{
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 6, protocol.ClientUseAction{
 		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: "9201",
 	})
-	second := readBowCombatAndInventory(t, fixture, 5, ammunition.ItemWoodArrow, 0, ammunition.ItemSilverArrow, 0)
+	second := readBowCombatInventoryAndAutoState(t, fixture, 6, ammunition.ItemWoodArrow, 1, ammunition.ItemSilverArrow, 0)
 	if second.Result != protocol.CombatEventHit && second.Result != protocol.CombatEventMiss {
 		t.Fatalf("silver-arrow combat event=%#v", second)
 	}
@@ -97,33 +100,41 @@ func TestBowAmmunitionBrowserWSV32LiveAuthority(t *testing.T) {
 	}
 }
 
-func TestCrossbowBrowserWSV32DoesNotConsumeBowArrows(t *testing.T) {
+func TestCrossbowBrowserWSV33ConsumesSelectedArrow(t *testing.T) {
 	warehouseState := characterstate.EmptyWarehouseState()
 	fixture := newBowAmmunitionLiveFixture(t, "item_hunter_light_crossbow", []characterstate.InventoryStack{
-		{ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 2},
+		{ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 1},
+		{ItemArchetypeID: ammunition.ItemSilverArrow, Quantity: 1},
 	}, warehouseState)
 
-	readBowInventory(t, fixture, ammunition.ItemWoodArrow, 2, ammunition.ItemSilverArrow, 0)
+	readBowInventory(t, fixture, ammunition.ItemWoodArrow, 1, ammunition.ItemSilverArrow, 1)
+	sendAmmunitionCommand(t, fixture, 1, ammunition.ItemSilverArrow)
+	readAmmunitionFeedback(t, fixture, 1, ammunition.ItemSilverArrow)
 
-	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 1, protocol.ClientUseAction{
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 2, protocol.ClientUseAction{
 		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: "9201",
 	})
-	event := readBowCombatEvent(t, fixture, 1)
+	event := readBowCombatInventoryAndAutoState(t, fixture, 2, ammunition.ItemWoodArrow, 1, ammunition.ItemSilverArrow, 0)
 	if event.Result != protocol.CombatEventHit && event.Result != protocol.CombatEventMiss {
 		t.Fatalf("crossbow combat event=%#v", event)
 	}
-
-	// Deposit both arrows after the shot. This succeeds only if the crossbow did not consume one.
-	sendWarehouseCommand(t, warehouseFixtureView(fixture), 2, protocol.ClientWarehouseCommand{
-		Operation: protocol.WarehouseOperationDepositPersonal, ItemArchetypeID: ammunition.ItemWoodArrow, Quantity: 2,
-	})
-	result, snapshot := readWarehouseResultAndSnapshot(t, warehouseFixtureView(fixture), true)
-	if result.ClientActionSequence != 2 || result.Operation != protocol.WarehouseOperationDepositPersonal ||
-		result.Outcome != protocol.WarehouseOutcomeDeposited {
-		t.Fatalf("crossbow post-shot deposit result=%#v", result)
+	if event.Result == protocol.CombatEventHit {
+		normalSilver := event.Damage >= 50 && event.Damage <= 54
+		criticalSilver := event.Damage >= 75 && event.Damage <= 81
+		if !normalSilver && !criticalSilver {
+			t.Fatalf("crossbow silver-arrow undead damage=%d outside authoritative silver ranges", event.Damage)
+		}
 	}
-	if got := warehouseSnapshotQuantity(snapshot, ammunition.ItemWoodArrow); got != 2 {
-		t.Fatalf("crossbow consumed bow ammo before deposit: warehouse=%d want=2 snapshot=%#v", got, snapshot.Items)
+}
+
+func TestCrossbowBrowserWSV33RejectsWithoutArrow(t *testing.T) {
+	fixture := newBowAmmunitionLiveFixture(t, "item_hunter_light_crossbow", nil, characterstate.EmptyWarehouseState())
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 1, protocol.ClientUseAction{
+		ActionID: "basic-attack", TargetKind: protocol.ActionTargetEntity, TargetID: "9201",
+	})
+	rejected := readBowActionRejection(t, fixture, 1)
+	if rejected.Reason != protocol.ActionRejectionInsufficientResource || rejected.CooldownReadyTick != 0 {
+		t.Fatalf("crossbow no-arrow rejection=%#v", rejected)
 	}
 }
 
@@ -368,4 +379,72 @@ func readBowInventory(t *testing.T, fixture bowAmmunitionLiveFixture, firstID st
 	}
 	t.Fatalf("inventory snapshot not observed %s=%d %s=%d", firstID, firstQuantity, secondID, secondQuantity)
 	return protocol.InventorySnapshot{}
+}
+
+
+func sendAmmunitionCommand(t *testing.T, fixture bowAmmunitionLiveFixture, sequence uint32, itemArchetypeID string) {
+	t.Helper()
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, sequence, protocol.ClientAmmunitionCommand{
+		Operation: protocol.AmmunitionOperationSelect,
+		ItemArchetypeID: itemArchetypeID,
+	})
+}
+
+func readAmmunitionFeedback(t *testing.T, fixture bowAmmunitionLiveFixture, sequence uint32, selected string) {
+	t.Helper()
+	var haveResult, haveState bool
+	for i := 0; i < 256; i++ {
+		envelope := readEnvelope(t, fixture.ctx, fixture.conn, fixture.codec)
+		switch message := envelope.Message.(type) {
+		case protocol.AmmunitionResult:
+			if message.ClientActionSequence == sequence {
+				if message.Outcome != protocol.AmmunitionOutcomeSelected || message.ItemArchetypeID != selected {
+					t.Fatalf("ammunition result=%#v", message)
+				}
+				haveResult = true
+			}
+		case protocol.AmmunitionState:
+			if message.SelectedItemArchetypeID == selected {
+				haveState = true
+			}
+		}
+		if haveResult && haveState {
+			return
+		}
+	}
+	t.Fatalf("ammunition feedback sequence=%d incomplete result=%v state=%v", sequence, haveResult, haveState)
+}
+
+func readBowCombatInventoryAndAutoState(t *testing.T, fixture bowAmmunitionLiveFixture, sequence uint32, firstID string, firstQuantity uint32, secondID string, secondQuantity uint32) protocol.CombatEvent {
+	t.Helper()
+	var event protocol.CombatEvent
+	var haveEvent, haveInventory, haveAutoState bool
+	for i := 0; i < 320; i++ {
+		envelope := readEnvelope(t, fixture.ctx, fixture.conn, fixture.codec)
+		switch message := envelope.Message.(type) {
+		case protocol.ActionRejected:
+			if message.ClientActionSequence == sequence {
+				t.Fatalf("action sequence=%d rejected: %#v", sequence, message)
+			}
+		case protocol.CombatEvent:
+			if message.ActorEntityID == fixture.playerEntityID && message.TargetEntityID == bowLiveTargetID && message.ActionID == "basic-attack" {
+				event = message
+				haveEvent = true
+			}
+		case protocol.InventorySnapshot:
+			if inventorySnapshotQuantity(message, firstID) == firstQuantity &&
+				inventorySnapshotQuantity(message, secondID) == secondQuantity {
+				haveInventory = true
+			}
+		case protocol.AmmunitionState:
+			if message.SelectedItemArchetypeID == "" {
+				haveAutoState = true
+			}
+		}
+		if haveEvent && haveInventory && haveAutoState {
+			return event
+		}
+	}
+	t.Fatalf("combat/inventory/auto-state sequence=%d incomplete event=%v inventory=%v auto=%v", sequence, haveEvent, haveInventory, haveAutoState)
+	return protocol.CombatEvent{}
 }
