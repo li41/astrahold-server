@@ -224,22 +224,24 @@ Map1 V1 等級梯度：
 
 ### 6.1 核心戰鬥數值
 
-| 怪物 | Lv | HP | 單次近戰 raw damage | 物防 | 魔防 | PhysicalHit | Evasion | CriticalRating | 暴擊率 | 攻擊間隔 | BaseXP |
+| 怪物 | Lv | HP | 近戰 raw damage | 物防 | 魔防 | PhysicalHit | Evasion | CriticalRating | 暴擊率 | 攻擊間隔 | BaseXP |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 灰狼 | 5 | 200 | 80 | 10 | 5 | 3 | 5 | 2 | 6% | 1.35 s | 20 |
-| 野豬 | 7 | 280 | 95 | 20 | 5 | 1 | 1 | 0 | 5% | 1.55 s | 30 |
-| 枯柳逃兵 | 8 | 240 | 90 | 15 | 10 | 3 | 3 | 1 | 5.5% | 1.30 s | 35 |
-| 枯柳惡兵 | 12 | 360 | 115 | 35 | 15 | 4 | 2 | 1 | 5.5% | 1.45 s | 60 |
-| 枯柳頭目 | 18 | 700 | 130 | 45 | 25 | 7 | 6 | 4 | 7% | 1.30 s | 180 |
-| 赤土工蟻 | 7 | 120 | 60 | 5 | 5 | 1 | 4 | 0 | 5% | 1.10 s | 20 |
-| 赤土兵蟻 | 11 | 230 | 95 | 20 | 10 | 3 | 3 | 1 | 5.5% | 1.30 s | 50 |
-| 赤土衛蟻 | 15 | 380 | 120 | 40 | 20 | 5 | 2 | 2 | 6% | 1.40 s | 90 |
-| 赤土蟻后 | 22 | 1000 | 150 | 50 | 40 | 6 | 0 | 4 | 7% | 1.60 s | 320 |
-| 岩岸蟹 | 8 | 300 | 85 | 35 | 10 | 1 | 1 | 0 | 5% | 1.65 s | 30 |
+| 灰狼 | 5 | 50 | 5–13 | 10 | 5 | 3 | 5 | 2 | 6% | 1.35 s | 20 |
+| 野豬 | 7 | 75 | 6–17 | 20 | 5 | 1 | 1 | 0 | 5% | 1.55 s | 30 |
+| 枯柳逃兵 | 8 | 85 | 7–19 | 15 | 10 | 3 | 3 | 1 | 5.5% | 1.30 s | 35 |
+| 枯柳惡兵 | 12 | 170 | 9–27 | 35 | 15 | 4 | 2 | 1 | 5.5% | 1.45 s | 60 |
+| 枯柳頭目 | 18 | 450 | 13–40 | 45 | 25 | 7 | 6 | 4 | 7% | 1.30 s | 180 |
+| 赤土工蟻 | 7 | 55 | 5–14 | 5 | 5 | 1 | 4 | 0 | 5% | 1.10 s | 20 |
+| 赤土兵蟻 | 11 | 135 | 8–24 | 20 | 10 | 3 | 3 | 1 | 5.5% | 1.30 s | 50 |
+| 赤土衛蟻 | 15 | 220 | 11–33 | 40 | 20 | 5 | 2 | 2 | 6% | 1.40 s | 90 |
+| 赤土蟻后 | 22 | 1200 | 18–55 | 50 | 40 | 6 | 0 | 4 | 7% | 1.60 s | 320 |
+| 岩岸蟹 | 8 | 95 | 6–18 | 35 | 10 | 1 | 1 | 0 | 5% | 1.65 s | 30 |
 
 數值語義：
 
-- `單次近戰 raw damage` 是 critical 與 mitigation 前的 Server-owned action base damage。
+- `近戰 raw damage` 是 critical 與 mitigation 前的 Server-owned `DamageMin..DamageMax`；每次命中由 Server 在閉區間內 authoritative roll，一次攻擊只 roll 一次。
+- 這個傷害尺度參考 `li41/myriad-throne-server` 的同級怪物節奏：舊版怪物由 `Level + STR/3` 形成攻擊骰上限，再疊 STR damage bonus；Astrahold **只參考結果尺度，不搬舊 STR/DEX lookup table 或 Lua combat architecture**。
+- 玩家基礎生命已改採舊專案相近尺度：`BaseMaxHP = 15 + 11 × (Level - 1)`。因此舊 60–150 固定 monster raw damage 與 200 HP 灰狼 playtest 尺度已 supersede，不得再作 Map1 正式 balance 依據。
 - V1 十種怪的普通攻擊皆為 `physical`、`blockable=true`、`critical_eligible=true`、物防穿透 0%。
 - `PhysicalHit` 與 `Evasion` 是 rating，不是百分比。
 - 命中沿用正式公式：`clamp(90% + (attacker PhysicalHit - target Evasion) × 0.5%, 75%, 98%)`。
@@ -304,7 +306,7 @@ Map1 實作不得只把表格寫成資料卻不生效，至少需要：
    - `CriticalRating`
    - `BaseXP`
    - movement / lifecycle / AI profile
-   - melee action identity
+   - melee action identity + `DamageMin` / `DamageMax`
 
 2. 通用 entity combat stat resolver：
    - 玩家仍從 character/equipment/passive truth 聚合。
@@ -405,7 +407,7 @@ Map1 monster implementation 建議切四個 slice：
    - stable monster archetype definition
    - common melee AI profile
    - MonsterLevel / HP / physical & magic defense / PhysicalHit / Evasion / CriticalRating / BaseXP
-   - per-archetype melee action damage / interval / range
+   - per-archetype melee `DamageMin` / `DamageMax` / interval / range
    - movement / BodySize / lifecycle config
    - generic monster combat-stat / PvE hit / target-defense resolver
    - validation
