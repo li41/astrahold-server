@@ -64,7 +64,7 @@ func TestBowAmmunitionBrowserWSV33LiveAuthority(t *testing.T) {
 	sendWarehouseCommand(t, warehouseFixtureView(fixture), 3, protocol.ClientWarehouseCommand{
 		Operation: protocol.WarehouseOperationWithdrawPersonal, ItemArchetypeID: ammunition.ItemSilverArrow, Quantity: 1,
 	})
-	readBowWarehouseMutation(t, fixture, 3, ammunition.ItemWoodArrow, 1, ammunition.ItemSilverArrow, 1)
+	readBowWarehouseMutation(t, fixture, 3, ammunition.ItemWoodArrow, 2, ammunition.ItemSilverArrow, 1)
 
 	// If the rejected no-ammo attempt had committed the authored 1.2s bow cooldown, this immediate
 	// shot would be rejected. A CombatEvent proves the rejection consumed neither ammo nor cooldown.

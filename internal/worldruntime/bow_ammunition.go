@@ -122,10 +122,10 @@ func rollBowAndArrowDamage(definition equipmentcatalog.Definition, size equipmen
 	return uint32(total)
 }
 
-// rollEquippedBasicAttackWeaponDamageWithAmmunition keeps all non-bow weapons on their existing
-// damage path. Bow hits combine bow + exact selected arrow; crossbows keep authored weapon damage while consuming the exact selected arrow into one uniform roll, consume that exact
-// arrow, and return its material alongside damage so later material rules use the fired ammunition
-// rather than guessing from post-consumption inventory state.
+// rollEquippedBasicAttackWeaponDamageWithAmmunition keeps weapons without arrow requirements on
+// their existing damage path. Bow hits combine bow + exact selected arrow into one roll; crossbows
+// keep their authored weapon damage while consuming the same authoritative arrow stacks. The fired
+// arrow material is returned so later material rules use the exact consumed ammunition.
 func (r *Runtime) rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID world.EntityID, sourceSessionID session.ID, definition equipmentcatalog.Definition, size equipmentcatalog.BodySize) (uint32, equipmentcatalog.MaterialID) {
 	if definition.Weapon == nil {
 		return rollWeaponDamage(definition, size, rand.Uint32()), ""

@@ -20,6 +20,7 @@ func TestAmmunitionSelectionRequiresOwnedArrowAndPublishesState(t *testing.T) {
 	if report := rt.Step(3, 50*time.Millisecond); len(report.CommandErrors) != 0 {
 		t.Fatalf("selection rejection command errors=%#v", report.CommandErrors)
 	}
+	rt.Step(4, 50*time.Millisecond) // flush queued Reliable result/state
 	result := nextAmmunitionResult(t, conn)
 	if result.Outcome != protocol.AmmunitionOutcomeRejected || result.Reason != protocol.AmmunitionRejectionInsufficientInventory {
 		t.Fatalf("missing-arrow selection result=%#v", result)
@@ -35,9 +36,10 @@ func TestAmmunitionSelectionRequiresOwnedArrowAndPublishesState(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if report := rt.Step(4, 50*time.Millisecond); len(report.CommandErrors) != 0 {
+	if report := rt.Step(5, 50*time.Millisecond); len(report.CommandErrors) != 0 {
 		t.Fatalf("selection command errors=%#v", report.CommandErrors)
 	}
+	rt.Step(6, 50*time.Millisecond) // flush queued Reliable result/state
 	result = nextAmmunitionResult(t, conn)
 	if result.Outcome != protocol.AmmunitionOutcomeSelected || result.ItemArchetypeID != ammunition.ItemSilverArrow {
 		t.Fatalf("selected result=%#v", result)
