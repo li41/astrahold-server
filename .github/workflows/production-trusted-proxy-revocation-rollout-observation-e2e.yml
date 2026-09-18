@@ -48,7 +48,7 @@ jobs:
           run = source.index('        run: |\n', step) + len('        run: |\n')
           body = source[run:]
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines()) + '\n'
-          script = script.replace('protocol=29', 'protocol=32')
+          script = script.replace('protocol=29', 'protocol=33')
 
           needle = 'test "$(request 39752 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401\n\nkill -HUP "$b_pid"'
           replacement = 'test "$(request 39752 "$tls/edge-a.crt" "$tls/edge-a.key" 127.0.0.2)" = 401\nsleep 0.35\n\nkill -HUP "$b_pid"'
@@ -94,4 +94,4 @@ jobs:
           assert [x['instance_id'] for x in wait3['observation']['acks']] == ['instance-a', 'instance-b']
           PY
 
-          echo "ASTRAHOLD_F27_ROLLOUT_OBSERVATION_OK controller_timing=true staggered_ack_observed=true incomplete_timing=true required_ack_gate=true delayed_member_blocks_convergence=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=32 tls=1.3"
+          echo "ASTRAHOLD_F27_ROLLOUT_OBSERVATION_OK controller_timing=true staggered_ack_observed=true incomplete_timing=true required_ack_gate=true delayed_member_blocks_convergence=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=33 tls=1.3"
