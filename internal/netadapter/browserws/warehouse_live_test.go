@@ -216,7 +216,7 @@ func newWarehouseLiveFixture(t *testing.T, authenticationSubject string, stacks 
 				SchemaVersion: characterstate.SchemaVersion,
 				CharacterID:   identity.ID,
 				Revision:      1,
-				MapID:         string(gameplayworld.MapIDGMRoom),
+				MapID:         gameplayworld.MapIDGMRoom,
 				World:         worldIdentity,
 				HP:            1000,
 				MaxHP:         1000,
