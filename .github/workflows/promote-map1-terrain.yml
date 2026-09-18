@@ -1,0 +1,53 @@
+name: Promote Map1 Terrain Binary
+
+on:
+  push:
+    branches:
+      - ai-working-gpt-server
+    paths:
+      - .github/workflows/promote-map1-terrain.yml
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Server
+        uses: actions/checkout@v4
+        with:
+          ref: ai-working-gpt-server
+          fetch-depth: 0
+
+      - name: Checkout Assets candidate with LFS
+        uses: actions/checkout@v4
+        with:
+          repository: li41/astrahold-assets
+          ref: ai-working-claude
+          path: asset-source
+          lfs: true
+
+      - name: Verify candidate heightfield
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="asset-source/assets/environment/terrain/map1/runtime/land.bin"
+          test -f "$src"
+          actual_size="$(wc -c < "$src" | tr -d ' ')"
+          test "$actual_size" = "2255616"
+          echo "eff137f190c02355ba775fa4ac3df9c958b87640af1c770e1fccc25718f678f0  $src" | sha256sum -c -
+
+      - name: Promote into Server world bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p worlds/map1/terrain
+          cp asset-source/assets/environment/terrain/map1/runtime/land.bin worlds/map1/terrain/land.bin
+          rm -rf asset-source
+          git rm .github/workflows/promote-map1-terrain.yml
+          git config user.name "gpt-server"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add worlds/map1/terrain/land.bin
+          git commit -m "world: promote map1 terrain heightfield"
+          git push origin HEAD:ai-working-gpt-server
