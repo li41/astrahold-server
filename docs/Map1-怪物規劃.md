@@ -362,6 +362,51 @@ V1 共用三種資料化 profile，不為 10 隻怪寫 10 套 AI：
 - 較長但仍有限的 encounter leash
 - V1 仍使用同一 authoritative melee legality，不建立 boss-only combat path
 
+### 7.1 主動／非主動與同族援助
+
+怪物是否主動索敵與是否支援附近同族是兩個獨立的 Server-authored 欄位，不由 Client presentation 或怪物名稱推導。
+
+`AggroMode`：
+
+- `aggressive`：玩家進入 authored AggroRadius 且通過 Server targeting legality 後，怪物可主動建立 target／threat。
+- `passive`：不因玩家接近自行開戰；受到合法傷害／敵對效果後才建立 threat。若本身允許接收 ally assist，也可以因同族求援加入戰鬥。
+
+`AssistPolicy`：
+
+- `none`：不呼叫附近同族，也不因一般同族求援加入。
+- `same_family`：受到玩家傷害並正式進入戰鬥時，可通知同一 `AssistFamilyID` 的附近怪物加入。
+- 援助只允許 **one-hop**：被叫來的援軍不得再次廣播援助，避免 chain aggro 把整個 POI／蟻穴拉進同一場戰鬥。
+- 援助候選必須同屬 authored encounter pocket/group、在 `AssistRadius` 內、仍存活、未超出自己的 home/leash legality；不得隔牆跨 encounter pocket 或跨區域求援。
+- `MaxAssist` 是一次 alert 最多加入的額外怪物數；選擇由 Server deterministic policy 決定（優先距離最近，再以 EntityID 穩定排序），Client 不決定誰來援助。
+- 援助只建立對「觸發傷害的玩家／其合法敵對來源」的初始 threat，不直接複製完整 threat table。
+- Boss 求援只會喚起**當下已存在的 authored nearby monsters**；V1 不因 assist 動態生成新怪，也不繞過「Boss 戰中不形成無限 respawn 怪潮」規則。
+
+Map1 V1：
+
+| 怪物 | AggroMode | AssistFamilyID | AssistPolicy | AssistRadius | MaxAssist | 玩家體感 |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| 灰狼 | aggressive | `family_gray_wolf` | same_family | 6 m | 2 | 會主動追近距離玩家；狼群靠太近時可能有 1–2 隻加入 |
+| 野豬 | passive | — | none | — | 0 | 玩家不打就不主動攻擊，受攻擊後單獨反擊 |
+| 枯柳逃兵 | aggressive | `family_witherwill` | same_family | 6 m | 2 | 寨外／外圍可主動攻擊，附近同伙會小規模支援 |
+| 枯柳惡兵 | aggressive | `family_witherwill` | same_family | 8 m | 3 | 守區型；攻擊其中一人容易帶動附近守軍 |
+| 枯柳頭目 | aggressive | `family_witherwill` | same_family | 10 m | 3 | 頭目戰可帶入附近既存守軍，但不生成援軍 |
+| 赤土工蟻 | passive | `family_redsoil_ant` | same_family | 6 m | 2 | 本身不主動；攻擊工蟻可能驚動附近蟻群 |
+| 赤土兵蟻 | aggressive | `family_redsoil_ant` | same_family | 7 m | 2 | 蟻穴主力會主動迎擊並呼叫少量同巢單位 |
+| 赤土衛蟻 | aggressive | `family_redsoil_ant` | same_family | 8 m | 3 | 深層守巢，較容易形成小型群戰 |
+| 赤土蟻后 | aggressive | `family_redsoil_ant` | same_family | 10 m | 4 | 只喚起 Boss pocket 內既存蟻群；V1 無召喚／產卵 |
+| 岩岸蟹 | passive | — | none | — | 0 | 探索型耐打怪，不主動追人、不互相幫忙 |
+
+這些欄位與既有 `Aggro / Leash` 距離共同生效：
+
+```text
+AggroMode
++ AggroRadius
++ AssistPolicy / AssistFamilyID / AssistRadius / MaxAssist
++ encounter-group boundary
++ per-entity home / leash
+-> Server authoritative target/threat decision
+```
+
 ## 8. Spawn / lifecycle authority
 
 正式實作必須保持：
