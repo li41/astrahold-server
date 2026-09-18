@@ -35,8 +35,6 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in clientPickupItem; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientPickupItem{DropEntityID: world.EntityID(in.DropEntityID)}, nil
 	case protocol.MessageClientUseItem:
 		var in clientUseItem; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientUseItem{ItemArchetypeID: in.ItemArchetypeID}, nil
-	case protocol.MessageClientInitialClassSelection:
-		var in clientInitialClassSelection; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientInitialClassSelection{ClassID: in.ClassID}, nil
 	case protocol.MessageClientInteractNPC:
 		var in clientInteractNPC; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.ClientInteractNPC{NPCEntityID: world.EntityID(in.NPCEntityID)}, nil
 	case protocol.MessageClientShopCommand:
@@ -59,12 +57,6 @@ func (Codec) Unmarshal(messageType protocol.MessageType, data []byte) (protocol.
 		var in ammunitionResult; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.AmmunitionResult{ClientActionSequence: in.ClientActionSequence, Operation: protocol.AmmunitionOperation(in.Operation), Outcome: protocol.AmmunitionOutcome(in.Outcome), Reason: protocol.AmmunitionRejectionReason(in.Reason), ItemArchetypeID: in.ItemArchetypeID}, nil
 	case protocol.MessageAmmunitionState:
 		var in ammunitionState; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.AmmunitionState{SelectedItemArchetypeID: in.SelectedItemArchetypeID}, nil
-	case protocol.MessageCharacterClassState:
-		var in characterClassState; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.CharacterClassState{ClassID: in.ClassID}, nil
-	case protocol.MessageCharacterClassResourceState:
-		var in characterClassResourceState; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.CharacterClassResourceState{EntityID: world.EntityID(in.EntityID), ResourceID: in.ResourceID, Current: in.Current, Max: in.Max}, nil
-	case protocol.MessageInitialClassSelectionResult:
-		var in initialClassSelectionResult; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.InitialClassSelectionResult{ClientActionSequence: in.ClientActionSequence, ClassID: in.ClassID, Outcome: protocol.InitialClassSelectionOutcome(in.Outcome), Reason: protocol.InitialClassSelectionRejectionReason(in.Reason)}, nil
 	case protocol.MessageSessionWelcome:
 		var in sessionWelcome; if err := decodeStrict(data, &in); err != nil { return nil, err }; return protocol.SessionWelcome{SessionID: in.SessionID, EntityID: world.EntityID(in.EntityID), RealtimePort: in.RealtimePort, RealtimeToken: in.RealtimeToken, TickRateHz: in.TickRateHz, SnapshotRateHz: in.SnapshotRateHz, World: protocol.WorldIdentity{WorldID: in.WorldID, Revision: in.WorldRevision, GameplaySHA256: in.GameplaySHA256}}, nil
 	case protocol.MessageEntitySpawn:
