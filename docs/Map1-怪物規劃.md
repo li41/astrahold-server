@@ -439,7 +439,7 @@ Map1 monster content data
 - stable `ArchetypeID` 才是跨 spawn 的內容身份。
 - exact spawn points、home positions、patrol paths 必須位於 Server-authoritative traversable map1 representation。
 - Client POI anchor 可作設計參考，但不能直接當 authoritative spawn point。
-- 沒有正式 Server map1 navigation/collision representation前，不把 Client world coordinate硬寫成 combat spawn truth。
+- 沒有正式 Server map1 navigation/collision representation前，不把 Client world coordinate硬寫成 combat spawn truth。2026-09-18 檢查時 repository 的正式 Gameplay World 只有 `worlds/castle-sandbox/gameplay.json` 與 `worlds/gm-room/gameplay.json`，尚無 Map1 gameplay proxy；因此其餘 9 種怪的 exact placement 保持未落地是 authority-safe 的刻意結果，不是用 Client 座標暫代。
 
 ## 9. Loot boundary
 
