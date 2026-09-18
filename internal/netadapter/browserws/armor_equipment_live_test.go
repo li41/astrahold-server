@@ -162,7 +162,7 @@ func TestArmorEquipmentBrowserWSV33RoundTripAndRejections(t *testing.T) {
 		return state.complete() &&
 			!inventoryInstancePresent(state.inventoryInstances, armorLiveMidInstanceID) &&
 			inventoryInstancePresent(state.inventoryInstances, armorLiveHighInstanceID) &&
-			equipmentArchetype(state.equipment, protocol.EquipmentSlotChest) == "" &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotChest) == armorLiveMidChest &&
 			equipmentInstanceID(state.equipmentInstances, protocol.EquipmentSlotChest) == armorLiveMidInstanceID
 	})
 	assertProtocolInstanceMatches(
