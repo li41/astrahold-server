@@ -9,8 +9,8 @@ type rangedAmmunitionBalance struct {
 
 var defaultRangedAmmunitionBalanceByItem = map[string]rangedAmmunitionBalance{
 	"item_hunter_shortbow":       {WeaponType: WeaponTypeBow, BaseDamage: DamageRange{Min: 2, Max: 3}},
-	"item_mid_bow":               {WeaponType: WeaponTypeBow, BaseDamage: DamageRange{Min: 5, Max: 7}},
-	"item_high_bow":              {WeaponType: WeaponTypeBow, BaseDamage: DamageRange{Min: 8, Max: 12}},
+	"item_mid_bow":               {WeaponType: WeaponTypeBow, BaseDamage: DamageRange{Min: 3, Max: 4}},
+	"item_high_bow":              {WeaponType: WeaponTypeBow, BaseDamage: DamageRange{Min: 4, Max: 5}},
 	"item_hunter_light_crossbow": {WeaponType: WeaponTypeCrossbow, BaseDamage: DamageRange{Min: 6, Max: 7}},
 	"item_mid_crossbow":          {WeaponType: WeaponTypeCrossbow, BaseDamage: DamageRange{Min: 11, Max: 13}},
 	"item_high_crossbow":         {WeaponType: WeaponTypeCrossbow, BaseDamage: DamageRange{Min: 16, Max: 19}},

@@ -40,8 +40,8 @@ func TestProductionBowTotalsRemainAuthoredWithEitherApprovedArrow(t *testing.T) 
 		wantMax uint32
 	}{
 		{"item_hunter_shortbow", 8, 11},
-		{"item_mid_bow", 11, 15},
-		{"item_high_bow", 14, 20},
+		{"item_mid_bow", 9, 12},
+		{"item_high_bow", 10, 13},
 	}
 	for _, arrowID := range []string{ammunition.ItemWoodArrow, ammunition.ItemSilverArrow} {
 		arrow, ok := ammunition.Resolve(arrowID)
