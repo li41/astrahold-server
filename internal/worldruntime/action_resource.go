@@ -46,8 +46,8 @@ func (r *Runtime) validateActionResourceCost(
 }
 
 // consumeActionResource mutates the Server-owned classless action resource after all legality gates
-// pass, then re-sends the v27 compatibility presentation state to the owning session. The Client
-// never subtracts a local cost as gameplay truth.
+// pass. The retired Type117 presentation lane is intentionally not replaced here; gameplay legality
+// and mutation remain Server-owned even when no generic action-resource UI snapshot is published.
 func (r *Runtime) consumeActionResource(
 	name string,
 	sourceSessionID session.ID,
@@ -69,9 +69,6 @@ func (r *Runtime) consumeActionResource(
 		}
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
 		return false
-	}
-	if sourceSession, ok := r.sessions.Get(sourceSessionID); ok && sourceSession.EntityID == actorID {
-		r.sendCurrentActionResourceState(sourceSession, report)
 	}
 	return true
 }
@@ -108,9 +105,6 @@ func (r *Runtime) applyAcceptedActionResourceReduction(
 			report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, SessionID: sourceSessionID, Err: err})
 			return false
 		}
-	}
-	if sourceSession, ok := r.sessions.Get(sourceSessionID); ok && sourceSession.EntityID == actorID {
-		r.sendCurrentActionResourceState(sourceSession, report)
 	}
 	return true
 }
