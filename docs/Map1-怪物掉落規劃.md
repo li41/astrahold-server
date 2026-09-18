@@ -1,505 +1,603 @@
 # Map1／燼望新手區怪物掉落規劃
 
-本文件規劃 **map1 / Emberwatch starter region** 第一版怪物掉落與裝備取得節奏。
+本文件定義 **map1 / Emberwatch starter region** 第一版正式怪物掉落內容。
 
-上位怪物內容見 [Map1-怪物規劃](Map1-怪物規劃.md)。
+上位怪物 roster 見 [Map1-怪物規劃](Map1-怪物規劃.md)。
 
-本文件是 gameplay content plan；正式掉率在實作前仍需以真 Client TTK、平均擊殺速度、背包容量與裝備供給速度校正。沒有落入 Server loot catalog 並通過驗證前，不算 production gameplay truth。
+本版已把「武器池／防具池」全部拆成 exact stable ID。實作時每一列都是獨立 Server roll；未寫入 production loot catalog 並實際驗證前，仍屬正式規劃而非已生效 gameplay truth。
 
-## 1. 設計目標
+## 1. Map1 金幣模型
 
-Map1 掉落只解決三件事：
+Map1 V1 正式採：
 
-1. 玩家打怪後經常有「得到東西」的回饋。
-2. 玩家能在新手區逐步取得 **低階裝備**，並第一次看到少量 **中階 unique 裝備**。
-3. 木箭、藥水與少量強化資源能從 PvE 取得，但不讓 starter region 直接供應整個後期經濟。
+```text
+item_gold_coin
+```
 
-V1 不追求完整經濟系統，不把每隻怪都塞滿材料／垃圾／貨幣。
+定義：
 
-## 2. 掉落層級
+- stable ItemArchetypeID：`item_gold_coin`
+- 可堆疊
+- authoritative inventory quantity
+- unit weight = 0
+- 不可裝備
+- 不可 item-use
+- 可直接作 `shop.Offer.CostArchetypeID`
+- 掉落／auto grant／pickup／persistence 都沿用既有 Server inventory authority
+- Map1 怪物全部 100% 產生金幣，數量由 Server 在 authored min/max 內擲出
+- `uint32` 只視為目前 storage representation，不升格為經濟上的 gameplay 上限
 
-### A. 常用消耗品
+V1 不另建 wallet Protocol。若後續拍賣場、交易、郵件、跨角色銀行等經濟需求需要專用 currency ledger，再做 migration；Map1 不先開第二套 gameplay truth。
 
-- `item_minor_healing_potion`
-- `item_minor_mana_potion`
-- `item_low_arrow`（木箭）
+## 2. 共用非裝備道具
 
-用途：維持玩家繼續打怪的基本循環。
+| ItemArchetypeID | 定義 |
+| --- | --- |
+| `item_gold_coin` | 金幣；零重量 stack |
+| `item_gray_wolf_pelt` | 灰狼皮；現有 Emberwatch shop 已可 1:1 換 minor healing potion，因此有正式 sink |
+| `item_minor_healing_potion` | 小型治療藥水 |
+| `item_minor_mana_potion` | 小型魔力藥水 |
+| `item_low_arrow` | 木箭 |
+| `item_astrahold_weapon_enhancement_scroll` | 武器強化卷 |
+| `item_astrahold_armor_enhancement_scroll` | 防具／盾牌強化卷 |
 
-### B. 低階裝備
+`item_silver_arrow` 不進 Map1 V1。
 
-Map1 是低階 equipment 的主要 PvE 來源。
+## 3. 掉落語義
 
-範圍：
+除金幣 quantity 外，每個表格列出的機率都是 **independent roll**。
 
-- 低階武器
-- 低階盾牌
-- 低階 cloth / leather / heavy 五部位防具
+例如同一次蟻后擊殺可以：
 
-低階裝備維持 archetype-only；不需要 unique affix。
+- 只掉金幣；
+- 金幣 + 藥水；
+- 金幣 + 一件裝備；
+- 少數情況金幣 + 多件裝備。
 
-### C. 中階 unique 裝備
+不使用「先抽一個 pool，再從 pool 選一件」的隱藏語義。
 
-只由：
+### Stack item
 
-- 枯柳頭目
-- 赤土衛蟻
-- 赤土蟻后
+```text
+monster defeated
+-> Server roll
+-> ItemArchetypeID + quantity
+-> nearby auto grant or public ground stack
+-> inventory
+```
 
-少量掉落。
+### TierMid unique equipment
 
-中階裝備掉落時必須由 Server 建立新的 exact `ItemInstanceID`，並在生成當下擲出正式 1 affix；之後掉落、拾取、背包、裝備、持久化、relogin 都保留同一 instance。
+```text
+monster defeated
+-> Server selects exact equipment archetype
+-> Server creates ItemInstanceID
+-> Server rolls exactly one affix
+-> exact instance becomes loot
+-> auto grant or public pickup transfers same instance
+-> inventory / equipment / persistence / relogin keep same instance
+```
 
-### D. 高階裝備
+不得在 pickup 時才重新擲 affix。
 
-**Map1 V1 不掉高階裝備。**
+---
 
-`TierHigh` 留給後續 Region / Dungeon，不讓 starter region 跳過 progression。
+# 4. Exact loot tables
 
-### E. 強化卷
+## 4.1 灰狼 — `monster_gray_wolf`
 
-Map1 不把普通怪做成強化卷 farm。
+金幣：
 
-建議 V1：
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 1–3 |
 
-- `item_astrahold_weapon_enhancement_scroll`：只由枯柳頭目／赤土蟻后極低機率掉落。
-- `item_astrahold_armor_enhancement_scroll`：只由枯柳頭目／赤土蟻后極低機率掉落。
+其他：
 
-目的只是讓玩家在 map1 能第一次接觸正式強化 loop，不建立穩定量產來源。
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gray_wolf_pelt` | 45% | 1 |
+| `item_minor_healing_potion` | 4% | 1 |
+| `item_low_leather_helmet` | 1% | 1 |
+| `item_low_leather_chest` | 1% | 1 |
+| `item_low_leather_gloves` | 1% | 1 |
+| `item_low_leather_legs` | 1% | 1 |
+| `item_low_leather_boots` | 1% | 1 |
 
-### F. 銀箭
+不掉 TierMid、不掉強化卷。
 
-`item_silver_arrow` **Map1 V1 不掉**。
+## 4.2 野豬 — `monster_wild_boar`
 
-理由：
+金幣：
 
-- map1 沒有 undead。
-- 木箭已足以支援 bow/crossbow loop。
-- 銀箭應在 undead 內容開始出現前後建立來源，避免新手區累積大量目前沒有用途的銀箭。
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 2–4 |
 
-## 3. 目前 Server 技術邊界
+其他：
 
-現行 `internal/loot` 的 Drop 只有：
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_minor_healing_potion` | 5% | 1 |
+| `item_low_heavy_helmet` | 1% | 1 |
+| `item_low_heavy_chest` | 1% | 1 |
+| `item_low_heavy_gloves` | 1% | 1 |
+| `item_low_heavy_legs` | 1% | 1 |
+| `item_low_heavy_boots` | 1% | 1 |
+| `item_militia_iron_spear` | 1% | 1 |
+| `item_militia_battle_axe` | 1% | 1 |
+| `item_iron_war_mace` | 1% | 1 |
+
+## 4.3 枯柳逃兵 — `monster_witherwill_deserter`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 4–8 |
+
+補給：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_minor_healing_potion` | 8% | 1 |
+| `item_minor_mana_potion` | 5% | 1 |
+| `item_low_arrow` | 12% | 4–8 |
+
+武器：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_militia_iron_sword` | 1% |
+| `item_light_guard_sword` | 1% |
+| `item_iron_dagger` | 1% |
+| `item_militia_battle_axe` | 1% |
+| `item_militia_iron_spear` | 1% |
+| `item_hunter_shortbow` | 1% |
+| `item_hunter_light_crossbow` | 1% |
+
+防具／盾：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_low_leather_helmet` | 1% |
+| `item_low_leather_chest` | 1% |
+| `item_low_leather_legs` | 1% |
+| `item_low_heavy_helmet` | 1% |
+| `item_iron_rim_round_shield` | 1% |
+
+## 4.4 枯柳惡兵 — `monster_witherwill_enforcer`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 6–12 |
+
+補給：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_minor_healing_potion` | 10% | 1 |
+| `item_low_arrow` | 12% | 4–8 |
+
+武器：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_gladiator_iron_sword` | 1% |
+| `item_iron_warhammer` | 1% |
+| `item_iron_morning_star` | 1% |
+| `item_iron_war_mace` | 1% |
+| `item_two_hand_iron_sword` | 1% |
+| `item_two_hand_battle_axe` | 1% |
+| `item_long_iron_spear` | 1% |
+| `item_militia_dual_blades` | 1% |
+
+防具／盾：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_low_heavy_helmet` | 1% |
+| `item_low_heavy_chest` | 1% |
+| `item_low_heavy_gloves` | 1% |
+| `item_low_heavy_legs` | 1% |
+| `item_low_heavy_boots` | 1% |
+| `item_iron_rim_round_shield` | 1% |
+| `item_guard_shield` | 1% |
+| `item_runed_square_shield` | 1% |
+
+## 4.5 枯柳頭目 — `monster_witherwill_captain`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 20–35 |
+
+補給：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_minor_healing_potion` | 20% | 1 |
+| `item_minor_mana_potion` | 12% | 1 |
+| `item_low_arrow` | 25% | 8–16 |
+
+Low equipment：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_gladiator_iron_sword` | 2.5% |
+| `item_iron_warhammer` | 2.5% |
+| `item_iron_morning_star` | 2.5% |
+| `item_two_hand_iron_sword` | 2.5% |
+| `item_two_hand_battle_axe` | 2.5% |
+| `item_long_iron_spear` | 2.5% |
+| `item_guard_shield` | 2.5% |
+| `item_low_heavy_chest` | 2.5% |
+| `item_low_leather_chest` | 2.5% |
+| `item_low_cloth_chest` | 2.5% |
+
+TierMid unique weapon；命中時建立 exact ItemInstance + 1 affix：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_mid_one_hand_sword` | 1% |
+| `item_mid_dagger` | 1% |
+| `item_mid_one_hand_axe` | 1% |
+| `item_mid_one_hand_spear` | 1% |
+| `item_mid_warhammer` | 1% |
+| `item_mid_two_hand_sword` | 1% |
+| `item_mid_bow` | 1% |
+| `item_mid_crossbow` | 1% |
+
+TierMid Garrison Steel unique；每件命中時建立 exact ItemInstance + 1 affix：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_garrison_steel_helm` | 1.2% |
+| `item_garrison_steel_cuirass` | 1.2% |
+| `item_garrison_steel_gauntlets` | 1.2% |
+| `item_garrison_steel_greaves` | 1.2% |
+| `item_garrison_steel_boots` | 1.2% |
+
+強化：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_astrahold_weapon_enhancement_scroll` | 2% | 1 |
+| `item_astrahold_armor_enhancement_scroll` | 2% | 1 |
+
+## 4.6 赤土工蟻 — `monster_redsoil_worker_ant`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 1–2 |
+
+其他：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_minor_healing_potion` | 3% |
+| `item_low_cloth_gloves` | 1% |
+| `item_low_cloth_boots` | 1% |
+
+## 4.7 赤土兵蟻 — `monster_redsoil_soldier_ant`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 2–5 |
+
+其他：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_minor_healing_potion` | 5% |
+| `item_low_leather_helmet` | 0.5% |
+| `item_low_leather_gloves` | 1% |
+| `item_low_leather_boots` | 1% |
+| `item_low_heavy_helmet` | 0.5% |
+| `item_low_heavy_gloves` | 0.5% |
+| `item_low_heavy_boots` | 0.5% |
+| `item_militia_iron_spear` | 0.5% |
+| `item_iron_war_mace` | 0.5% |
+| `item_iron_rim_round_shield` | 0.5% |
+| `item_guard_shield` | 0.5% |
+
+## 4.8 赤土衛蟻 — `monster_redsoil_guard_ant`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 5–9 |
+
+補給／Low equipment：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_minor_healing_potion` | 8% |
+| `item_low_leather_chest` | 1% |
+| `item_low_leather_legs` | 1% |
+| `item_low_heavy_chest` | 1% |
+| `item_low_heavy_legs` | 1% |
+| `item_guard_shield` | 1% |
+| `item_runed_square_shield` | 1% |
+
+TierMid armor unique；**15 件全部各 0.2%**：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_garrison_steel_helm` | 0.2% |
+| `item_garrison_steel_cuirass` | 0.2% |
+| `item_garrison_steel_gauntlets` | 0.2% |
+| `item_garrison_steel_greaves` | 0.2% |
+| `item_garrison_steel_boots` | 0.2% |
+| `item_windchaser_cap` | 0.2% |
+| `item_windchaser_armor` | 0.2% |
+| `item_windchaser_gloves` | 0.2% |
+| `item_windchaser_leggings` | 0.2% |
+| `item_windchaser_boots` | 0.2% |
+| `item_arcane_rune_hood` | 0.2% |
+| `item_arcane_rune_robe` | 0.2% |
+| `item_arcane_rune_gloves` | 0.2% |
+| `item_arcane_rune_trousers` | 0.2% |
+| `item_arcane_rune_boots` | 0.2% |
+
+每件命中時建立 exact ItemInstance + 1 affix。
+
+## 4.9 赤土蟻后 — `monster_redsoil_queen`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 35–60 |
+
+補給：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_minor_healing_potion` | 35% |
+| `item_minor_mana_potion` | 20% |
+
+Low equipment；每件 2.5%：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_low_cloth_helmet` | 2.5% |
+| `item_low_cloth_chest` | 2.5% |
+| `item_low_leather_helmet` | 2.5% |
+| `item_low_leather_chest` | 2.5% |
+| `item_low_heavy_helmet` | 2.5% |
+| `item_low_heavy_chest` | 2.5% |
+| `item_guard_shield` | 2.5% |
+| `item_runed_square_shield` | 2.5% |
+| `item_two_hand_iron_sword` | 2.5% |
+| `item_two_hand_battle_axe` | 2.5% |
+| `item_hunter_shortbow` | 2.5% |
+| `item_apprentice_wood_staff` | 2.5% |
+
+TierMid weapon unique；**17 件全部各 0.7%**：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_mid_one_hand_sword` | 0.7% |
+| `item_mid_dagger` | 0.7% |
+| `item_mid_one_hand_axe` | 0.7% |
+| `item_mid_one_hand_spear` | 0.7% |
+| `item_mid_warhammer` | 0.7% |
+| `item_mid_morning_star` | 0.7% |
+| `item_mid_mace` | 0.7% |
+| `item_mid_two_hand_sword` | 0.7% |
+| `item_mid_two_hand_axe` | 0.7% |
+| `item_mid_two_hand_spear` | 0.7% |
+| `item_mid_knuckles` | 0.7% |
+| `item_mid_claw` | 0.7% |
+| `item_mid_dual_blades` | 0.7% |
+| `item_mid_bow` | 0.7% |
+| `item_mid_crossbow` | 0.7% |
+| `item_mid_sling` | 0.7% |
+| `item_mid_staff` | 0.7% |
+
+TierMid armor unique；**15 件全部各 1%**：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_garrison_steel_helm` | 1% |
+| `item_garrison_steel_cuirass` | 1% |
+| `item_garrison_steel_gauntlets` | 1% |
+| `item_garrison_steel_greaves` | 1% |
+| `item_garrison_steel_boots` | 1% |
+| `item_windchaser_cap` | 1% |
+| `item_windchaser_armor` | 1% |
+| `item_windchaser_gloves` | 1% |
+| `item_windchaser_leggings` | 1% |
+| `item_windchaser_boots` | 1% |
+| `item_arcane_rune_hood` | 1% |
+| `item_arcane_rune_robe` | 1% |
+| `item_arcane_rune_gloves` | 1% |
+| `item_arcane_rune_trousers` | 1% |
+| `item_arcane_rune_boots` | 1% |
+
+TierMid shield unique：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_mid_iron_rim_round_shield` | 1.67% |
+| `item_mid_guard_shield` | 1.67% |
+| `item_mid_runed_square_shield` | 1.67% |
+
+強化：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_astrahold_weapon_enhancement_scroll` | 3% |
+| `item_astrahold_armor_enhancement_scroll` | 3% |
+
+所有 TierMid equipment 命中時建立 exact ItemInstance + 1 affix。
+
+## 4.10 岩岸蟹 — `monster_shore_crab`
+
+金幣：
+
+| Drop | Chance | Quantity |
+| --- | ---: | ---: |
+| `item_gold_coin` | 100% | 2–4 |
+
+其他：
+
+| Drop | Chance |
+| --- | ---: |
+| `item_minor_healing_potion` | 5% |
+| `item_iron_rim_round_shield` | 1.5% |
+| `item_low_heavy_gloves` | 1% |
+| `item_low_heavy_boots` | 1% |
+| `item_low_heavy_helmet` | 0.5% |
+
+---
+
+# 5. Map1 不掉
+
+以下在 Map1 V1 **完全不進 loot table**：
+
+- 所有 TierHigh equipment
+- `item_silver_arrow`
+- 技能書
+- Skin
+- Blessed / Cursed enhancement scroll
+- 尚無 sink 的 generic crafting trash
+- 任何 Client asset identity
+
+## 6. 現有 Emberwatch shop 與狼皮
+
+目前正式 shop 已有：
+
+```text
+item_gray_wolf_pelt x1
+-> item_minor_healing_potion x1
+```
+
+因此 `item_gray_wolf_pelt` 保留在灰狼 45% drop。
+
+這是目前 Map1 唯一已存在的 material sink；未來若商店改成 gold pricing，可保留 pelt barter 作 early-game alternate acquisition，不需要刪除。
+
+## 7. Loot Catalog V2 需求
+
+現行 `internal/loot.Drop` 只有：
 
 ```text
 ItemArchetypeID
 ChanceBasisPoints
 ```
 
-而現行 monster loot materialization 是：
+要承接上述正式表，V2 至少需要：
 
 ```text
-monster defeated
--> resolve Drop
--> spawn public item-drop entity
--> nearby damage-weighted auto grant or ground pickup
-```
-
-這條路目前適合：
-
-- 藥水
-- 箭矢
-- 低階 archetype-only equipment
-- 強化卷
-
-但 **不適合中階 unique equipment**，因為目前 monster loot path 沒有建立／保存 `ItemInstance`。
-
-因此正式實作順序必須是：
-
-1. stack / archetype loot 先上線；
-2. 補通用 unique-equipment loot materialization；
-3. 再啟用中階 unique loot entries。
-
-不得讓中階裝備先以 stack/archetype 形式掉落，再在拾取時重新擲詞綴；詞綴必須在 Server 掉落 instance 建立時決定一次。
-
-## 4. V1 掉率哲學
-
-掉率使用 independent candidate rolls，不採「每隻必掉 N 件」的固定寶箱模式。
-
-建議基準：
-
-- 普通怪：主要掉消耗品與低階裝備，單件 equipment 機率低。
-- guard / enforcer：裝備率略高。
-- elite / boss：有明顯裝備期待值，但不保證每次都出中階裝。
-- Boss 的重要性來自較高的 loot pool 品質，不是一次噴十件垃圾。
-
-所有百分比實作時轉成 `ChanceBasisPoints`。
-
-## 5. 各怪物掉落表草案
-
-以下為 **V1 balance target**；正式實作前可微調，但類別分工應保持。
-
-### 5.1 灰狼 `monster_gray_wolf`
-
-定位：最基礎野外狩獵怪。
-
-建議：
-
-- 小型補給：治療藥水 **6%**
-- 低階 leather 防具池：**合計 5%**
-- 低階 dagger / shortbow / sling 類輕武器池：**合計 2%**
-
-不掉：
-
-- 中階裝備
-- 強化卷
-- 銀箭
-
-狼皮類材料先不列 production 掉落；在 crafting / vendor sink 未定前，不製造只會佔背包的垃圾素材。
-
-### 5.2 野豬 `monster_wild_boar`
-
-定位：較耐打、偏 heavy / melee acquisition。
-
-建議：
-
-- 治療藥水 **7%**
-- 低階 heavy 防具池：**合計 5%**
-- 低階 spear / axe / mace 類武器池：**合計 3%**
-
-不掉中階裝備。
-
-### 5.3 枯柳逃兵 `monster_witherwill_deserter`
-
-定位：人形敵人，正式低階武器／裝備主要來源。
-
-建議：
-
-- 治療藥水 **8%**
-- 魔力藥水 **5%**
-- 木箭：**12%**
-- 低階武器池：**合計 7%**
-- 低階防具／盾牌池：**合計 5%**
-
-人形怪是 map1 最主要的 low-tier gear farm，但單隻仍不應高機率噴裝。
-
-### 5.4 枯柳惡兵 `monster_witherwill_enforcer`
-
-定位：較硬的人形 guard。
-
-建議：
-
-- 治療藥水 **10%**
-- 木箭 **12%**
-- 低階武器池：**合計 8%**
-- 低階 heavy armor / shield：**合計 8%**
-- 中階裝備：V1 **不直接掉**
-
-讓普通據點內容主要完成 low-tier build，不讓玩家刷惡兵就直接大量進中階。
-
-### 5.5 枯柳頭目 `monster_witherwill_captain`
-
-定位：map1 地表 elite acquisition checkpoint。
-
-建議：
-
-- 治療藥水 **20%**
-- 魔力藥水 **12%**
-- 木箭 **25%**
-- 低階武器／盾牌／防具：**合計 25%**
-- 中階武器 unique pool：**合計 8%**
-- 中階 Garrison Steel armor unique pool：**合計 6%**
-- 武器強化卷：**2%**
-- 防具強化卷：**2%**
-
-不掉高階裝備。
-
-### 5.6 赤土工蟻 `monster_redsoil_worker_ant`
-
-定位：數量多、低 HP；不能讓高密度直接膨脹裝備供給。
-
-建議：
-
-- 治療藥水 **3%**
-- 低階 cloth / leather gloves / boots 等輕部位池：**合計 2%**
-
-不掉武器、不掉中階、不掉強化卷。
-
-### 5.7 赤土兵蟻 `monster_redsoil_soldier_ant`
-
-定位：巢穴主力怪。
-
-建議：
-
-- 治療藥水 **5%**
-- 低階 leather / heavy 防具池：**合計 4%**
-- 低階 shield / spear / mace 類池：**合計 2%**
-
-### 5.8 赤土衛蟻 `monster_redsoil_guard_ant`
-
-定位：深層菁英，開始讓玩家看到中階 unique。
-
-建議：
-
-- 治療藥水 **8%**
-- 低階防具：**合計 6%**
-- 中階 armor unique pool：**合計 3%**
-
-中階池以三套中階防具為主：
-
-- `set_garrison_steel`
-- `set_windchaser_huntgear`
-- `set_arcane_rune_robes`
-
-不要讓每種衛蟻固定綁一個職業／裝甲類；Astrahold 已是 classless。
-
-### 5.9 赤土蟻后 `monster_redsoil_queen`
-
-定位：map1 第一個地下 Boss，也是 starter region 最好的 loot source。
-
-建議：
-
-- 治療藥水 **35%**
-- 魔力藥水 **20%**
-- 低階裝備：**合計 30%**
-- 中階武器 unique pool：**合計 12%**
-- 中階 armor unique pool：**合計 15%**
-- 中階 shield unique pool：**合計 5%**
-- 武器強化卷：**3%**
-- 防具強化卷：**3%**
-
-這些是 independent rolls，所以同一場可能零件、單件或多件；但平均不應變成「每殺一次一定噴一套」。
-
-### 5.10 岩岸蟹 `monster_shore_crab`
-
-定位：探索支線怪，不應成為最佳 farm。
-
-建議：
-
-- 治療藥水 **5%**
-- 低階 shield / heavy gloves / boots 類池：**合計 4%**
-
-不掉中階裝備、不掉強化卷。
-
-## 6. Equipment pool 分配
-
-避免 107 件 equipment 全塞進同一區。
-
-### Map1 low-tier weapon pool
-
-Map1 可以覆蓋全部 low-tier weapon archetype，但依怪物 identity 分池：
-
-**人形／據點**
-- sword
-- axe
-- mace
-- morning star
-- warhammer
-- spear
-- two-hand weapon
-- crossbow
-- shield
-
-**野外／狩獵**
-- dagger
-- bow
-- sling
-- spear
-
-**蟻穴**
-- 不以武器掉落為主；主要給 armor
-
-這只是 loot pool grouping，不表示怪物真的「使用」該武器；AI weapon presentation／combat equipment若未來做，仍需獨立 Server-authored monster equipment。
-
-### Map1 low-tier armor pool
-
-全部 15 件 low-tier armor 都可由 map1 取得：
-
-- cloth 5
-- leather 5
-- heavy 5
-
-大致分工：
-
-- 灰狼：leather
-- 野豬：heavy
-- 枯柳人形：三類都可
-- 蟻穴：cloth / leather / heavy 混合，但以手套／鞋／頭盔等較輕部位較常見
-- 岩岸蟹：heavy 小部位
-
-### Map1 mid-tier unique pool
-
-Map1 只啟用 **TierMid**，不啟用 TierHigh。
-
-可包含：
-
-- 全部 mid-tier weapons
-- mid-tier shields
-- 三套 mid-tier armor：
-  - Garrison Steel
-  - Windchaser Huntgear
-  - Arcane Rune Robes
-
-來源限制：
-
-- 枯柳頭目
-- 赤土衛蟻
-- 赤土蟻后
-
-這樣玩家有理由打 elite / dungeon，而不是只刷村門口狼。
-
-## 7. 木箭掉落
-
-現行 loot entity 一個 drop = 一個 item，因此沒有 Quantity field。
-
-但箭矢如果每次只掉 1 支，體感與效能都不好。
-
-V1 建議擴充 loot definition 支援：
-
-```text
+Kind
+ItemArchetypeID
+ChanceBasisPoints
 QuantityMin
 QuantityMax
 ```
 
-由 Server 一次 resolve 數量，再以 inventory stack grant / ground pickup quantity 表達。
+其中：
 
-在這個 extension 完成前：
+- `Kind=stack`：金幣、藥水、箭、卷軸、low-tier archetype equipment
+- `Kind=equipment_instance`：TierMid exact unique equipment
 
-- 不用複製 8–12 個 `Drop{item_low_arrow}` entries 偽裝成箭束。
-- 不讓大量 item-drop entity 同時出現在地上。
+### Quantity
 
-建議木箭 bundle：
+金幣與箭 bundle 必須由 Server resolve quantity。
 
-- 枯柳逃兵／惡兵：4–8 支
-- 枯柳頭目：8–16 支
+不要用重複 N 個 Drop entries 模擬 8 支箭或 30 金幣，避免大量地面 entity。
 
-如果 V1 不想先改 quantity protocol，也可以暫時只讓人形怪掉少量單支箭，但這只是短期 playtest，不升格正式 balance。
+### Equipment instance
 
-## 8. Unique equipment loot semantics
+`equipment_instance` 命中後：
 
-這是 acquisition implementation 的核心。
+1. resolve exact equipment archetype
+2. `iteminstance.Create`
+3. Server 擲 affix一次
+4. exact instance進入 loot object
+5. auto-grant／manual pickup轉移同一 instance
+6. reconnect維持同一 ItemInstanceID / affix
 
-正式流程應為：
+## 8. 金幣與地面物
 
-```text
-monster defeated
--> Server loot roll selects TierMid equipment archetype
--> Server creates exact ItemInstance
--> Server rolls affix exactly once
--> ground-drop owns exact instance identity
--> eligible auto grant OR public pickup transfers same instance
--> inventory snapshot / equipment / persistence keep same ItemInstanceID
-```
+金幣 V1 建議使用 **單一 stack drop**，不是一枚一個 entity。
 
-禁止：
+若 nearby contributor inventory 可接收：
 
-- 掉落只存 ItemArchetypeID，拾取時才創 instance
-- 每次 reconnect 重擲 affix
-- Client 產生 ItemInstanceID
-- auto-loot 與 manual pickup 使用兩套 instance creation path
+- 直接 auto grant `item_gold_coin xN`
 
-建議新增通用 loot candidate kind：
+若無法接收：
 
-```text
-stack
-equipment_instance
-```
+- 地面只生成一個 gold stack drop，攜帶 quantity=N
 
-而不是為「蟻后掉 unique」寫 boss-specific code。
+`item_gold_coin` 的 UnitWeight 必須明確 override 為 0，避免每枚金幣吃 carry weight。
 
-## 9. Ground drop / auto-loot 規則沿用
+## 9. 第一輪經濟節奏
 
-現有政策可繼續使用：
+金幣的初始 target：
 
-- Server-private drop roll
-- 玩家實際 damage contribution
-- nearby contributor damage-weighted winner
-- inventory 可容納則 auto grant
-- 無法 auto grant則保留 public ground drop
-- public drop 有 bounded expiry
-- evade/reset 清舊 contribution
+| 怪物 | Gold |
+| --- | ---: |
+| 灰狼 | 1–3 |
+| 野豬 | 2–4 |
+| 枯柳逃兵 | 4–8 |
+| 枯柳惡兵 | 6–12 |
+| 枯柳頭目 | 20–35 |
+| 赤土工蟻 | 1–2 |
+| 赤土兵蟻 | 2–5 |
+| 赤土衛蟻 | 5–9 |
+| 赤土蟻后 | 35–60 |
+| 岩岸蟹 | 2–4 |
 
-Map1 不新增 first-hit ownership、party-only loot 或 personal loot system。
+這是 map1 income baseline；正式商店售價、修理、交易手續費等 sink 要以實際 kills/hour 後再定。
 
-隊伍 loot policy等 party system 正式設計後再做。
+## 10. 實作順序
 
-## 10. 暫不加入的掉落
+1. **Common stack item / gold identity**
+   - `item_gold_coin`
+   - zero weight
+   - inventory / persistence / shop-cost validation
 
-Map1 V1 不掉：
+2. **Loot Catalog V2**
+   - quantity range
+   - candidate kind
+   - strict validation
+   - Server-private deterministic test hooks
 
-- TierHigh equipment
-- `item_silver_arrow`
-- 未定義用途的怪物材料／vendor trash
-- 技能書
-- Skin
-- Blessed / Cursed enhancement scroll
-- currency（目前沒有正式貨幣 gameplay contract）
+3. **Stack ground drop quantity**
+   - gold
+   - arrows
+   - potions
+   - scrolls
+   - archetype equipment
 
-不要因為「怪物應該掉東西」而創造沒有 sink 的素材。
+4. **Unique equipment loot**
+   - exact ItemInstanceID
+   - one-time affix roll
+   - auto-grant / public pickup
+   - persistence continuity
 
-## 11. 預期 acquisition 節奏
+5. **Map1 exact tables**
+   - 10 monster archetypes
+   - exact IDs and basis points from this document
 
-第一輪 balance target：
+6. **Runtime balance**
+   - gold/hour
+   - potion sustain
+   - arrows/hour
+   - low gear/hour
+   - TierMid unique/hour
+   - scroll/hour
+   - inventory pressure
+   - ground entity count
 
-- 玩家打普通怪應常看到消耗品，但裝備仍有期待感。
-- 約每 10–20 隻普通怪出現一件 low-tier equipment 屬合理量級。
-- elite / boss 明顯提高裝備品質，而不是只提高垃圾數量。
-- TierMid 應主要來自枯柳頭目／赤土深層，不應在村門外普通野獸穩定 farm。
-- Map1 可以讓玩家開始組中階 build，但不應在 starter region 輕易農齊全部 mid set。
-- 強化卷在 map1 是「第一次接觸」，不是主要供給。
-
-上述節奏要在真 runtime 以 kills/hour、drop/hour、inventory pressure 實測後再調掉率。
-
-## 12. 實作切片
-
-建議依序：
-
-### Slice 1 — Loot catalog V2
-
-- 支援 stack quantity range
-- 支援 loot candidate kind
-- validation / deterministic roll tests
-- 保持目前 Server-private randomness
-
-### Slice 2 — Unique equipment drop path
-
-- item instance creation
-- affix roll once
-- exact instance ground drop
-- auto-grant / manual pickup共用 transfer path
-- inventory / persistence continuity
-
-### Slice 3 — Map1 stack loot
-
-先上：
-- potions
-- wood arrows
-- low-tier equipment
-- boss enhancement scrolls
-
-真 runtime 驗證掉落密度。
-
-### Slice 4 — Map1 TierMid unique loot
-
-啟用：
-- Witherwill Captain
-- Redsoil Guard
-- Redsoil Queen
-
-驗證 exact ItemInstanceID / affix / pickup / reconnect。
-
-### Slice 5 — Balance pass
-
-用正式 Client gameplay camera與實際擊殺節奏量：
-
-- kills/hour
-- low equipment/hour
-- mid unique/hour
-- potion sustain
-- arrow sustain
-- enhancement scroll/hour
-- ground-drop clutter
-- inventory weight pressure
-
-再調整 basis points，不在前面先過度精算。
-
-## 13. 待後續區域
-
-後續區域可以沿同一模型擴充：
-
-- undead zone -> silver arrow source / undead-specific materials
-- mine / cavern -> metal equipment / material identity
-- larger dungeon -> high-tier equipment
-- late region -> stable enhancement-scroll economy
-
-Map1 只建立第一個完整 acquisition loop，不承擔全遊戲經濟。
+正式實作後若真 runtime economy 明顯過鬆／過緊，只調 authored quantities / basis points，不重寫 loot authority。
