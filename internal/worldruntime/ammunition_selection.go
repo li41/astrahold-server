@@ -38,8 +38,8 @@ func (r *Runtime) EnqueueFencedAmmunitionCommand(ownership SessionOwnershipFence
 	})
 }
 
-// ammunitionStateForSession normalizes a stale preference back to automatic mode as soon as an
-// authoritative inventory snapshot is built. Empty means automatic wood -> silver ordering.
+// ammunitionStateForSession reports the effective current preference without mutating state.
+// Empty means automatic wood -> silver ordering.
 func (r *Runtime) ammunitionStateForSession(s *session.Session) protocol.AmmunitionState {
 	if s == nil {
 		return protocol.AmmunitionState{}
@@ -51,10 +51,29 @@ func (r *Runtime) ammunitionStateForSession(s *session.Session) protocol.Ammunit
 	definition, ok := ammunition.Resolve(selected)
 	inv := r.inventories[s.CharacterIdentity.ID]
 	if !ok || inv == nil || inv.Quantity(definition.ItemArchetypeID) == 0 {
-		delete(r.sessionAmmunitionSelection, s.ID)
 		return protocol.AmmunitionState{}
 	}
 	return protocol.AmmunitionState{SelectedItemArchetypeID: definition.ItemArchetypeID}
+}
+
+// reconcileAmmunitionSelection clears a manual preference only when authoritative inventory no
+// longer owns that selected stack. The returned changed flag controls whether Type130 must be sent;
+// ordinary inventory replication does not gain an extra message merely because v33 is active.
+func (r *Runtime) reconcileAmmunitionSelection(s *session.Session) (protocol.AmmunitionState, bool) {
+	if s == nil {
+		return protocol.AmmunitionState{}, false
+	}
+	selected := r.sessionAmmunitionSelection[s.ID]
+	if selected == "" {
+		return protocol.AmmunitionState{}, false
+	}
+	definition, ok := ammunition.Resolve(selected)
+	inv := r.inventories[s.CharacterIdentity.ID]
+	if ok && inv != nil && inv.Quantity(definition.ItemArchetypeID) > 0 {
+		return protocol.AmmunitionState{SelectedItemArchetypeID: definition.ItemArchetypeID}, false
+	}
+	delete(r.sessionAmmunitionSelection, s.ID)
+	return protocol.AmmunitionState{}, true
 }
 
 func (r *Runtime) queueAmmunitionFeedback(sessionID session.ID, result protocol.AmmunitionResult, state protocol.AmmunitionState) {

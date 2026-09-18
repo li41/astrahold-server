@@ -276,13 +276,16 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		for _, stack := range stacks {
 			items = append(items, protocol.InventoryItemStack{ArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity})
 		}
+		ammunitionState, ammunitionSelectionChanged := r.reconcileAmmunitionSelection(s)
 		messages := []protocol.Message{
 			protocol.InventorySnapshot{Revision: inv.Revision(), CurrentCarryWeight: inv.CurrentWeight(), MaxCarryWeight: inv.MaxWeight(), Items: items},
 			inventoryInstanceMessage,
 			protocol.EquipmentSnapshot{Revision: inv.EquipmentRevision(), Slots: buildEquipmentArchetypeSlots(inv)},
 			equipmentInstanceMessage,
 			r.appearanceSnapshotForSession(s),
-			r.ammunitionStateForSession(s),
+		}
+		if ammunitionSelectionChanged {
+			messages = append(messages, ammunitionState)
 		}
 		for _, message := range messages {
 			envelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: message}
