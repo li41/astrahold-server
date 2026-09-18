@@ -209,35 +209,113 @@ Starter Region 只涵蓋森林第一段，因此 V1 不建立完整 Whisperwood 
 
 海岸目標 concurrency：**4–6 岩岸蟹**，分散在潮池／礫灘／岩岸 pocket；A5 海岸眺望附近保持主要視線與探索空間，不讓怪群堵住第一次看海的 presentation beat。
 
-## 6. Relative combat tuning baseline
+## 6. Map1 V1 怪物完整戰鬥數值
 
-下列是 **第一輪 Server tuning target**。本版新增 `MonsterLevel` 作為內容難度標示／調校 metadata；它 **不是 character level 系統，也不是新的 Protocol field，亦不直接取代 HP、damage、hit、defense 等 authoritative combat stats**。
+以下是 **Map1 V1 正式內容規劃值**。實作完成並經 runtime TTK／命中率／生存壓力驗證前，仍屬 authored tuning target，不得誤寫成已驗證 production balance。
 
-Map1 V1 的怪物等級梯度先定為約 **Lv.5–22**，讓 starter region 有明顯前／中／後段，地表菁英與地下 Boss 不再落在過低等級。
+`MonsterLevel` 是內容難度與未來 progression 對接用 stable metadata；它不直接替代 HP、攻擊、防禦、命中、閃避等 authoritative combat stats，也不自動套每級倍率。
 
-以正式 map1 灰狼作 1.0 戰鬥基準。實作時先沿用現有 playtest wolf 約 200 HP 的量級，經真 Client TTK 再調整。
+Map1 V1 等級梯度：
 
-| Archetype | MonsterLevel | HP target | Damage pressure | Move | Aggro / Leash | Respawn |
-| --- | ---: | ---: | ---: | ---: | --- | --- |
-| 灰狼 | 5 | 200 | 1.00x | 4.5 m/s | 9 / 18 m | 25 s |
-| 野豬 | 7 | 280 | 1.15x | 3.6 m/s | 7 / 16 m | 30 s |
-| 枯柳逃兵 | 8 | 240 | 1.05x | 4.0 m/s | 10 / 20 m | 35 s |
-| 枯柳惡兵 | 12 | 360 | 1.30x | 3.5 m/s | 9 / 18 m | 45 s |
-| 枯柳頭目 | 18 | 700 | 1.50x | 3.8 m/s | 11 / 24 m | 120 s |
-| 赤土工蟻 | 7 | 120 | 0.70x | 4.0 m/s | 7 / 14 m | 25 s |
-| 赤土兵蟻 | 11 | 230 | 1.00x | 3.8 m/s | 8 / 16 m | 30 s |
-| 赤土衛蟻 | 15 | 380 | 1.25x | 3.4 m/s | 8 / 16 m | 45 s |
-| 赤土蟻后 | 22 | 1000 | 1.60x | 2.6 m/s | 10 / 22 m | 180 s |
-| 岩岸蟹 | 8 | 300 | 0.90x | 2.8 m/s | 6 / 13 m | 35 s |
+- Lv.5–8：入門／野外。
+- Lv.11–15：中段／深層主力。
+- Lv.18：地表菁英頭目。
+- Lv.22：Map1 地下 Boss。
 
-補充：
+### 6.1 核心戰鬥數值
 
-- `MonsterLevel` 是內容難度與未來 progression 對接用 stable tuning metadata；目前不進 wire，也不自動套用傷害倍率。
-- 第一輪等級節奏：Lv.5–8 為入門／野外，Lv.11–15 為中段／深層主力，Lv.18 為地表菁英頭目，Lv.22 為 Map1 地下 Boss。
-- Damage pressure 是相對 tuning target，不進 wire。
-- 正式 action damage 要在實作 slice 對現有玩家武器、命中率與實際 TTK 做 checkpoint 校正後落數值。
-- regular corpse hold 先以 2–3 秒量級；頭目／蟻后可 4–5 秒，確保 defeat presentation 可見。
-- exact respawn tick 由 Server tick rate換算，Client 不持有 respawn truth。
+| 怪物 | Lv | HP | 單次近戰 raw damage | 物防 | 魔防 | PhysicalHit | Evasion | CriticalRating | 暴擊率 | 攻擊間隔 | BaseXP |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 灰狼 | 5 | 200 | 80 | 2 | 1 | 3 | 5 | 2 | 6% | 1.35 s | 20 |
+| 野豬 | 7 | 280 | 95 | 4 | 1 | 1 | 1 | 0 | 5% | 1.55 s | 30 |
+| 枯柳逃兵 | 8 | 240 | 90 | 3 | 2 | 3 | 3 | 1 | 5.5% | 1.30 s | 35 |
+| 枯柳惡兵 | 12 | 360 | 115 | 7 | 3 | 4 | 2 | 1 | 5.5% | 1.45 s | 60 |
+| 枯柳頭目 | 18 | 700 | 130 | 9 | 5 | 7 | 6 | 4 | 7% | 1.30 s | 180 |
+| 赤土工蟻 | 7 | 120 | 60 | 1 | 1 | 1 | 4 | 0 | 5% | 1.10 s | 20 |
+| 赤土兵蟻 | 11 | 230 | 95 | 4 | 2 | 3 | 3 | 1 | 5.5% | 1.30 s | 50 |
+| 赤土衛蟻 | 15 | 380 | 120 | 8 | 4 | 5 | 2 | 2 | 6% | 1.40 s | 90 |
+| 赤土蟻后 | 22 | 1000 | 150 | 10 | 8 | 6 | 0 | 4 | 7% | 1.60 s | 320 |
+| 岩岸蟹 | 8 | 300 | 85 | 7 | 2 | 1 | 1 | 0 | 5% | 1.65 s | 30 |
+
+數值語義：
+
+- `單次近戰 raw damage` 是 critical 與 mitigation 前的 Server-owned action base damage。
+- V1 十種怪的普通攻擊皆為 `physical`、`blockable=true`、`critical_eligible=true`、物防穿透 0%。
+- `PhysicalHit` 與 `Evasion` 是 rating，不是百分比。
+- 命中沿用正式公式：`clamp(90% + (attacker PhysicalHit - target Evasion) × 0.5%, 75%, 98%)`。
+- 暴擊沿用正式公式：5% base + CriticalRating × 0.5 percentage point；本表已列出 V1 怪物在無額外 attribute bonus 時的實際基礎暴擊率。
+- 物防／魔防沿用正式 mitigation：`defense / (defense + 20)`。
+- 因此 V1 怪物 defense 刻意保持低量級；例如物防 10 已約等於 33% 物理減傷，不能把 defense 當一般 RPG 的三位數 stat 任意放大。
+- `BaseXP` 是正式 reward target，但目前 character experience／level-up owner 尚未實作；在 progression slice 落地前不宣稱玩家已能取得 XP。
+
+### 6.2 移動、距離與生命週期
+
+| 怪物 | BodySize | Move | AttackRange | Aggro / Leash | Corpse hold | Respawn | AI profile |
+| --- | --- | ---: | ---: | --- | ---: | ---: | --- |
+| 灰狼 | small | 4.5 m/s | 1.75 m | 9 / 18 m | 2 s | 25 s | `melee_roamer` |
+| 野豬 | large | 3.6 m/s | 1.90 m | 7 / 16 m | 3 s | 30 s | `melee_roamer` |
+| 枯柳逃兵 | small | 4.0 m/s | 1.80 m | 10 / 20 m | 2 s | 35 s | `melee_roamer` |
+| 枯柳惡兵 | small | 3.5 m/s | 1.90 m | 9 / 18 m | 3 s | 45 s | `melee_guard` |
+| 枯柳頭目 | small | 3.8 m/s | 2.00 m | 11 / 24 m | 5 s | 120 s | `melee_elite` |
+| 赤土工蟻 | small | 4.0 m/s | 1.35 m | 7 / 14 m | 2 s | 25 s | `melee_roamer` |
+| 赤土兵蟻 | large | 3.8 m/s | 1.70 m | 8 / 16 m | 2 s | 30 s | `melee_guard` |
+| 赤土衛蟻 | large | 3.4 m/s | 1.80 m | 8 / 16 m | 3 s | 45 s | `melee_guard` |
+| 赤土蟻后 | giant | 2.6 m/s | 2.40 m | 10 / 22 m | 5 s | 180 s | `melee_elite` |
+| 岩岸蟹 | large | 2.8 m/s | 1.80 m | 6 / 13 m | 3 s | 35 s | `melee_roamer` |
+
+`AttackRange` 是 AI 進入出手距離；Combat Action Catalog 必須再次驗證正式 range，不能只靠 AI steering 決定攻擊是否合法。
+
+### 6.3 怪物個性
+
+- **灰狼**：高移速、高閃避、偏高命中；本身防禦低，靠快速貼身與追擊形成壓力。
+- **野豬**：較高 HP／物防、低閃避、慢攻擊；是第一個「硬但不靈活」的野獸。
+- **枯柳逃兵**：平均型人形近戰，作為進入枯柳寨的基準。
+- **枯柳惡兵**：高物防、較高單擊傷害、低閃避；靠重裝而不是速度。
+- **枯柳頭目**：高命中、較高閃避、較高暴擊與較快攻擊節奏；地表最危險的單體近戰。
+- **赤土工蟻**：低 HP／低防，但攻擊頻率快、數量多；危險來自群體。
+- **赤土兵蟻**：中等 HP／物防與標準追擊，是蟻穴主力。
+- **赤土衛蟻**：高物防、較高命中、低閃避，定位為深層守巢菁英；不靠套裝掉落維持價值。
+- **赤土蟻后**：最高 HP／雙防、低閃避、較高命中與暴擊；V1 不做 phase／summon，強度來自穩定近戰與 Boss durability。
+- **岩岸蟹**：高物防、低命中／低閃避、慢攻擊，是海岸耐打探索怪。
+
+### 6.4 現行 Server 實作缺口
+
+現有 Server foundation 已有 HP、BodySize、movement、Action damage、critical、physical/magic defense、physical hit/evasion 公式，但正式 monster content 尚未完整接入這些 stat。
+
+Map1 實作不得只把表格寫成資料卻不生效，至少需要：
+
+1. monster archetype 具備：
+   - `MonsterLevel`
+   - `MaxHP`
+   - `PhysicalDefense`
+   - `MagicDefense`
+   - `PhysicalHit`
+   - `Evasion`
+   - `CriticalRating`
+   - `BaseXP`
+   - movement / lifecycle / AI profile
+   - melee action identity
+
+2. 通用 entity combat stat resolver：
+   - 玩家仍從 character/equipment/passive truth 聚合。
+   - 怪物從 monster archetype stats 聚合。
+   - 不為每種怪物建立專用 combat path。
+
+3. 通用 PvE melee hit resolver：
+   - 目前玩家 equipped `basic-attack` 已有 hit/evasion roll。
+   - 現有 `wolf-bite` 類 monster action 尚未消費 monster PhysicalHit／玩家 Evasion。
+   - 實作時 monster physical melee 必須走同一正式 rating formula，不能維持「合法就必中」。
+
+4. 通用 target defense resolver：
+   - 玩家 defense 仍從 authoritative equipment／instance modifiers。
+   - 怪物 defense 從 monster archetype stats。
+   - `resolveIncomingDamage` 最終只接收已解析出的 authoritative defense，不讓 Client 傳入防禦值。
+
+5. XP owner：
+   - `BaseXP` 由 monster content author。
+   - defeat／contribution owner 決定 reward recipient。
+   - character progression owner 未建立前不得假裝 XP 已發放。
+   - level-difference multiplier、組隊分配與 rested bonus 等都不在 Map1 V1 偷渡定義。
 
 ## 7. AI profile
 
@@ -298,9 +376,7 @@ Map1 monster content data
 
 ## 9. Loot boundary
 
-本文件 **不決定正式掉落表／掉率**。
-
-之後 loot slice 以本文件 stable monster archetype 作 `SourceArchetypeID`：
+本文件不重複維護掉落表；正式 Map1 掉落規劃已移到 [Map1-怪物掉落規劃](Map1-怪物掉落規劃.md)。loot implementation 以本文件 stable monster archetype 作 `SourceArchetypeID`：
 
 ```text
 monster ArchetypeID
@@ -309,9 +385,7 @@ monster ArchetypeID
 -> inventory / unique item instance
 ```
 
-不把目前 playtest `wolf-gray-01 -> item_gray_wolf_pelt 70%` 自動升格成 map1 正式掉落。
-
-裝備、箭矢、強化卷、材料與一般雜物掉落等到下一個 acquisition 設計 pass再定。
+不把目前 playtest `wolf-gray-01 -> item_gray_wolf_pelt 70%` 當成 map1 正式掉落；exact item、金幣、藥水、箭矢、裝備與強化卷來源以 [Map1-怪物掉落規劃](Map1-怪物掉落規劃.md) 為準。
 
 ## 10. 實作順序
 
@@ -320,7 +394,10 @@ Map1 monster implementation 建議切四個 slice：
 1. **Map1 monster content model**
    - stable monster archetype definition
    - common melee AI profile
-   - HP / movement / BodySize / lifecycle config
+   - MonsterLevel / HP / physical & magic defense / PhysicalHit / Evasion / CriticalRating / BaseXP
+   - per-archetype melee action damage / interval / range
+   - movement / BodySize / lifecycle config
+   - generic monster combat-stat / PvE hit / target-defense resolver
    - validation
 
 2. **Emberwatch Fields + Witherwill**
