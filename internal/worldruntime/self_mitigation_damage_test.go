@@ -49,8 +49,8 @@ func TestSelfMitigationComposesWithShieldWithoutChangingBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unblocked.Blocked || unblocked.FinalDamage != 46 {
-		t.Fatalf("unblocked=%+v want damage=46", unblocked)
+	if unblocked.Blocked || unblocked.FinalDamage != 53 {
+		t.Fatalf("unblocked=%+v want damage=53", unblocked)
 	}
 
 	blocked, err := resolveDamageMitigation(DamageRequest{
@@ -62,8 +62,8 @@ func TestSelfMitigationComposesWithShieldWithoutChangingBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !blocked.Blocked || blocked.FinalDamage != 32 {
-		t.Fatalf("blocked=%+v want damage=32 blocked=true", blocked)
+	if !blocked.Blocked || blocked.FinalDamage != 37 {
+		t.Fatalf("blocked=%+v want damage=37 blocked=true", blocked)
 	}
 }
 

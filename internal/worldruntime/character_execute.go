@@ -125,7 +125,7 @@ func (r *Runtime) applyEntityAction(name string, sessionID session.ID, clientAct
 		actualDamage := damageResult.FinalDamage
 		if actualDamage > beforeState.HP { actualDamage = beforeState.HP }
 		if target.Kind == world.EntityMonster && actualDamage > 0 {
-			r.recordMonsterThreatDamage(targetID, actor.ID, sessionID, actualDamage)
+			r.recordMonsterThreatDamage(targetID, actor.ID, sessionID, actualDamage, tick)
 			r.recordMonsterLootDamage(targetID, actor.ID, sessionID, actualDamage)
 		}
 		if state.Defeated {

@@ -91,8 +91,8 @@ func TestCriticalMultiplierRunsBeforeDefenseAndFinalRounding(t *testing.T) {
 		AdditionalPhysicalDefense: 5,
 	}, nil, 0)
 	if err != nil { t.Fatal(err) }
-	// 101 * 1.5 = 151.5; defense 5 => 20% mitigation => 121.2; final round => 121.
-	if result.FinalDamage != 121 { t.Fatalf("critical mitigated damage=%d want=121", result.FinalDamage) }
+	// 101 * 1.5 = 151.5; defense 5 => 4.76% mitigation => 144.29; final round => 144.
+	if result.FinalDamage != 144 { t.Fatalf("critical mitigated damage=%d want=144", result.FinalDamage) }
 }
 
 func TestMagicCriticalUsesSameMultiplierBeforeMagicDefense(t *testing.T) {
@@ -103,5 +103,5 @@ func TestMagicCriticalUsesSameMultiplierBeforeMagicDefense(t *testing.T) {
 		MagicDefense: 20,
 	}, nil, 0)
 	if err != nil { t.Fatal(err) }
-	if result.FinalDamage != 75 { t.Fatalf("magic critical mitigated damage=%d want=75", result.FinalDamage) }
+	if result.FinalDamage != 125 { t.Fatalf("magic critical mitigated damage=%d want=125", result.FinalDamage) }
 }

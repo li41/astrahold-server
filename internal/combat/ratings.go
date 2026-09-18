@@ -35,12 +35,12 @@ func CriticalChanceBasisPoints(attributeBonusBasisPoints uint32, criticalRating 
 }
 
 // DefenseMitigationBasisPoints applies both formal V1 defense curves:
-// defense / (defense + 20). The caller decides whether defense is physical or magic.
+// defense / (defense + 100). The caller decides whether defense is physical or magic.
 func DefenseMitigationBasisPoints(defense uint32) uint32 {
 	if defense == 0 {
 		return 0
 	}
-	return uint32((uint64(defense) * 10000) / uint64(defense+20))
+	return uint32((uint64(defense) * 10000) / (uint64(defense) + 100))
 }
 
 // RemainingBasisPointsAfterMitigation converts one mitigation layer into its remaining-damage

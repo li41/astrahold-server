@@ -45,9 +45,9 @@ func TestDefenseMitigationBasisPoints(t *testing.T) {
 		want    uint32
 	}{
 		{0, 0},
-		{5, 2000},
-		{20, 5000},
-		{60, 7500},
+		{5, 476},
+		{20, 1666},
+		{60, 3750},
 	}
 	for _, tc := range cases {
 		if got := DefenseMitigationBasisPoints(tc.defense); got != tc.want {
@@ -58,13 +58,13 @@ func TestDefenseMitigationBasisPoints(t *testing.T) {
 
 func TestMagicDefenseThenShieldReductionUsesSeparateMultipliers(t *testing.T) {
 	magicDefenseRemaining := RemainingBasisPointsAfterMitigation(DefenseMitigationBasisPoints(5))
-	if magicDefenseRemaining != 8000 {
-		t.Fatalf("magic defense remaining = %d, want 8000", magicDefenseRemaining)
+	if magicDefenseRemaining != 9524 {
+		t.Fatalf("magic defense remaining = %d, want 9524", magicDefenseRemaining)
 	}
 	shieldRemaining := uint32(9200)
 	combined := CombineRemainingBasisPoints(magicDefenseRemaining, shieldRemaining)
-	if combined != 7360 {
-		t.Fatalf("combined remaining = %d, want 7360", combined)
+	if combined != 8762 {
+		t.Fatalf("combined remaining = %d, want 8762", combined)
 	}
 }
 

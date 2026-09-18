@@ -112,11 +112,11 @@ func TestEquippedGuardShieldMitigatesAuthoritativeWolfBite(t *testing.T) {
 		t.Fatalf("event=%#v", event)
 	}
 	if event.Blocked {
-		if event.Damage != 53 {
-			t.Fatalf("blocked guard-shield damage=%d, want 53", event.Damage)
+		if event.Damage != 61 {
+			t.Fatalf("blocked guard-shield damage=%d, want 61", event.Damage)
 		}
-	} else if event.Damage != 75 {
-		t.Fatalf("unblocked guard-shield damage=%d, want 75", event.Damage)
+	} else if event.Damage != 87 {
+		t.Fatalf("unblocked guard-shield damage=%d, want 87", event.Damage)
 	}
 	after, ok := rt.combatantState(s.EntityID)
 	if !ok || after.HP != before.HP-event.Damage {

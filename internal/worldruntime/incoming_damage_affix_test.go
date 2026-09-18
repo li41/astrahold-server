@@ -17,8 +17,8 @@ func TestPhysicalDefenseAffixAddsToShieldDefenseBeforeMitigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDamageMitigation: %v", err)
 	}
-	if result.FinalDamage != 80 {
-		t.Fatalf("final damage=%d want=80", result.FinalDamage)
+	if result.FinalDamage != 95 {
+		t.Fatalf("final damage=%d want=95", result.FinalDamage)
 	}
 }
 
@@ -32,9 +32,9 @@ func TestMagicDefenseAffixPrecedesShieldMagicReductionWithoutIntermediateRoundin
 	if err != nil {
 		t.Fatalf("resolveDamageMitigation: %v", err)
 	}
-	// 100 * 0.8 * 0.92 = 73.6, then the single final rounding step produces 74.
-	if result.FinalDamage != 74 {
-		t.Fatalf("final damage=%d want=74", result.FinalDamage)
+	// 100 * (100/105) * 0.92 = 87.619..., then the single final rounding step produces 88.
+	if result.FinalDamage != 88 {
+		t.Fatalf("final damage=%d want=88", result.FinalDamage)
 	}
 }
 
@@ -47,7 +47,7 @@ func TestMagicDefenseWithoutShieldUsesFormalDefenseCurve(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDamageMitigation: %v", err)
 	}
-	if result.FinalDamage != 50 {
-		t.Fatalf("final damage=%d want=50", result.FinalDamage)
+	if result.FinalDamage != 83 {
+		t.Fatalf("final damage=%d want=83", result.FinalDamage)
 	}
 }

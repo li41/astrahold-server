@@ -132,27 +132,43 @@ func preparedEntityTargetID(prepared combat.PreparedAction) (world.EntityID, boo
 	return world.EntityID(value), true
 }
 
-// resolveEquippedBasicAttackHit applies the formal V1 physical hit/evasion rating formula to an
-// entity-target basic attack made with an authored catalog weapon. The authoritative character
-// owner supplies effective Agility (including learned passive bonuses); its derived hit/evasion
-// ratings are combined with the weapon modifier and unique-equipment affixes before one hit roll.
+// resolveEquippedBasicAttackHit is the common direct-physical hit gate for the two V1 paths that
+// currently use hit/evasion: player equipped basic attacks and authored monster melee. Player
+// skills keep their existing action semantics; monster melee consumes authored PhysicalHit while
+// the target consumes authoritative player/equipment or monster-archetype Evasion.
 func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSessionID session.ID, prepared combat.PreparedAction) bool {
-	if prepared.Definition.ID != basicAttackActionID || prepared.Target.Kind != combat.TargetEntity {
-		return true
-	}
-	definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID)
-	if !ok || definition.Weapon == nil {
+	if prepared.Target.Kind != combat.TargetEntity {
 		return true
 	}
 	targetID, ok := preparedEntityTargetID(prepared)
 	if !ok {
 		return false
 	}
-	attackerStats, err := r.characterEffectivePrimaryStats(actorID)
-	if err != nil {
+	actor, ok := r.world.Entity(actorID)
+	if !ok {
 		return false
 	}
-	targetStats, err := r.characterEffectivePrimaryStats(targetID)
+
+	if actor.Kind == world.EntityMonster && prepared.Damage.Type == combat.DamagePhysical {
+		stats, authored := r.monsterStats(actorID)
+		if !authored || prepared.Definition.ID != stats.MeleeActionID {
+			return true
+		}
+		targetEvasion, err := r.entityEvasionRating(targetID)
+		if err != nil {
+			return false
+		}
+		return weaponAccuracyRoll() < combat.PhysicalHitChanceBasisPoints(stats.PhysicalHit, targetEvasion)
+	}
+
+	if prepared.Definition.ID != basicAttackActionID {
+		return true
+	}
+	definition, ok := r.equippedCatalogWeapon(actorID, sourceSessionID)
+	if !ok || definition.Weapon == nil {
+		return true
+	}
+	attackerStats, err := r.characterEffectivePrimaryStats(actorID)
 	if err != nil {
 		return false
 	}
@@ -160,18 +176,17 @@ func (r *Runtime) resolveEquippedBasicAttackHit(actorID world.EntityID, sourceSe
 	if err != nil {
 		return false
 	}
-	targetModifiers, err := r.equippedInstanceModifiers(targetID)
+	targetEvasion, err := r.entityEvasionRating(targetID)
 	if err != nil {
 		return false
 	}
-	return r.finalizeBasicAttackHit(actorID, sourceSessionID, weaponBasicAttackHits(
+	attackerRating := weaponBasicAttackAttackerRating(
 		definition.Weapon.AccuracyModifier,
 		characterstats.PhysicalHitModifier(attackerStats.Agility),
 		attackerModifiers.PhysicalHit,
-		characterstats.EvasionModifier(targetStats.Agility),
-		targetModifiers.Evasion,
-		weaponAccuracyRoll(),
-	))
+	)
+	hit := weaponAccuracyRoll() < combat.PhysicalHitChanceBasisPoints(attackerRating, targetEvasion)
+	return r.finalizeBasicAttackHit(actorID, sourceSessionID, hit)
 }
 
 func (r *Runtime) entityWeaponBodySize(entityID world.EntityID) equipmentcatalog.BodySize {
@@ -241,6 +256,10 @@ func (r *Runtime) matchingSkinBasicAttackDamageBonus(actorID world.EntityID, wea
 func (r *Runtime) resolveEquippedBasicAttackDamage(actorID world.EntityID, sourceSessionID session.ID, targetID world.EntityID, prepared combat.PreparedAction) uint32 {
 	if prepared.Target.Kind != combat.TargetEntity {
 		return prepared.Damage.Amount
+	}
+
+	if damage, authored := r.resolveMonsterMeleeDamage(actorID, prepared); authored {
+		return damage
 	}
 
 	damage := prepared.Damage.Amount

@@ -233,6 +233,7 @@ type Runtime struct {
 	combat                         *combat.Service
 	autonomousMeleeAgents          []autonomousMeleeAgent
 	monsterLifecycles              []monsterLifecycle
+	monsterCombatStats             map[world.EntityID]MonsterCombatStats
 	monsterLootCatalog             *loot.Catalog
 	monsterLootStates              map[world.EntityID]*monsterLootState
 	monsterLootEntityIDs           []world.EntityID
@@ -334,6 +335,7 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characters:                     characters,
 		queue:                          newCommandQueue(config.CommandQueueCapacity),
 		config:                         config,
+		monsterCombatStats:             make(map[world.EntityID]MonsterCombatStats),
 		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
 		nextItemDropEntityID:           firstItemDropEntityID,
 		itemDropExpireTick:             make(map[world.EntityID]uint64),
