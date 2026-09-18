@@ -65,6 +65,8 @@ V1 **不為單一怪物新增專用 gameplay system**。
 
 上述能力等通用 monster-ability / effect 模組成立後再配置回 archetype。
 
+**2026-09-18 決策：特殊攻擊另開後續規劃，不阻塞 Map1 普通近戰 V1。** 本輪只實作已定案的普通近戰、命中／閃避、暴擊、防禦、主動／非主動索敵、threat、同族 one-hop 援助與 lifecycle；charge、毒、slow、stun、遠程、召喚、aura、Boss phase 等均不得在這一輪自行補設計。
+
 ## 3. 正式 V1 monster roster
 
 ### 3.1 Emberwatch Fields／低語森林邊緣
@@ -211,7 +213,7 @@ Starter Region 只涵蓋森林第一段，因此 V1 不建立完整 Whisperwood 
 
 ## 6. Map1 V1 怪物完整戰鬥數值
 
-以下是 **Map1 V1 正式內容規劃值**。實作完成並經 runtime TTK／命中率／生存壓力驗證前，仍屬 authored tuning target，不得誤寫成已驗證 production balance。
+以下是 **Map1 V1 正式內容規劃值**。通用 monster combat foundation 已於 Server `7c401574...` 實作並由 Server CI run `35340474912` 驗證 Test／Vet／race detector；但完整 Map1 spawn placement、玩家正式 HP／MP progression 與真 runtime TTK／生存壓力尚未完成，因此表內數值仍是 authored tuning target，不得誤寫成最終 balance。
 
 `MonsterLevel` 是內容難度與未來 progression 對接用 stable metadata；它不直接替代 HP、攻擊、防禦、命中、閃避等 authoritative combat stats，也不自動套每級倍率。
 
@@ -246,7 +248,7 @@ Map1 V1 等級梯度：
 - `PhysicalHit` 與 `Evasion` 是 rating，不是百分比。
 - 命中沿用正式公式：`clamp(90% + (attacker PhysicalHit - target Evasion) × 0.5%, 75%, 98%)`。
 - 暴擊沿用正式公式：5% base + CriticalRating × 0.5 percentage point；本表已列出 V1 怪物在無額外 attribute bonus 時的實際基礎暴擊率。
-- Map1 正式規劃改採 mitigation：`defense / (defense + 100)`。這是對現有裝備／強化尺度的修正；目前 production combat code 仍是 `+20` 曲線，實作 slice 必須同步 migration + tests 後才算 gameplay 生效。
+- Map1 正式 mitigation 為 `defense / (defense + 100)`。Server `7c401574...` 已將 physical／magic defense 共用曲線由舊 `+20` migration 到 `+100`，並更新 shield、affix、armor-ignore、critical、self-mitigation 等公式測試；Server CI run `35340474912` PASS。
 - 這個尺度讓 50 Defense 約為 33% 減傷、100 Defense 為 50%、200 Defense 約為 67%，能容納 5 件防具 + 盾牌的基礎防禦、+N 強化、套裝 bonus 與 unique affix，而不會在 Map1 就過早接近高減傷區。
 - `BaseXP` 是正式 reward target，但目前 character experience／level-up owner 尚未實作；在 progression slice 落地前不宣稱玩家已能取得 XP。
 
@@ -290,44 +292,52 @@ Map1 V1 等級梯度：
 - **赤土蟻后**：最高 HP／雙防、低閃避、較高命中與暴擊；V1 不做 phase／summon，強度來自穩定近戰與 Boss durability。
 - **岩岸蟹**：高物防、低命中／低閃避、慢攻擊，是海岸耐打探索怪。
 
-### 6.5 現行 Server 實作缺口
+### 6.5 現行 Server 實作狀態
 
-現有 Server foundation 已有 HP、BodySize、movement、Action damage、critical、physical/magic defense、physical hit/evasion 公式，但正式 monster content 尚未完整接入這些 stat。
+Server checkpoint `7c401574b182f31e3965e48eaeb88aca985922d6` 已完成 Map1 普通近戰怪的通用 authoritative foundation，Server CI run `35340474912` 的 Test／Vet／race detector **PASS**。
 
-Map1 實作不得只把表格寫成資料卻不生效，至少需要：
+已實作：
 
-1. monster archetype 具備：
+1. `internal/monstercatalog` 已正式收錄 10 個 Map1 stable monster archetype，以及本文件的：
    - `MonsterLevel`
    - `MaxHP`
-   - `PhysicalDefense`
-   - `MagicDefense`
-   - `PhysicalHit`
-   - `Evasion`
-   - `CriticalRating`
-   - `BaseXP`
-   - movement / lifecycle / AI profile
-   - melee action identity + `DamageMin` / `DamageMax`
+   - `DamageMin / DamageMax`
+   - `PhysicalDefense / MagicDefense`
+   - `PhysicalHit / Evasion / CriticalRating`
+   - `BaseXP` metadata
+   - BodySize、movement、attack range／interval、aggro／leash、corpse／respawn
+   - `AggroMode` 與同族 assist 欄位
+   - shared `monster-melee` Action identity
 
-2. 通用 entity combat stat resolver：
-   - 玩家仍從 character/equipment/passive truth 聚合。
-   - 怪物從 monster archetype stats 聚合。
-   - 不為每種怪物建立專用 combat path。
+2. runtime 已有通用 monster combat-stat resolver：
+   - monster spawn 在 world-owner path 綁定 authored combat stats。
+   - corpse despawn 清除當次 EntityID stats；respawn 由 lifecycle config 重新註冊，不沿用 stale incarnation state。
+   - 玩家與怪物仍共用既有 combat／damage／vitals owner path，不建立第二套怪物 damage authority。
 
-3. 通用 PvE melee hit resolver：
-   - 目前玩家 equipped `basic-attack` 已有 hit/evasion roll。
-   - 現有 `wolf-bite` 類 monster action 尚未消費 monster PhysicalHit／玩家 Evasion。
-   - 實作時 monster physical melee 必須走同一正式 rating formula，不能維持「合法就必中」。
+3. 普通近戰已真正消費 authored stats：
+   - monster `DamageMin..DamageMax` 每次命中由 Server 在閉區間 authoritative roll。
+   - monster PhysicalHit 對 target Evasion 使用正式 rating formula。
+   - 玩家 equipped `basic-attack` 打 monster 時會消費 monster authored Evasion。
+   - monster CriticalRating 走既有 5% base + rating 的正式 critical resolver。
+   - monster physical／magic defense 走共用 incoming-damage resolver。
+   - defense curve 已正式 migration 為 `defense / (defense + 100)`。
 
-4. 通用 target defense resolver：
-   - 玩家 defense 仍從 authoritative equipment／instance modifiers。
-   - 怪物 defense 從 monster archetype stats。
-   - `resolveIncomingDamage` 最終只接收已解析出的 authoritative defense，不讓 Client 傳入防禦值。
+4. AI／threat：
+   - `aggressive` 可依 AggroRadius 主動取得玩家。
+   - `passive` 不因玩家靠近開戰，但受傷後會反擊。
+   - `same_family` assist 依 encounter group、family、radius、LOS、home/leash legality 選最近援軍，再以 EntityID 穩定排序，受 `MaxAssist` 限制。
+   - assist 是 one-hop；被叫來的援軍不再 rebroadcast，避免 chain aggro。
+   - evade／defeat／respawn 會清 encounter threat／assist transient state。
 
-5. XP owner：
-   - `BaseXP` 由 monster content author。
-   - defeat／contribution owner 決定 reward recipient。
-   - character progression owner 未建立前不得假裝 XP 已發放。
-   - level-difference multiplier、組隊分配與 rested bonus 等都不在 Map1 V1 偷渡定義。
+5. playtest 灰狼已由歷史 `wolf-gray-01` cutover 到 `monster_gray_wolf`，普通攻擊由歷史 `wolf-bite` 收斂到 shared `monster-melee`，實際 HP／傷害／移速／攻速／命中／閃避／暴擊／防禦由正式 Map1 catalog 提供。
+
+仍未完成，不得誤寫為已上線完整 Map1：
+
+- 其餘 9 種怪的 exact Server spawn point／home／patrol／encounter group placement；沒有正式 Server map1 navigation/collision 座標前，不從 Client POI 猜。
+- `BaseXP` 的實際發放、level-difference／party／contribution 規則；character progression owner 尚未建立。
+- 玩家正式 `BaseMaxHP / BaseMaxMP` progression migration；runtime 目前仍保留 1000／100 playtest baseline。
+- Map1 Loot Catalog V2、金幣 quantity、完整 exact loot／unique equipment materialization。
+- 特殊攻擊／monster ability；依本文件決策留待後續獨立規劃。
 
 ## 7. AI profile
 
@@ -442,22 +452,23 @@ monster ArchetypeID
 -> inventory / unique item instance
 ```
 
-不把目前 playtest `wolf-gray-01 -> item_gray_wolf_pelt 70%` 當成 map1 正式掉落；exact item、金幣、藥水、箭矢、裝備與強化卷來源以 [Map1-怪物掉落規劃](Map1-怪物掉落規劃.md) 為準。
+playtest 灰狼已使用正式 `monster_gray_wolf` identity，現行 runtime fixture 只先接 `item_gray_wolf_pelt` 45% 作既有 loot path 驗證；這**不是完整 Map1 loot table**。金幣 quantity、藥水、箭矢、裝備、強化卷與 TierMid unique 等仍以 [Map1-怪物掉落規劃](Map1-怪物掉落規劃.md) 為正式 authored target，待 Loot Catalog V2／unique materialization slice 實作。
 
 ## 10. 實作順序
 
 Map1 monster implementation 建議切四個 slice：
 
-1. **Map1 monster content model**
-   - stable monster archetype definition
-   - common melee AI profile
-   - MonsterLevel / HP / physical & magic defense / PhysicalHit / Evasion / CriticalRating / BaseXP
+1. **Map1 monster content model — 已完成 foundation**
+   - stable 10-monster archetype catalog
+   - common melee AI／threat／passive-aggressive／one-hop assist
+   - MonsterLevel / HP / physical & magic defense / PhysicalHit / Evasion / CriticalRating / BaseXP metadata
    - per-archetype melee `DamageMin` / `DamageMax` / interval / range
-   - movement / BodySize / lifecycle config
+   - movement / BodySize / lifecycle config seam
    - generic monster combat-stat / PvE hit / target-defense resolver
-   - validation
+   - defense `+100` migration
+   - Server `7c401574...` / CI `35340474912` PASS
 
-2. **Emberwatch Fields + Witherwill**
+2. **Emberwatch Fields + Witherwill — placement/content rollout 待做**
    - 灰狼／野豬
    - 枯柳逃兵／惡兵／頭目
    - 真 Client visible PvE loop
