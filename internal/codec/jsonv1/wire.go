@@ -42,28 +42,6 @@ type clientUseItem struct {
 	ItemArchetypeID string `json:"item_archetype_id"`
 }
 
-type clientInitialClassSelection struct {
-	ClassID string `json:"class_id"`
-}
-
-type characterClassState struct {
-	ClassID string `json:"class_id"`
-}
-
-type characterClassResourceState struct {
-	EntityID   uint64 `json:"entity_id"`
-	ResourceID string `json:"resource_id"`
-	Current    uint32 `json:"current"`
-	Max        uint32 `json:"max"`
-}
-
-type initialClassSelectionResult struct {
-	ClientActionSequence uint32 `json:"client_action_sequence"`
-	ClassID              string `json:"class_id"`
-	Outcome              string `json:"outcome"`
-	Reason               string `json:"reason,omitempty"`
-}
-
 type actionStarted struct {
 	ActionInstanceID uint64   `json:"action_instance_id"`
 	ActorEntityID    uint64   `json:"actor_entity_id"`
