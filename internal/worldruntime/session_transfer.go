@@ -181,9 +181,6 @@ func (r *Runtime) applyOwnershipTransfer(request OwnershipTransferRequest) error
 	// removal cannot clear the newly installed by-character ownership.
 	r.characterIdentities.activateOwnership(newOwnership)
 	r.characterIdentities.removeOwnershipBySession(expected.SessionID)
-	// Transfer carries no profession identity. If the character owns a generic action resource,
-	// queue its current value for the replacement session through the v27 presentation adapter.
-	r.queueCurrentActionResourceState(replacement)
 	if request.Result != nil {
 		*request.Result = newOwnership
 	}
