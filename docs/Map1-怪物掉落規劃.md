@@ -37,6 +37,7 @@ V1 不另建 wallet Protocol。若後續拍賣場、交易、郵件、跨角色�
 | `item_gray_wolf_pelt` | 灰狼皮；現有 Emberwatch shop 已可 1:1 換 minor healing potion，因此有正式 sink |
 | `item_minor_healing_potion` | 小型治療藥水 |
 | `item_minor_mana_potion` | 小型魔力藥水 |
+| `item_minor_speed_potion` | 小型加速藥水；規劃為 Server-authoritative 短時間移動速度增益，中文名稱只供文件／Client presentation；正式效果數值待 item-use 實作 slice 驗證 |
 | `item_low_arrow` | 木箭 |
 | `item_astrahold_weapon_enhancement_scroll` | 武器強化卷 |
 | `item_astrahold_armor_enhancement_scroll` | 防具／盾牌強化卷 |
@@ -98,6 +99,7 @@ monster defeated
 | --- | ---: | ---: |
 | `item_gray_wolf_pelt` | 45% | 1 |
 | `item_minor_healing_potion` | 4% | 1 |
+| `item_minor_speed_potion` | 1% | 1 |
 | `item_low_leather_helmet` | 1% | 1 |
 | `item_low_leather_chest` | 1% | 1 |
 | `item_low_leather_gloves` | 1% | 1 |
@@ -142,6 +144,7 @@ monster defeated
 | --- | ---: | ---: |
 | `item_minor_healing_potion` | 8% | 1 |
 | `item_minor_mana_potion` | 5% | 1 |
+| `item_minor_speed_potion` | 3% | 1 |
 | `item_low_arrow` | 12% | 4–8 |
 
 武器：
@@ -179,6 +182,7 @@ monster defeated
 | Drop | Chance | Quantity |
 | --- | ---: | ---: |
 | `item_minor_healing_potion` | 10% | 1 |
+| `item_minor_speed_potion` | 4% | 1 |
 | `item_low_arrow` | 12% | 4–8 |
 
 武器：
@@ -221,6 +225,7 @@ monster defeated
 | --- | ---: | ---: |
 | `item_minor_healing_potion` | 20% | 1 |
 | `item_minor_mana_potion` | 12% | 1 |
+| `item_minor_speed_potion` | 12% | 1 |
 | `item_low_arrow` | 25% | 8–16 |
 
 Low equipment：
@@ -297,6 +302,7 @@ TierMid Garrison Steel unique；每件命中時建立 exact ItemInstance + 1 aff
 | Drop | Chance |
 | --- | ---: |
 | `item_minor_healing_potion` | 5% |
+| `item_minor_speed_potion` | 1% |
 | `item_low_leather_helmet` | 0.5% |
 | `item_low_leather_gloves` | 1% |
 | `item_low_leather_boots` | 1% |
@@ -321,6 +327,7 @@ TierMid Garrison Steel unique；每件命中時建立 exact ItemInstance + 1 aff
 | Drop | Chance |
 | --- | ---: |
 | `item_minor_healing_potion` | 8% |
+| `item_minor_speed_potion` | 3% |
 | `item_low_leather_chest` | 1% |
 | `item_low_leather_legs` | 1% |
 | `item_low_heavy_chest` | 1% |
@@ -344,6 +351,7 @@ TierMid Garrison Steel unique；每件命中時建立 exact ItemInstance + 1 aff
 | --- | ---: |
 | `item_minor_healing_potion` | 35% |
 | `item_minor_mana_potion` | 20% |
+| `item_minor_speed_potion` | 8% |
 
 Low equipment；每件 2.5%：
 
@@ -441,6 +449,54 @@ TierMid shield unique：
 
 ---
 
+# 5. 小型加速藥水掉落規劃
+
+正式 stable ID：
+
+```text
+item_minor_speed_potion
+```
+
+中文顯示名：**小型加速藥水**。中文名稱只供規劃與 Client presentation；Server gameplay、loot、inventory、persistence 只使用 stable ID。
+
+Map1 V1 掉落來源：
+
+| 怪物 | 機率 | 數量 |
+| --- | ---: | ---: |
+| 灰狼 | 1% | 1 |
+| 枯柳逃兵 | 3% | 1 |
+| 枯柳惡兵 | 4% | 1 |
+| 枯柳頭目 | 12% | 1 |
+| 赤土兵蟻 | 1% | 1 |
+| 赤土衛蟻 | 3% | 1 |
+| 赤土蟻后 | 8% | 1 |
+
+不掉來源：
+
+- 野豬
+- 赤土工蟻
+- 岩岸蟹
+
+設計目的：
+
+- 普通怪可以偶爾取得，但不能成為高頻消耗品洪水。
+- 枯柳人形敵人是主要一般來源，符合「攜帶補給品」的內容語彙。
+- 赤土深層只給少量額外來源，不讓高密度工蟻成為藥水 farm。
+- 枯柳頭目／赤土蟻后提供明顯較高機率，使 elite／boss 有補給價值。
+
+效果 authority 邊界：
+
+```text
+Client use intent
+-> Server validates owned item / cooldown / character state
+-> Server consumes exact inventory quantity
+-> Server applies timed movement-speed effect
+-> Server movement step uses authoritative effective speed
+-> Client only presents buff / movement result
+```
+
+V1 規劃為**短時間正向移動速度增益**，但加速百分比、持續秒數、cooldown group、與其他 speed modifiers 的 stacking rule 尚未在本掉落文件鎖死。這些必須在通用 movement/status effect 實作時一起定義與測試，不能由 Client 自行套 multiplier。
+
 # 5. Map1 不掉
 
 以下在 Map1 V1 **完全不進 loot table**：
@@ -453,7 +509,7 @@ TierMid shield unique：
 - 尚無 sink 的 generic crafting trash
 - 任何 Client asset identity
 
-## 6. 現有 Emberwatch shop 與狼皮
+## 7. 現有 Emberwatch shop 與狼皮
 
 目前正式 shop 已有：
 
@@ -466,7 +522,7 @@ item_gray_wolf_pelt x1
 
 這是目前 Map1 唯一已存在的 material sink；未來若商店改成 gold pricing，可保留 pelt barter 作 early-game alternate acquisition，不需要刪除。
 
-## 7. Loot Catalog V2 需求
+## 8. Loot Catalog V2 需求
 
 現行 `internal/loot.Drop` 只有：
 
@@ -507,7 +563,7 @@ QuantityMax
 5. auto-grant／manual pickup轉移同一 instance
 6. reconnect維持同一 ItemInstanceID / affix
 
-## 8. 金幣與地面物
+## 9. 金幣與地面物
 
 金幣 V1 建議使用 **單一 stack drop**，不是一枚一個 entity。
 
@@ -521,7 +577,7 @@ QuantityMax
 
 `item_gold_coin` 的 UnitWeight 必須明確 override 為 0，避免每枚金幣吃 carry weight。
 
-## 9. 第一輪經濟節奏
+## 10. 第一輪經濟節奏
 
 金幣的初始 target：
 
@@ -540,7 +596,7 @@ QuantityMax
 
 這是 map1 income baseline；正式商店售價、修理、交易手續費等 sink 要以實際 kills/hour 後再定。
 
-## 10. 實作順序
+## 11. 實作順序
 
 1. **Common stack item / gold identity**
    - `item_gold_coin`
@@ -556,7 +612,7 @@ QuantityMax
 3. **Stack ground drop quantity**
    - gold
    - arrows
-   - potions
+   - healing / mana / speed potions
    - scrolls
    - archetype equipment
 
