@@ -226,16 +226,16 @@ Map1 V1 等級梯度：
 
 | 怪物 | Lv | HP | 單次近戰 raw damage | 物防 | 魔防 | PhysicalHit | Evasion | CriticalRating | 暴擊率 | 攻擊間隔 | BaseXP |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 灰狼 | 5 | 200 | 80 | 2 | 1 | 3 | 5 | 2 | 6% | 1.35 s | 20 |
-| 野豬 | 7 | 280 | 95 | 4 | 1 | 1 | 1 | 0 | 5% | 1.55 s | 30 |
-| 枯柳逃兵 | 8 | 240 | 90 | 3 | 2 | 3 | 3 | 1 | 5.5% | 1.30 s | 35 |
-| 枯柳惡兵 | 12 | 360 | 115 | 7 | 3 | 4 | 2 | 1 | 5.5% | 1.45 s | 60 |
-| 枯柳頭目 | 18 | 700 | 130 | 9 | 5 | 7 | 6 | 4 | 7% | 1.30 s | 180 |
-| 赤土工蟻 | 7 | 120 | 60 | 1 | 1 | 1 | 4 | 0 | 5% | 1.10 s | 20 |
-| 赤土兵蟻 | 11 | 230 | 95 | 4 | 2 | 3 | 3 | 1 | 5.5% | 1.30 s | 50 |
-| 赤土衛蟻 | 15 | 380 | 120 | 8 | 4 | 5 | 2 | 2 | 6% | 1.40 s | 90 |
-| 赤土蟻后 | 22 | 1000 | 150 | 10 | 8 | 6 | 0 | 4 | 7% | 1.60 s | 320 |
-| 岩岸蟹 | 8 | 300 | 85 | 7 | 2 | 1 | 1 | 0 | 5% | 1.65 s | 30 |
+| 灰狼 | 5 | 200 | 80 | 10 | 5 | 3 | 5 | 2 | 6% | 1.35 s | 20 |
+| 野豬 | 7 | 280 | 95 | 20 | 5 | 1 | 1 | 0 | 5% | 1.55 s | 30 |
+| 枯柳逃兵 | 8 | 240 | 90 | 15 | 10 | 3 | 3 | 1 | 5.5% | 1.30 s | 35 |
+| 枯柳惡兵 | 12 | 360 | 115 | 35 | 15 | 4 | 2 | 1 | 5.5% | 1.45 s | 60 |
+| 枯柳頭目 | 18 | 700 | 130 | 45 | 25 | 7 | 6 | 4 | 7% | 1.30 s | 180 |
+| 赤土工蟻 | 7 | 120 | 60 | 5 | 5 | 1 | 4 | 0 | 5% | 1.10 s | 20 |
+| 赤土兵蟻 | 11 | 230 | 95 | 20 | 10 | 3 | 3 | 1 | 5.5% | 1.30 s | 50 |
+| 赤土衛蟻 | 15 | 380 | 120 | 40 | 20 | 5 | 2 | 2 | 6% | 1.40 s | 90 |
+| 赤土蟻后 | 22 | 1000 | 150 | 50 | 40 | 6 | 0 | 4 | 7% | 1.60 s | 320 |
+| 岩岸蟹 | 8 | 300 | 85 | 35 | 10 | 1 | 1 | 0 | 5% | 1.65 s | 30 |
 
 數值語義：
 
@@ -244,11 +244,21 @@ Map1 V1 等級梯度：
 - `PhysicalHit` 與 `Evasion` 是 rating，不是百分比。
 - 命中沿用正式公式：`clamp(90% + (attacker PhysicalHit - target Evasion) × 0.5%, 75%, 98%)`。
 - 暴擊沿用正式公式：5% base + CriticalRating × 0.5 percentage point；本表已列出 V1 怪物在無額外 attribute bonus 時的實際基礎暴擊率。
-- 物防／魔防沿用正式 mitigation：`defense / (defense + 20)`。
-- 因此 V1 怪物 defense 刻意保持低量級；例如物防 10 已約等於 33% 物理減傷，不能把 defense 當一般 RPG 的三位數 stat 任意放大。
+- Map1 正式規劃改採 mitigation：`defense / (defense + 100)`。這是對現有裝備／強化尺度的修正；目前 production combat code 仍是 `+20` 曲線，實作 slice 必須同步 migration + tests 後才算 gameplay 生效。
+- 這個尺度讓 50 Defense 約為 33% 減傷、100 Defense 為 50%、200 Defense 約為 67%，能容納 5 件防具 + 盾牌的基礎防禦、+N 強化、套裝 bonus 與 unique affix，而不會在 Map1 就過早接近高減傷區。
 - `BaseXP` 是正式 reward target，但目前 character experience／level-up owner 尚未實作；在 progression slice 落地前不宣稱玩家已能取得 XP。
 
-### 6.2 移動、距離與生命週期
+### 6.2 裝備尺度 sanity check
+
+現行裝備資料證明 `+20` denominator 不適合正式 progression：
+
+- 五件中階衛戍鋼基礎物防合計 12，`item_mid_guard_shield` 再給 6；六個防禦部位若各安全強化到 +4，再加衛戍鋼 5 件套 +2，合計可達 **44 PhysicalDefense**，尚未計 unique affix。
+- 五件高階星鑄壁壘基礎物防合計 16，`item_high_guard_shield` 再給 8；六個防禦部位各 +4，加 2/5 件套物防 bonus 共 +3，已達 **51 PhysicalDefense**，尚未計 unique affix。
+- 高階 armor／shield 本身還能 roll `affix_physical_defense`，單件最高 +5；強化亦沒有 gameplay hard max。因此防禦曲線必須能容納 50、100 甚至更高的長期數值。
+
+注意：武器 +N 增加的是 PhysicalDamage；防禦強化來源是五件 armor + off-hand shield，共六個防禦部位。飾品目前不算在上述 sanity check。
+
+### 6.3 移動、距離與生命週期
 
 | 怪物 | BodySize | Move | AttackRange | Aggro / Leash | Corpse hold | Respawn | AI profile |
 | --- | --- | ---: | ---: | --- | ---: | ---: | --- |
@@ -265,7 +275,7 @@ Map1 V1 等級梯度：
 
 `AttackRange` 是 AI 進入出手距離；Combat Action Catalog 必須再次驗證正式 range，不能只靠 AI steering 決定攻擊是否合法。
 
-### 6.3 怪物個性
+### 6.4 怪物個性
 
 - **灰狼**：高移速、高閃避、偏高命中；本身防禦低，靠快速貼身與追擊形成壓力。
 - **野豬**：較高 HP／物防、低閃避、慢攻擊；是第一個「硬但不靈活」的野獸。
@@ -278,7 +288,7 @@ Map1 V1 等級梯度：
 - **赤土蟻后**：最高 HP／雙防、低閃避、較高命中與暴擊；V1 不做 phase／summon，強度來自穩定近戰與 Boss durability。
 - **岩岸蟹**：高物防、低命中／低閃避、慢攻擊，是海岸耐打探索怪。
 
-### 6.4 現行 Server 實作缺口
+### 6.5 現行 Server 實作缺口
 
 現有 Server foundation 已有 HP、BodySize、movement、Action damage、critical、physical/magic defense、physical hit/evasion 公式，但正式 monster content 尚未完整接入這些 stat。
 
