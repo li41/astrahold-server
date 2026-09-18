@@ -98,16 +98,21 @@ func (r *Runtime) finalizeBasicAttackHit(actorID world.EntityID, sourceSessionID
 	return false
 }
 
-func rollBowAndArrowDamage(definition equipmentcatalog.Definition, size equipmentcatalog.BodySize, arrow ammunition.Definition, roll uint32) uint32 {
-	if definition.Weapon == nil || definition.Weapon.WeaponType != equipmentcatalog.WeaponTypeBow {
+func rollRangedWeaponAndArrowDamage(definition equipmentcatalog.Definition, size equipmentcatalog.BodySize, arrow ammunition.Definition, roll uint32) uint32 {
+	if definition.Weapon == nil {
 		return 0
 	}
-	bow := definition.DamageRangeFor(size)
-	if bow.Min == 0 || bow.Max < bow.Min || arrow.Damage.Min == 0 || arrow.Damage.Max < arrow.Damage.Min {
+	switch definition.Weapon.WeaponType {
+	case equipmentcatalog.WeaponTypeBow, equipmentcatalog.WeaponTypeCrossbow:
+	default:
 		return 0
 	}
-	minDamage := uint64(bow.Min) + uint64(arrow.Damage.Min)
-	maxDamage := uint64(bow.Max) + uint64(arrow.Damage.Max)
+	weapon := definition.DamageRangeFor(size)
+	if weapon.Min == 0 || weapon.Max < weapon.Min || arrow.Damage.Min == 0 || arrow.Damage.Max < arrow.Damage.Min {
+		return 0
+	}
+	minDamage := uint64(weapon.Min) + uint64(arrow.Damage.Min)
+	maxDamage := uint64(weapon.Max) + uint64(arrow.Damage.Max)
 	if minDamage > math.MaxUint32 {
 		return math.MaxUint32
 	}
@@ -123,9 +128,9 @@ func rollBowAndArrowDamage(definition equipmentcatalog.Definition, size equipmen
 }
 
 // rollEquippedBasicAttackWeaponDamageWithAmmunition keeps weapons without arrow requirements on
-// their existing damage path. Bow hits combine bow + exact selected arrow into one roll; crossbows
-// keep their authored weapon damage while consuming the same authoritative arrow stacks. The fired
-// arrow material is returned so later material rules use the exact consumed ammunition.
+// their existing damage path. Bow and crossbow hits both combine weapon base + exact selected arrow
+// into one uniform roll. The fired arrow material is returned so later material rules use the exact
+// consumed ammunition.
 func (r *Runtime) rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID world.EntityID, sourceSessionID session.ID, definition equipmentcatalog.Definition, size equipmentcatalog.BodySize) (uint32, equipmentcatalog.MaterialID) {
 	if definition.Weapon == nil {
 		return rollWeaponDamage(definition, size, rand.Uint32()), ""
@@ -139,13 +144,7 @@ func (r *Runtime) rollEquippedBasicAttackWeaponDamageWithAmmunition(actorID worl
 	if !required || !available {
 		return 0, ""
 	}
-	var damage uint32
-	if definition.Weapon.WeaponType == equipmentcatalog.WeaponTypeBow {
-		damage = rollBowAndArrowDamage(definition, size, arrow, rand.Uint32())
-	} else {
-		// Crossbows consume the same arrow stacks but keep their existing authored weapon damage.
-		damage = rollWeaponDamage(definition, size, rand.Uint32())
-	}
+	damage := rollRangedWeaponAndArrowDamage(definition, size, arrow, rand.Uint32())
 	if damage == 0 || !r.consumeExactArrow(sourceSessionID, actorID, arrow) {
 		return 0, ""
 	}

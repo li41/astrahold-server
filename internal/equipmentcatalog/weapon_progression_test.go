@@ -34,7 +34,7 @@ func TestDefaultCatalogLocksThreeTierWeaponProgression(t *testing.T) {
 		{WeaponTypeClaw, 5, MaterialSteel, MaterialStarsteel, 1, DamageRange{7,11}, DamageRange{7,10}, DamageRange{9,14}, DamageRange{9,13}, 0, 0},
 		{WeaponTypeDualBlades, 8, MaterialSteel, MaterialStarsteel, 0, DamageRange{8,12}, DamageRange{7,10}, DamageRange{11,15}, DamageRange{9,13}, 0, 0},
 		{WeaponTypeBow, 4, MaterialReinforcedWood, MaterialStarwood, 1, DamageRange{5,7}, DamageRange{5,7}, DamageRange{8,12}, DamageRange{8,12}, 0, 0},
-		{WeaponTypeCrossbow, 8, MaterialSteel, MaterialStarsteel, 2, DamageRange{17,21}, DamageRange{17,21}, DamageRange{22,27}, DamageRange{22,27}, 0, 0},
+		{WeaponTypeCrossbow, 8, MaterialSteel, MaterialStarsteel, 2, DamageRange{11,13}, DamageRange{11,13}, DamageRange{16,19}, DamageRange{16,19}, 0, 0},
 		{WeaponTypeSling, 2, MaterialReinforcedLeather, MaterialStarhide, 2, DamageRange{10,13}, DamageRange{10,13}, DamageRange{13,17}, DamageRange{13,17}, 0, 0},
 		{WeaponTypeStaff, 5, MaterialRunewood, MaterialStarwood, 0, DamageRange{7,10}, DamageRange{7,10}, DamageRange{9,13}, DamageRange{9,13}, 0, 0},
 	}

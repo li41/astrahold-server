@@ -131,7 +131,7 @@ func Default() (*Catalog, error) {
 	if err := applyDefaultProductionMaterials(def.Items); err != nil {
 		return nil, err
 	}
-	if err := applyDefaultBowAmmunitionBalance(def.Items); err != nil {
+	if err := applyDefaultRangedAmmunitionBalance(def.Items); err != nil {
 		return nil, err
 	}
 	return New(def)

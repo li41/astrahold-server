@@ -40,7 +40,7 @@ func TestDefaultCatalogHasLowTierRepresentativeForEveryFormalWeaponType(t *testi
 		{"item_iron_claw", WeaponTypeClaw, MaterialIron, DamageRange{5, 8}, DamageRange{5, 7}, 0, 1, 5, 700, characterstats.Strength, 0, HandRequirementTwoHand},
 		{"item_militia_dual_blades", WeaponTypeDualBlades, MaterialIron, DamageRange{6, 8}, DamageRange{5, 7}, 0, 0, 8, 700, characterstats.Strength, 0, HandRequirementTwoHand},
 		{"item_hunter_shortbow", WeaponTypeBow, MaterialWood, DamageRange{2, 3}, DamageRange{2, 3}, 0, 1, 4, 1200, characterstats.Agility, 18, HandRequirementTwoHand},
-		{"item_hunter_light_crossbow", WeaponTypeCrossbow, MaterialWood, DamageRange{12, 15}, DamageRange{12, 15}, 0, 2, 8, 1550, characterstats.Agility, 22, HandRequirementTwoHand},
+		{"item_hunter_light_crossbow", WeaponTypeCrossbow, MaterialWood, DamageRange{6, 7}, DamageRange{6, 7}, 0, 2, 8, 1550, characterstats.Agility, 22, HandRequirementTwoHand},
 		{"item_leather_sling", WeaponTypeSling, MaterialLeather, DamageRange{7, 10}, DamageRange{7, 10}, 0, 2, 2, 1100, characterstats.Agility, 14, HandRequirementOneHand},
 		{"item_apprentice_wood_staff", WeaponTypeStaff, MaterialWood, DamageRange{5, 8}, DamageRange{5, 8}, 0, 0, 5, 1250, "", 0, HandRequirementTwoHand},
 	}
