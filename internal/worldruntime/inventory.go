@@ -3,7 +3,6 @@ package worldruntime
 import (
 	"errors"
 
-	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/inventory"
@@ -217,9 +216,6 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 			}
 		}
 		r.inventories[identity] = inv
-	}
-	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
-		r.queueCurrentActionResourceState(s)
 	}
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
