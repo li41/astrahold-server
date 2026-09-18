@@ -211,25 +211,29 @@ Starter Region 只涵蓋森林第一段，因此 V1 不建立完整 Whisperwood 
 
 ## 6. Relative combat tuning baseline
 
-下列是 **第一輪 Server tuning target**，不是 character level 系統，也不是新的 Protocol field。
+下列是 **第一輪 Server tuning target**。本版新增 `MonsterLevel` 作為內容難度標示／調校 metadata；它 **不是 character level 系統，也不是新的 Protocol field，亦不直接取代 HP、damage、hit、defense 等 authoritative combat stats**。
 
-以正式 map1 灰狼作 1.0 基準。實作時先沿用現有 playtest wolf 約 200 HP 的量級，經真 Client TTK 再調整。
+Map1 V1 的怪物等級梯度先定為約 **Lv.5–22**，讓 starter region 有明顯前／中／後段，地表菁英與地下 Boss 不再落在過低等級。
 
-| Archetype | HP target | Damage pressure | Move | Aggro / Leash | Respawn |
-| --- | ---: | ---: | ---: | --- | --- |
-| 灰狼 | 200 | 1.00x | 4.5 m/s | 9 / 18 m | 25 s |
-| 野豬 | 280 | 1.15x | 3.6 m/s | 7 / 16 m | 30 s |
-| 枯柳逃兵 | 240 | 1.05x | 4.0 m/s | 10 / 20 m | 35 s |
-| 枯柳惡兵 | 360 | 1.30x | 3.5 m/s | 9 / 18 m | 45 s |
-| 枯柳頭目 | 700 | 1.50x | 3.8 m/s | 11 / 24 m | 120 s |
-| 赤土工蟻 | 120 | 0.70x | 4.0 m/s | 7 / 14 m | 25 s |
-| 赤土兵蟻 | 230 | 1.00x | 3.8 m/s | 8 / 16 m | 30 s |
-| 赤土衛蟻 | 380 | 1.25x | 3.4 m/s | 8 / 16 m | 45 s |
-| 赤土蟻后 | 1000 | 1.60x | 2.6 m/s | 10 / 22 m | 180 s |
-| 岩岸蟹 | 300 | 0.90x | 2.8 m/s | 6 / 13 m | 35 s |
+以正式 map1 灰狼作 1.0 戰鬥基準。實作時先沿用現有 playtest wolf 約 200 HP 的量級，經真 Client TTK 再調整。
+
+| Archetype | MonsterLevel | HP target | Damage pressure | Move | Aggro / Leash | Respawn |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 灰狼 | 5 | 200 | 1.00x | 4.5 m/s | 9 / 18 m | 25 s |
+| 野豬 | 7 | 280 | 1.15x | 3.6 m/s | 7 / 16 m | 30 s |
+| 枯柳逃兵 | 8 | 240 | 1.05x | 4.0 m/s | 10 / 20 m | 35 s |
+| 枯柳惡兵 | 12 | 360 | 1.30x | 3.5 m/s | 9 / 18 m | 45 s |
+| 枯柳頭目 | 18 | 700 | 1.50x | 3.8 m/s | 11 / 24 m | 120 s |
+| 赤土工蟻 | 7 | 120 | 0.70x | 4.0 m/s | 7 / 14 m | 25 s |
+| 赤土兵蟻 | 11 | 230 | 1.00x | 3.8 m/s | 8 / 16 m | 30 s |
+| 赤土衛蟻 | 15 | 380 | 1.25x | 3.4 m/s | 8 / 16 m | 45 s |
+| 赤土蟻后 | 22 | 1000 | 1.60x | 2.6 m/s | 10 / 22 m | 180 s |
+| 岩岸蟹 | 8 | 300 | 0.90x | 2.8 m/s | 6 / 13 m | 35 s |
 
 補充：
 
+- `MonsterLevel` 是內容難度與未來 progression 對接用 stable tuning metadata；目前不進 wire，也不自動套用傷害倍率。
+- 第一輪等級節奏：Lv.5–8 為入門／野外，Lv.11–15 為中段／深層主力，Lv.18 為地表菁英頭目，Lv.22 為 Map1 地下 Boss。
 - Damage pressure 是相對 tuning target，不進 wire。
 - 正式 action damage 要在實作 slice 對現有玩家武器、命中率與實際 TTK 做 checkpoint 校正後落數值。
 - regular corpse hold 先以 2–3 秒量級；頭目／蟻后可 4–5 秒，確保 defeat presentation 可見。
