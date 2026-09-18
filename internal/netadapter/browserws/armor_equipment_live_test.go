@@ -33,6 +33,9 @@ const (
 
 	armorLiveMidInstanceID  = "item-instance:browserws-mid-chest"
 	armorLiveHighInstanceID = "item-instance:browserws-high-chest"
+
+	armorLiveTwoHandSword = "item_two_hand_iron_sword"
+	armorLiveShield       = "item_iron_rim_round_shield"
 )
 
 type armorLiveRoller struct{}
@@ -183,6 +186,100 @@ func TestArmorEquipmentBrowserWSV33RoundTripAndRejections(t *testing.T) {
 	})
 	assertProtocolInstanceMatches(t, inventoryInstance(final.inventoryInstances, armorLiveMidInstanceID), mid)
 	assertProtocolInstanceMatches(t, inventoryInstance(final.inventoryInstances, armorLiveHighInstanceID), high)
+}
+
+func TestArmorEquipmentBrowserWSV33HandConflictDoesNotMutateEquipment(t *testing.T) {
+	inventoryState, err := characterstate.NewInventoryStateWithSlots(
+		[]characterstate.InventoryStack{
+			{ItemArchetypeID: armorLiveShield, Quantity: 1},
+			{ItemArchetypeID: armorLiveTwoHandSword, Quantity: 1},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("build hand-conflict BrowserWS inventory: %v", err)
+	}
+	fixture := newArmorEquipmentLiveFixture(
+		t,
+		"hand-conflict",
+		inventoryState,
+		characterstats.DefaultPrimary(),
+	)
+
+	readArmorOwnerStateUntil(t, fixture, "initial hand-conflict owner state", func(state armorOwnerState) bool {
+		return state.complete() &&
+			inventorySnapshotQuantity(state.inventory, armorLiveShield) == 1 &&
+			inventorySnapshotQuantity(state.inventory, armorLiveTwoHandSword) == 1 &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotMainHand) == "" &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotOffHand) == ""
+	})
+
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 1, protocol.ClientEquipmentCommand{
+		Operation:       protocol.EquipmentOperationEquip,
+		Slot:            protocol.EquipmentSlotOffHand,
+		ItemArchetypeID: armorLiveShield,
+	})
+	readArmorOwnerStateUntil(t, fixture, "shield equipped", func(state armorOwnerState) bool {
+		return state.complete() &&
+			inventorySnapshotQuantity(state.inventory, armorLiveShield) == 0 &&
+			inventorySnapshotQuantity(state.inventory, armorLiveTwoHandSword) == 1 &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotMainHand) == "" &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotOffHand) == armorLiveShield
+	})
+
+	// A two-hand weapon cannot coexist with an authoritative off-hand shield. The rejected command
+	// has no optimistic result packet; a following valid shield unequip forces a full owner batch,
+	// which must still show that the rejected two-hand equip never occupied main_hand.
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 2, protocol.ClientEquipmentCommand{
+		Operation:       protocol.EquipmentOperationEquip,
+		Slot:            protocol.EquipmentSlotMainHand,
+		ItemArchetypeID: armorLiveTwoHandSword,
+	})
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 3, protocol.ClientEquipmentCommand{
+		Operation: protocol.EquipmentOperationUnequip,
+		Slot:      protocol.EquipmentSlotOffHand,
+	})
+	readArmorOwnerStateUntil(t, fixture, "two-hand conflict rejected", func(state armorOwnerState) bool {
+		return state.complete() &&
+			inventorySnapshotQuantity(state.inventory, armorLiveShield) == 1 &&
+			inventorySnapshotQuantity(state.inventory, armorLiveTwoHandSword) == 1 &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotMainHand) == "" &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotOffHand) == ""
+	})
+
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 4, protocol.ClientEquipmentCommand{
+		Operation:       protocol.EquipmentOperationEquip,
+		Slot:            protocol.EquipmentSlotMainHand,
+		ItemArchetypeID: armorLiveTwoHandSword,
+	})
+	readArmorOwnerStateUntil(t, fixture, "two-hand sword equipped", func(state armorOwnerState) bool {
+		return state.complete() &&
+			inventorySnapshotQuantity(state.inventory, armorLiveShield) == 1 &&
+			inventorySnapshotQuantity(state.inventory, armorLiveTwoHandSword) == 0 &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotMainHand) == armorLiveTwoHandSword &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotOffHand) == ""
+	})
+
+	// Reverse direction: with a two-hand main weapon equipped, off-hand shield equip must reject
+	// without auto-unequipping or otherwise rewriting either authoritative slot.
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 5, protocol.ClientEquipmentCommand{
+		Operation:       protocol.EquipmentOperationEquip,
+		Slot:            protocol.EquipmentSlotOffHand,
+		ItemArchetypeID: armorLiveShield,
+	})
+	writeBrowserIntent(t, fixture.ctx, fixture.conn, fixture.codec, 6, protocol.ClientEquipmentCommand{
+		Operation: protocol.EquipmentOperationUnequip,
+		Slot:      protocol.EquipmentSlotMainHand,
+	})
+	readArmorOwnerStateUntil(t, fixture, "reverse hand conflict rejected", func(state armorOwnerState) bool {
+		return state.complete() &&
+			inventorySnapshotQuantity(state.inventory, armorLiveShield) == 1 &&
+			inventorySnapshotQuantity(state.inventory, armorLiveTwoHandSword) == 1 &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotMainHand) == "" &&
+			equipmentArchetype(state.equipment, protocol.EquipmentSlotOffHand) == ""
+	})
 }
 
 func TestArmorEquipmentBrowserWSV33RestoresGenericAndUniqueArmorOnJoin(t *testing.T) {
