@@ -2,7 +2,6 @@ package gamev1
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/codec/jsonv1"
@@ -25,7 +24,7 @@ func TestProtocolV34KeepsTargetResourceType118(t *testing.T) {
 	if protocol.MessageCharacterTargetResourceState != 118 {
 		t.Fatalf("target resource type=%d want=118", protocol.MessageCharacterTargetResourceState)
 	}
-	want := protocol.CharacterTargetResourceState{
+	message := protocol.CharacterTargetResourceState{
 		SourceEntityID: 7,
 		TargetEntityID: 9,
 		ResourceID:     "flaw",
@@ -33,11 +32,13 @@ func TestProtocolV34KeepsTargetResourceType118(t *testing.T) {
 		Max:            3,
 	}
 	codec := Codec{}
-	payload, err := codec.Marshal(want)
+	payload, err := codec.Marshal(message)
 	if err != nil { t.Fatal(err) }
-	decoded, err := codec.Unmarshal(protocol.MessageCharacterTargetResourceState, payload)
-	if err != nil { t.Fatal(err) }
-	if !reflect.DeepEqual(decoded, want) {
-		t.Fatalf("decoded=%#v want=%#v", decoded, want)
+	const wantPayload = `{"source_entity_id":7,"target_entity_id":9,"resource_id":"flaw","current":2,"max":3}`
+	if string(payload) != wantPayload {
+		t.Fatalf("payload=%s want=%s", payload, wantPayload)
+	}
+	if _, err := codec.Unmarshal(protocol.MessageCharacterTargetResourceState, payload); !errors.Is(err, jsonv1.ErrUnsupportedMessage) {
+		t.Fatalf("inbound Type118 err=%v want ErrUnsupportedMessage", err)
 	}
 }
