@@ -23,6 +23,10 @@ func (r *Runtime) applyUseAction(name string, command useActionCommand, tick uin
 		r.applyWarehouseCommand(name, command, report)
 		return
 	}
+	if command.ammunition != nil {
+		r.applyAmmunitionCommand(name, command, report)
+		return
+	}
 	if command.equipment != nil {
 		r.applyEquipmentCommand(name, command, report)
 		return

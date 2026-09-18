@@ -26,6 +26,7 @@ type ItemUseCommandSink interface { EnqueueUseItem(session.ID, uint32, protocol.
 type NPCCommandSink interface { EnqueueInteractNPC(session.ID, uint32, protocol.ClientInteractNPC) error }
 type ShopCommandSink interface { EnqueueShopCommand(session.ID, uint32, protocol.ClientShopCommand) error }
 type WarehouseCommandSink interface { EnqueueWarehouseCommand(session.ID, uint32, protocol.ClientWarehouseCommand) error }
+type AmmunitionCommandSink interface { EnqueueAmmunitionCommand(session.ID, uint32, protocol.ClientAmmunitionCommand) error }
 type RespawnCommandSink interface { EnqueueRespawnRequest(session.ID, uint32, protocol.ClientRespawnRequest) error }
 
 type Ingress struct{ sink MoveCommandSink }
@@ -114,6 +115,12 @@ func (g *Ingress) Handle(sessionID session.ID, envelope protocol.Envelope) error
 		if message == nil { return ErrInvalidClientEnvelope }
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueWarehouseCommand(sessionID, envelope.Sequence, *message)
+	case protocol.ClientAmmunitionCommand:
+		if envelope.Delivery != protocol.DeliveryReliableOrdered || !validAmmunitionCommand(message) { return ErrInvalidClientEnvelope }
+		return g.enqueueAmmunitionCommand(sessionID, envelope.Sequence, message)
+	case *protocol.ClientAmmunitionCommand:
+		if message == nil || envelope.Delivery != protocol.DeliveryReliableOrdered || !validAmmunitionCommand(*message) { return ErrInvalidClientEnvelope }
+		return g.enqueueAmmunitionCommand(sessionID, envelope.Sequence, *message)
 	case protocol.ClientRespawnRequest:
 		if envelope.Delivery != protocol.DeliveryReliableOrdered { return ErrInvalidClientDelivery }
 		return g.enqueueRespawnRequest(sessionID, envelope.Sequence, message)
@@ -184,6 +191,11 @@ func validShopCommand(command protocol.ClientShopCommand) bool {
 	}
 }
 
+func validAmmunitionCommand(command protocol.ClientAmmunitionCommand) bool {
+	itemID := strings.TrimSpace(command.ItemArchetypeID)
+	return command.Operation == protocol.AmmunitionOperationSelect && itemID != "" && itemID == command.ItemArchetypeID
+}
+
 func finiteFloat32(value float32) bool { return !float32NaN(value) && !float32Inf(value) }
 func float32NaN(value float32) bool { return math.IsNaN(float64(value)) }
 func float32Inf(value float32) bool { return math.IsInf(float64(value), 0) }
@@ -214,6 +226,9 @@ func (g *Ingress) enqueueShopCommand(sessionID session.ID, sequence uint32, inte
 }
 func (g *Ingress) enqueueWarehouseCommand(sessionID session.ID, sequence uint32, intent protocol.ClientWarehouseCommand) error {
 	sink, ok := g.sink.(WarehouseCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueWarehouseCommand(sessionID, sequence, intent)
+}
+func (g *Ingress) enqueueAmmunitionCommand(sessionID session.ID, sequence uint32, intent protocol.ClientAmmunitionCommand) error {
+	sink, ok := g.sink.(AmmunitionCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueAmmunitionCommand(sessionID, sequence, intent)
 }
 func (g *Ingress) enqueueRespawnRequest(sessionID session.ID, sequence uint32, intent protocol.ClientRespawnRequest) error {
 	sink, ok := g.sink.(RespawnCommandSink); if !ok { return ErrUnsupportedClientMessage }; return sink.EnqueueRespawnRequest(sessionID, sequence, intent)

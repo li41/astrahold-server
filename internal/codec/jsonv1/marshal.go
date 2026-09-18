@@ -45,9 +45,14 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		return json.Marshal(clientEnhanceEquipment{ScrollItemArchetypeID: m.ScrollItemArchetypeID, ItemInstanceID: m.ItemInstanceID})
 	case protocol.ClientWarehouseCommand:
 		return json.Marshal(clientWarehouseCommand{Operation: string(m.Operation), ItemArchetypeID: m.ItemArchetypeID, Quantity: m.Quantity})
+	case protocol.ClientAmmunitionCommand:
+		return json.Marshal(clientAmmunitionCommand{Operation: string(m.Operation), ItemArchetypeID: m.ItemArchetypeID})
 	case *protocol.ClientWarehouseCommand:
 		if m == nil { return nil, ErrUnsupportedMessage }
 		return json.Marshal(clientWarehouseCommand{Operation: string(m.Operation), ItemArchetypeID: m.ItemArchetypeID, Quantity: m.Quantity})
+	case *protocol.ClientAmmunitionCommand:
+		if m == nil { return nil, ErrUnsupportedMessage }
+		return json.Marshal(clientAmmunitionCommand{Operation: string(m.Operation), ItemArchetypeID: m.ItemArchetypeID})
 	case protocol.ClientPickupItem:
 		return json.Marshal(clientPickupItem{DropEntityID: uint64(m.DropEntityID)})
 	case *protocol.ClientPickupItem:
@@ -92,6 +97,10 @@ func (Codec) Marshal(message protocol.Message) ([]byte, error) {
 		out := warehouseSnapshot{Items: make([]warehouseItemStack, len(m.Items))}
 		for i, item := range m.Items { out.Items[i] = warehouseItemStack{ItemArchetypeID: item.ItemArchetypeID, Quantity: item.Quantity} }
 		return json.Marshal(out)
+	case protocol.AmmunitionResult:
+		return json.Marshal(ammunitionResult{ClientActionSequence: m.ClientActionSequence, Operation: string(m.Operation), Outcome: string(m.Outcome), Reason: string(m.Reason), ItemArchetypeID: m.ItemArchetypeID})
+	case protocol.AmmunitionState:
+		return json.Marshal(ammunitionState{SelectedItemArchetypeID: m.SelectedItemArchetypeID})
 	case protocol.CharacterClassState:
 		return json.Marshal(characterClassState{ClassID: m.ClassID})
 	case protocol.CharacterClassResourceState:
