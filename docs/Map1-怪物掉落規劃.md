@@ -328,27 +328,7 @@ TierMid Garrison Steel unique；每件命中時建立 exact ItemInstance + 1 aff
 | `item_guard_shield` | 1% |
 | `item_runed_square_shield` | 1% |
 
-TierMid armor unique；**15 件全部各 0.2%**：
-
-| Drop | Chance |
-| --- | ---: |
-| `item_garrison_steel_helm` | 0.2% |
-| `item_garrison_steel_cuirass` | 0.2% |
-| `item_garrison_steel_gauntlets` | 0.2% |
-| `item_garrison_steel_greaves` | 0.2% |
-| `item_garrison_steel_boots` | 0.2% |
-| `item_windchaser_cap` | 0.2% |
-| `item_windchaser_armor` | 0.2% |
-| `item_windchaser_gloves` | 0.2% |
-| `item_windchaser_leggings` | 0.2% |
-| `item_windchaser_boots` | 0.2% |
-| `item_arcane_rune_hood` | 0.2% |
-| `item_arcane_rune_robe` | 0.2% |
-| `item_arcane_rune_gloves` | 0.2% |
-| `item_arcane_rune_trousers` | 0.2% |
-| `item_arcane_rune_boots` | 0.2% |
-
-每件命中時建立 exact ItemInstance + 1 affix。
+赤土衛蟻 **不掉任何 TierMid unique／套裝部件**。Map1 中階套裝來源集中在枯柳頭目與赤土蟻后，避免可重複深層菁英怪成為套裝 farm 主來源。
 
 ## 4.9 赤土蟻后 — `monster_redsoil_queen`
 
