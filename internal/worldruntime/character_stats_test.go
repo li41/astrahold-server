@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/li41/astrahold-server/internal/characterstats"
+	"github.com/li41/astrahold-server/internal/equipmentstats"
 	"github.com/li41/astrahold-server/internal/learnedskills"
 	"github.com/li41/astrahold-server/internal/skillcatalog"
 )
@@ -33,4 +34,24 @@ func TestEffectivePrimaryStatsFromLearnedDoesNotInventUnauthoredBonuses(t *testi
 	got, err := effectivePrimaryStatsFromLearned(base, learned)
 	if err != nil { t.Fatal(err) }
 	if got != base { t.Fatalf("got=%#v want=%#v", got, base) }
+}
+
+func TestDerivedCharacterMaxVitalsIncludesEquipmentPrimaryAndFlatBonuses(t *testing.T) {
+	base := characterstats.Primary{
+		Strength: 10, Agility: 10, Constitution: 16,
+		Intelligence: 10, Spirit: 14, Charisma: 10,
+	}
+	modifiers := equipmentstats.Modifiers{
+		Constitution: 2,
+		Spirit:       2,
+		MaxHP:        40,
+		MaxMP:        20,
+	}
+	maxHP, maxMP, err := derivedCharacterMaxVitals(20, base, learnedskills.Set{}, modifiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxHP != 324 || maxMP != 104 {
+		t.Fatalf("max hp/mp=%d/%d want=324/104", maxHP, maxMP)
+	}
 }

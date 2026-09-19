@@ -21,8 +21,9 @@ const (
 )
 
 var (
-	ErrOverflow    = errors.New("characterstats: attribute overflow")
-	ErrInvalidBase = errors.New("characterstats: invalid base attributes")
+	ErrOverflow     = errors.New("characterstats: attribute overflow")
+	ErrInvalidBase  = errors.New("characterstats: invalid base attributes")
+	ErrInvalidLevel = errors.New("characterstats: invalid character level")
 )
 
 // Primary contains the six authoritative classless primary attributes.
