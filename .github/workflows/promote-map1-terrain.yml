@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           root=".tmp-map1-bake"
-          printf '{"type":"module"}\\n' > "$root/package.json"
+          echo '{"type":"module"}' > "$root/package.json"
           cat > "$root/bake-map1.ts" <<'TS'
           import { createHash } from "node:crypto";
           import { readFile, writeFile } from "node:fs/promises";
