@@ -37,25 +37,25 @@ jobs:
             sha="$1"
             dst="$2"
             python3 - "$sha" "$dst" <<'PY'
-import base64, json, os, pathlib, sys, urllib.request
-sha, dst = sys.argv[1], sys.argv[2]
-url = f"https://api.github.com/repos/li41/astrahold-server/git/blobs/{sha}"
-req = urllib.request.Request(
-    url,
-    headers={
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-        "X-GitHub-Api-Version": "2022-11-28",
-    },
-)
-with urllib.request.urlopen(req) as response:
-    payload = json.load(response)
-if payload.get("encoding") != "base64":
-    raise SystemExit(f"unexpected blob encoding for {sha}: {payload.get('encoding')}")
-path = pathlib.Path(dst)
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_bytes(base64.b64decode(payload["content"]))
-PY
+          import base64, json, os, pathlib, sys, urllib.request
+          sha, dst = sys.argv[1], sys.argv[2]
+          url = f"https://api.github.com/repos/li41/astrahold-server/git/blobs/{sha}"
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(req) as response:
+              payload = json.load(response)
+          if payload.get("encoding") != "base64":
+              raise SystemExit(f"unexpected blob encoding for {sha}: {payload.get('encoding')}")
+          path = pathlib.Path(dst)
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(payload["content"]))
+          PY
           }
 
           # Exact source blobs copied from li41/astrahold-assets@
@@ -79,66 +79,66 @@ PY
           set -euo pipefail
           root=".tmp-map1-bake"
           cat > "$root/bake-map1.ts" <<'TS'
-import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { bakeRecipe, baseFor, recipeLines, shellSampler } from "./tools/src/terrain/field";
-import {
-  assertLayout,
-  assertLayoutAgainst,
-  foundationSurface,
-  resolveFoundations,
-} from "./tools/src/terrain/layout";
-import { expandLayout } from "./tools/src/terrain/prefab";
-import { assertRecipe } from "./tools/src/terrain/recipe";
-import { assertWorld } from "./tools/src/terrain/world";
-
-const assetDir = path.resolve("assets/environment/terrain/map1");
-const recipeText = await readFile(path.join(assetDir, "recipe.json"), "utf8");
-const worldText = await readFile(path.join(assetDir, "world.json"), "utf8");
-const layoutText = await readFile(path.join(assetDir, "layout.json"), "utf8");
-const recipe: any = JSON.parse(recipeText);
-const world: any = JSON.parse(worldText);
-const layout: any = JSON.parse(layoutText);
-assertWorld(world);
-assertRecipe(recipe, world);
-assertLayout(layout);
-
-const expanded = expandLayout(layout, {});
-const layoutGround = assertLayoutAgainst(expanded, recipe);
-const shellSpec = layoutGround.shell;
-const foundations = resolveFoundations(
-  layoutGround.spec,
-  shellSampler(shellSpec, recipe.seed, recipeLines(recipe, world), baseFor(world, shellSpec)),
-);
-const shells = bakeRecipe(recipe, world);
-if (foundations.length > 0) {
-  const surface = foundationSurface(foundations);
-  for (const shell of shells) {
-    if (shell.id !== layoutGround.spec.terrain.shell) continue;
-    for (let iz = 0; iz < shell.samples.z; iz += 1) {
-      const z = shell.origin.z - shell.size.z / 2 + iz * shell.step.z;
-      for (let ix = 0; ix < shell.samples.x; ix += 1) {
-        const at = iz * shell.samples.x + ix;
-        const x = shell.origin.x - shell.size.x / 2 + ix * shell.step.x;
-        shell.heights[at] = Math.fround(surface.at(shell.heights[at]!, x, z));
-      }
-    }
-  }
-}
-const land = shells.find((shell) => shell.id === "land");
-if (!land) throw new Error("map1 land shell missing");
-const bytes = new Uint8Array(land.heights.length * 4);
-const view = new DataView(bytes.buffer);
-for (let i = 0; i < land.heights.length; i += 1) {
-  const value = land.heights[i]!;
-  if (!Number.isFinite(value)) throw new Error(`non-finite height at ${i}`);
-  view.setFloat32(i * 4, value, true);
-}
-await writeFile("land.bin", bytes);
-console.log(`size=${bytes.byteLength}`);
-console.log(`sha256=${createHash("sha256").update(bytes).digest("hex")}`);
-TS
+          import { createHash } from "node:crypto";
+          import { readFile, writeFile } from "node:fs/promises";
+          import path from "node:path";
+          import { bakeRecipe, baseFor, recipeLines, shellSampler } from "./tools/src/terrain/field";
+          import {
+            assertLayout,
+            assertLayoutAgainst,
+            foundationSurface,
+            resolveFoundations,
+          } from "./tools/src/terrain/layout";
+          import { expandLayout } from "./tools/src/terrain/prefab";
+          import { assertRecipe } from "./tools/src/terrain/recipe";
+          import { assertWorld } from "./tools/src/terrain/world";
+          
+          const assetDir = path.resolve("assets/environment/terrain/map1");
+          const recipeText = await readFile(path.join(assetDir, "recipe.json"), "utf8");
+          const worldText = await readFile(path.join(assetDir, "world.json"), "utf8");
+          const layoutText = await readFile(path.join(assetDir, "layout.json"), "utf8");
+          const recipe: any = JSON.parse(recipeText);
+          const world: any = JSON.parse(worldText);
+          const layout: any = JSON.parse(layoutText);
+          assertWorld(world);
+          assertRecipe(recipe, world);
+          assertLayout(layout);
+          
+          const expanded = expandLayout(layout, {});
+          const layoutGround = assertLayoutAgainst(expanded, recipe);
+          const shellSpec = layoutGround.shell;
+          const foundations = resolveFoundations(
+            layoutGround.spec,
+            shellSampler(shellSpec, recipe.seed, recipeLines(recipe, world), baseFor(world, shellSpec)),
+          );
+          const shells = bakeRecipe(recipe, world);
+          if (foundations.length > 0) {
+            const surface = foundationSurface(foundations);
+            for (const shell of shells) {
+              if (shell.id !== layoutGround.spec.terrain.shell) continue;
+              for (let iz = 0; iz < shell.samples.z; iz += 1) {
+                const z = shell.origin.z - shell.size.z / 2 + iz * shell.step.z;
+                for (let ix = 0; ix < shell.samples.x; ix += 1) {
+                  const at = iz * shell.samples.x + ix;
+                  const x = shell.origin.x - shell.size.x / 2 + ix * shell.step.x;
+                  shell.heights[at] = Math.fround(surface.at(shell.heights[at]!, x, z));
+                }
+              }
+            }
+          }
+          const land = shells.find((shell) => shell.id === "land");
+          if (!land) throw new Error("map1 land shell missing");
+          const bytes = new Uint8Array(land.heights.length * 4);
+          const view = new DataView(bytes.buffer);
+          for (let i = 0; i < land.heights.length; i += 1) {
+            const value = land.heights[i]!;
+            if (!Number.isFinite(value)) throw new Error(`non-finite height at ${i}`);
+            view.setFloat32(i * 4, value, true);
+          }
+          await writeFile("land.bin", bytes);
+          console.log(`size=${bytes.byteLength}`);
+          console.log(`sha256=${createHash("sha256").update(bytes).digest("hex")}`);
+          TS
 
           (
             cd "$root"
