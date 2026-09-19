@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"sort"
 
 	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/inventory"
+	"github.com/li41/astrahold-server/internal/iteminstance"
 	"github.com/li41/astrahold-server/internal/loot"
 	"github.com/li41/astrahold-server/internal/session"
 	"github.com/li41/astrahold-server/internal/world"
@@ -18,8 +20,11 @@ import (
 const monsterAutoLootRadiusMeters = float32(2.0)
 
 const (
-	monsterLootWinnerRollDomain = "astrahold/monster-loot-winner/v1"
-	monsterLootDropRollDomain   = "astrahold/monster-loot-drop/v1"
+	monsterLootWinnerRollDomain   = "astrahold/monster-loot-winner/v1"
+	monsterLootDropRollDomain     = "astrahold/monster-loot-drop/v1"
+	monsterLootQuantityRollDomain = "astrahold/monster-loot-quantity/v1"
+	monsterLootInstanceIDDomain   = "astrahold/monster-loot-instance-id/v1"
+	monsterLootAffixRollDomain    = "astrahold/monster-loot-affix/v1"
 )
 
 var (
@@ -52,6 +57,7 @@ type monsterLootCandidate struct {
 type monsterLootResolvedDrop struct {
 	drop          loot.Drop
 	authoredIndex int
+	quantity      uint32
 }
 
 // WithMonsterLootCatalog installs server-authored loot data. Combat and monster lifecycle do not
@@ -169,18 +175,29 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 		}
 
 		spawned := make([]world.EntityID, 0, len(resolved))
+		payloads := make([]itemDropPayload, 0, len(resolved))
 		failed := false
 		for spawnIndex, resolvedDrop := range resolved {
-			dropID, err := r.spawnExpiringItemDrop(resolvedDrop.drop.ItemArchetypeID, monsterLootDropPosition(monster.Transform.Position, spawnIndex), report.Tick)
+			payload, err := materializeMonsterLootPayloadWithSecret(monsterLootProcessSecret, entityID, state.incarnation, resolvedDrop)
 			if err != nil {
 				for _, spawnedID := range spawned {
-					r.world.Remove(spawnedID)
+					r.removeItemDrop(spawnedID)
+				}
+				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot", Err: err})
+				failed = true
+				break
+			}
+			dropID, err := r.spawnExpiringItemDropPayload(payload, monsterLootDropPosition(monster.Transform.Position, spawnIndex), report.Tick)
+			if err != nil {
+				for _, spawnedID := range spawned {
+					r.removeItemDrop(spawnedID)
 				}
 				report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot", Err: err})
 				failed = true
 				break
 			}
 			spawned = append(spawned, dropID)
+			payloads = append(payloads, payload)
 		}
 		if failed {
 			continue
@@ -207,7 +224,7 @@ func (r *Runtime) stepMonsterLoot(report *StepReport) {
 				}
 				winner = selected
 			}
-			r.tryAutoGrantMonsterLoot(winner, resolvedDrop.drop.ItemArchetypeID, dropID, report)
+			r.tryAutoGrantMonsterLoot(winner, payloads[index], dropID, report)
 		}
 		state.awarded = true
 	}
@@ -220,7 +237,19 @@ func resolveMonsterLootDropsWithSecret(secret monsterLootRollSecret, monsterID w
 		if !drop.IncludesRoll(roll) {
 			continue
 		}
-		resolved = append(resolved, monsterLootResolvedDrop{drop: drop, authoredIndex: index})
+		minQuantity, maxQuantity := drop.QuantityMin, drop.QuantityMax
+		if minQuantity == 0 && maxQuantity == 0 {
+			minQuantity, maxQuantity = 1, 1
+		}
+		if minQuantity == 0 || maxQuantity < minQuantity {
+			continue
+		}
+		quantity := minQuantity
+		if maxQuantity > minQuantity {
+			span := uint64(maxQuantity) - uint64(minQuantity) + 1
+			quantity += uint32(monsterLootRollWithSecret(secret, monsterLootQuantityRollDomain, monsterID, incarnation, index, span))
+		}
+		resolved = append(resolved, monsterLootResolvedDrop{drop: drop, authoredIndex: index, quantity: quantity})
 	}
 	return resolved
 }
@@ -340,23 +369,89 @@ func monsterLootRollWithSecret(secret monsterLootRollSecret, domain string, mons
 	}
 }
 
-func (r *Runtime) tryAutoGrantMonsterLoot(candidate monsterLootCandidate, itemArchetypeID string, dropID world.EntityID, report *StepReport) bool {
+func (r *Runtime) tryAutoGrantMonsterLoot(candidate monsterLootCandidate, payload itemDropPayload, dropID world.EntityID, report *StepReport) bool {
 	inv := r.inventories[candidate.characterID]
 	if inv == nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot_auto_grant", SessionID: candidate.sessionID, Err: ErrMonsterLootInventoryUnavailable})
 		return false
 	}
-	if err := inv.Add(itemArchetypeID, 1); err != nil {
-		// Capacity failure is expected gameplay: the item remains immediately public on the ground.
+	if err := r.grantItemDropPayload(inv, payload); err != nil {
+		// Capacity/weight/stack-overflow failure is expected gameplay: the exact payload remains
+		// public on the ground. Invalid instance identity or catalog mismatch is a Server error.
 		if errors.Is(err, inventory.ErrFull) || errors.Is(err, inventory.ErrWeightExceeded) || errors.Is(err, inventory.ErrQuantityOverflow) {
 			return false
 		}
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "monster_loot_auto_grant", SessionID: candidate.sessionID, Err: err})
 		return false
 	}
-	r.world.Remove(dropID)
+	r.removeItemDrop(dropID)
 	r.sessionInventoryPending[candidate.sessionID] = struct{}{}
 	return true
+}
+
+type monsterLootAffixRoller struct {
+	secret        monsterLootRollSecret
+	monsterID     world.EntityID
+	incarnation   uint64
+	authoredIndex int
+	draw          int
+}
+
+func (r *monsterLootAffixRoller) Intn(n int) int {
+	if r == nil || n <= 0 {
+		return -1
+	}
+	index := r.authoredIndex*16 + r.draw
+	r.draw++
+	return int(monsterLootRollWithSecret(r.secret, monsterLootAffixRollDomain, r.monsterID, r.incarnation, index, uint64(n)))
+}
+
+func monsterLootInstanceIDWithSecret(secret monsterLootRollSecret, monsterID world.EntityID, incarnation uint64, authoredIndex int) iteminstance.ID {
+	var encoded [24]byte
+	binary.LittleEndian.PutUint64(encoded[0:8], uint64(monsterID))
+	binary.LittleEndian.PutUint64(encoded[8:16], incarnation)
+	binary.LittleEndian.PutUint64(encoded[16:24], uint64(authoredIndex))
+	mac := hmac.New(sha256.New, secret[:])
+	_, _ = mac.Write([]byte(monsterLootInstanceIDDomain))
+	_, _ = mac.Write(encoded[:])
+	sum := mac.Sum(nil)
+	return iteminstance.ID("loot:" + hex.EncodeToString(sum[:16]))
+}
+
+func materializeMonsterLootPayloadWithSecret(secret monsterLootRollSecret, monsterID world.EntityID, incarnation uint64, resolved monsterLootResolvedDrop) (itemDropPayload, error) {
+	kind := resolved.drop.Kind
+	if kind == "" {
+		kind = loot.DropKindStack
+	}
+	switch kind {
+	case loot.DropKindStack:
+		if resolved.quantity == 0 {
+			return itemDropPayload{}, ErrInvalidMonsterLoot
+		}
+		return stackItemDropPayload(resolved.drop.ItemArchetypeID, resolved.quantity), nil
+	case loot.DropKindEquipmentInstance:
+		if resolved.quantity != 1 {
+			return itemDropPayload{}, ErrInvalidMonsterLoot
+		}
+		definition, ok := defaultEquipmentCatalog.Resolve(resolved.drop.ItemArchetypeID)
+		if !ok {
+			return itemDropPayload{}, ErrInvalidMonsterLoot
+		}
+		roller := &monsterLootAffixRoller{
+			secret: secret, monsterID: monsterID, incarnation: incarnation, authoredIndex: resolved.authoredIndex,
+		}
+		instance, err := iteminstance.Create(
+			monsterLootInstanceIDWithSecret(secret, monsterID, incarnation, resolved.authoredIndex),
+			definition,
+			roller,
+		)
+		if err != nil {
+			return itemDropPayload{}, err
+		}
+		return instanceItemDropPayload(instance), nil
+	default:
+		return itemDropPayload{}, ErrInvalidMonsterLoot
+	}
 }
 
 func monsterLootDropPosition(source world.Position, index int) world.Position {

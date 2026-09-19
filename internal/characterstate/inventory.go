@@ -77,9 +77,22 @@ func NewInventoryStateWithSlots(stacks []InventoryStack, instances []iteminstanc
 	return state, nil
 }
 
-func validEquipmentSlot(slot string) bool { return equipmentSlotRank(slot) < 7 }
+func validEquipmentSlot(slot string) bool { return equipmentSlotRank(slot) < 11 }
 func equipmentSlotRank(slot string) int {
-	switch slot { case "main_hand": return 0; case "off_hand": return 1; case "helmet": return 2; case "chest": return 3; case "gloves": return 4; case "legs": return 5; case "boots": return 6; default: return 99 }
+	switch slot {
+	case "main_hand": return 0
+	case "off_hand": return 1
+	case "helmet": return 2
+	case "chest": return 3
+	case "gloves": return 4
+	case "legs": return 5
+	case "boots": return 6
+	case "necklace": return 7
+	case "ring_1": return 8
+	case "ring_2": return 9
+	case "belt": return 10
+	default: return 99
+	}
 }
 
 func (state InventoryState) Stacks() ([]InventoryStack, error) {
@@ -136,14 +149,14 @@ func validateInventoryState(state InventoryState) error {
 	stacks, err := state.Stacks(); if err != nil { return err }; lastStack := ""
 	for _, stack := range stacks { id := strings.TrimSpace(stack.ItemArchetypeID); if id == "" || id != stack.ItemArchetypeID || stack.Quantity == 0 || (lastStack != "" && id <= lastStack) { return ErrInvalidSnapshot }; lastStack = id }
 	if len(stacks) == 0 && state.StacksJSON != "" { return ErrInvalidSnapshot }; if len(stacks) > 0 { data, err := json.Marshal(stacks); if err != nil || string(data) != state.StacksJSON { return ErrInvalidSnapshot } }
-	instances, err := state.Instances(); if err != nil { return err }; lastInstanceID := iteminstance.ID(""); seen := make(map[iteminstance.ID]struct{}, len(instances)+7)
+	instances, err := state.Instances(); if err != nil { return err }; lastInstanceID := iteminstance.ID(""); seen := make(map[iteminstance.ID]struct{}, len(instances)+11)
 	for _, instance := range instances { if lastInstanceID != "" && instance.ID <= lastInstanceID { return ErrInvalidSnapshot }; lastInstanceID = instance.ID; if _, duplicate := seen[instance.ID]; duplicate { return ErrInvalidSnapshot }; seen[instance.ID] = struct{}{} }
 	if len(instances) == 0 && state.InstancesJSON != "" { return ErrInvalidSnapshot }; if len(instances) > 0 { encoded, err := encodeCanonicalInstances(instances); if err != nil || encoded != state.InstancesJSON { return ErrInvalidSnapshot } }
-	equipment, err := state.Equipment(); if err != nil { return err }; occupied := make(map[string]struct{}, 7); lastRank := -1
-	for _, item := range equipment { rank := equipmentSlotRank(item.Slot); if rank >= 7 || rank <= lastRank || strings.TrimSpace(item.ItemArchetypeID) == "" || item.ItemArchetypeID != strings.TrimSpace(item.ItemArchetypeID) { return ErrInvalidSnapshot }; lastRank = rank; occupied[item.Slot] = struct{}{} }
+	equipment, err := state.Equipment(); if err != nil { return err }; occupied := make(map[string]struct{}, 11); lastRank := -1
+	for _, item := range equipment { rank := equipmentSlotRank(item.Slot); if rank >= 11 || rank <= lastRank || strings.TrimSpace(item.ItemArchetypeID) == "" || item.ItemArchetypeID != strings.TrimSpace(item.ItemArchetypeID) { return ErrInvalidSnapshot }; lastRank = rank; occupied[item.Slot] = struct{}{} }
 	if state.EquipmentJSON != "" { data, err := json.Marshal(equipment); if err != nil || string(data) != state.EquipmentJSON { return ErrInvalidSnapshot } }
 	equippedInstances, err := state.EquipmentInstances(); if err != nil { return err }; lastRank = -1
-	for _, item := range equippedInstances { rank := equipmentSlotRank(item.Slot); if rank >= 7 || rank <= lastRank { return ErrInvalidSnapshot }; lastRank = rank; if _, duplicateSlot := occupied[item.Slot]; duplicateSlot { return ErrInvalidSnapshot }; occupied[item.Slot] = struct{}{}; instance, err := iteminstance.DecodeCanonicalShapeJSON([]byte(item.ItemInstanceJSON)); if err != nil { return ErrInvalidSnapshot }; if _, duplicate := seen[instance.ID]; duplicate { return ErrInvalidSnapshot }; seen[instance.ID] = struct{}{}; data, err := iteminstance.CanonicalShapeJSON(instance); if err != nil || string(data) != item.ItemInstanceJSON { return ErrInvalidSnapshot } }
+	for _, item := range equippedInstances { rank := equipmentSlotRank(item.Slot); if rank >= 11 || rank <= lastRank { return ErrInvalidSnapshot }; lastRank = rank; if _, duplicateSlot := occupied[item.Slot]; duplicateSlot { return ErrInvalidSnapshot }; occupied[item.Slot] = struct{}{}; instance, err := iteminstance.DecodeCanonicalShapeJSON([]byte(item.ItemInstanceJSON)); if err != nil { return ErrInvalidSnapshot }; if _, duplicate := seen[instance.ID]; duplicate { return ErrInvalidSnapshot }; seen[instance.ID] = struct{}{}; data, err := iteminstance.CanonicalShapeJSON(instance); if err != nil || string(data) != item.ItemInstanceJSON { return ErrInvalidSnapshot } }
 	if state.EquipmentInstancesJSON != "" { data, err := json.Marshal(equippedInstances); if err != nil || string(data) != state.EquipmentInstancesJSON { return ErrInvalidSnapshot } }
 	return nil
 }

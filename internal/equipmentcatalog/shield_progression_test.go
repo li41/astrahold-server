@@ -12,19 +12,19 @@ func TestDefaultCatalogLocksThreeTierShieldProgression(t *testing.T) {
 		id                                    string
 		tier                                  Tier
 		weight                                uint32
-		material                              string
+		material                              MaterialID
 		physical                              uint32
 		block, blockReduction, magicReduction uint8
 	}{
-		{"item_iron_rim_round_shield", TierLow, 6, "iron_wood", 3, 8, 25, 0},
-		{"item_mid_iron_rim_round_shield", TierMid, 6, "iron_wood", 5, 10, 30, 0},
-		{"item_high_iron_rim_round_shield", TierHigh, 6, "iron_wood", 7, 12, 35, 0},
-		{"item_guard_shield", TierLow, 8, "iron_wood", 4, 10, 30, 0},
-		{"item_mid_guard_shield", TierMid, 8, "iron_wood", 6, 13, 35, 0},
-		{"item_high_guard_shield", TierHigh, 8, "iron_wood", 8, 16, 40, 0},
-		{"item_runed_square_shield", TierLow, 6, "wood_iron", 2, 6, 20, 8},
-		{"item_mid_runed_square_shield", TierMid, 6, "wood_iron", 3, 8, 25, 12},
-		{"item_high_runed_square_shield", TierHigh, 6, "wood_iron", 4, 10, 30, 16},
+		{"item_iron_rim_round_shield", TierLow, 6, MaterialWood, 3, 8, 25, 0},
+		{"item_mid_iron_rim_round_shield", TierMid, 6, MaterialSteel, 5, 10, 30, 0},
+		{"item_high_iron_rim_round_shield", TierHigh, 6, MaterialStarsteel, 7, 12, 35, 0},
+		{"item_guard_shield", TierLow, 8, MaterialIron, 4, 10, 30, 0},
+		{"item_mid_guard_shield", TierMid, 8, MaterialSteel, 6, 13, 35, 0},
+		{"item_high_guard_shield", TierHigh, 8, MaterialStarsteel, 8, 16, 40, 0},
+		{"item_runed_square_shield", TierLow, 6, MaterialRunewood, 2, 6, 20, 8},
+		{"item_mid_runed_square_shield", TierMid, 6, MaterialSilver, 3, 8, 25, 12},
+		{"item_high_runed_square_shield", TierHigh, 6, MaterialStarsteel, 4, 10, 30, 16},
 	}
 
 	if got := len(catalog.byItem); got != 62 {

@@ -314,6 +314,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	var identity characteridentity.Binding
 	trustedAuthenticated := false
 	trustedRevocationScope := ""
+	authenticationSubject := ""
 	takeoverAuthorizer := s.config.CharacterTakeoverAuthorizer
 	if s.config.TrustedCharacterConnectionAuthenticator != nil {
 		authentication, err := s.authenticateTrustedCharacterConnection(ctx, raw, sid, allocatedEntityID)
@@ -325,6 +326,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 		identity = authentication.Identity
 		trustedAuthenticated = true
 		trustedRevocationScope = authentication.RevocationScope
+		authenticationSubject = authentication.AuthenticationSubject
 		// Authenticated connections never fall back to the config-global F.21 authorizer.
 		// Active takeover authority must remain bound to this connection's authentication result.
 		takeoverAuthorizer = authentication.TakeoverAuthorizer
@@ -423,7 +425,7 @@ func (s *Server) handleTCP(ctx context.Context, raw net.Conn) {
 	}
 
 	connection := newClientConnection(raw, s.udp, token, s.codec, s.config.ReliableQueueCapacity, &s.metrics)
-	sess, err := session.NewWithCharacterIdentity(sid, entityID, identity, spec.AOIRadius, connection)
+	sess, err := session.NewWithCharacterIdentityAndAuthenticationSubject(sid, entityID, identity, authenticationSubject, spec.AOIRadius, connection)
 	if err != nil {
 		_ = raw.Close()
 		return

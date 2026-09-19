@@ -1,6 +1,6 @@
 {
   "schema_version": 4,
-  "revision": "classless-baseline-002",
+  "revision": "classless-baseline-003",
   "actions": [
     {
       "id": "basic-attack",
@@ -58,15 +58,15 @@
       "cooldown_seconds": 10.0
     },
     {
-      "id": "wolf-bite",
+      "id": "monster-melee",
       "effect": "damage",
       "targets": ["entity"],
-      "range": 2.0,
-      "base_damage": 90,
+      "range": 2.4,
+      "base_damage": 1,
       "damage_type": "physical",
       "critical_eligible": true,
       "blockable": true,
-      "cooldown_seconds": 1.35
+      "cooldown_seconds": 1.0
     }
   ]
 }

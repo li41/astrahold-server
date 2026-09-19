@@ -1,6 +1,13 @@
 package characterstats
 
+import "math"
+
 const (
+	baseMaxHPLevelOne uint64 = 15
+	baseMaxHPPerLevel uint64 = 11
+	baseMaxMPLevelOne uint64 = 6
+	baseMaxMPPerLevel uint64 = 2
+
 	physicalHitBaseBasisPoints uint32 = 9000
 	physicalHitMinBasisPoints  uint32 = 7500
 	physicalHitMaxBasisPoints  uint32 = 9800
@@ -43,6 +50,22 @@ func MagicPowerBonus(intelligence uint32) uint32 {
 	return (intelligence - 10) / 5
 }
 
+// BaseMaxHP implements the formal deterministic player HP growth curve.
+func BaseMaxHP(level uint32) (uint64, error) {
+	if level == 0 {
+		return 0, ErrInvalidLevel
+	}
+	return baseMaxHPLevelOne + baseMaxHPPerLevel*uint64(level-1), nil
+}
+
+// BaseMaxMP implements the formal deterministic player MP growth curve.
+func BaseMaxMP(level uint32) (uint64, error) {
+	if level == 0 {
+		return 0, ErrInvalidLevel
+	}
+	return baseMaxMPLevelOne + baseMaxMPPerLevel*uint64(level-1), nil
+}
+
 // ConstitutionMaxHPBonus = level * max(Constitution - 15, 0).
 func ConstitutionMaxHPBonus(level, constitution uint32) uint64 {
 	if constitution <= 15 || level == 0 { return 0 }
@@ -72,6 +95,33 @@ func SpiritGrowthTier(spirit uint32) uint32 {
 // SpiritMaxMPBonus = level * SpiritGrowthTier(Spirit).
 func SpiritMaxMPBonus(level, spirit uint32) uint64 {
 	return uint64(level) * uint64(SpiritGrowthTier(spirit))
+}
+
+// DerivedMaxVitals composes level growth, effective Constitution/Spirit, and already-aggregated
+// flat MaxHP/MaxMP modifiers. Effective primary stats are supplied by the world owner so equipment
+// and passive primary-stat bonuses affect the same deterministic formula without becoming durable
+// copies of MaxHP/MaxMP.
+func DerivedMaxVitals(level uint32, effective Primary, flatMaxHP, flatMaxMP uint32) (uint32, uint32, error) {
+	baseHP, err := BaseMaxHP(level)
+	if err != nil {
+		return 0, 0, err
+	}
+	baseMP, err := BaseMaxMP(level)
+	if err != nil {
+		return 0, 0, err
+	}
+	constitutionHP := ConstitutionMaxHPBonus(level, effective.Constitution)
+	spiritMP := SpiritMaxMPBonus(level, effective.Spirit)
+	if baseHP > math.MaxUint32 || baseMP > math.MaxUint32 ||
+		constitutionHP > math.MaxUint32 || spiritMP > math.MaxUint32 {
+		return 0, 0, ErrOverflow
+	}
+	maxHP := baseHP + constitutionHP + uint64(flatMaxHP)
+	maxMP := baseMP + spiritMP + uint64(flatMaxMP)
+	if maxHP > math.MaxUint32 || maxMP > math.MaxUint32 {
+		return 0, 0, ErrOverflow
+	}
+	return uint32(maxHP), uint32(maxMP), nil
 }
 
 // LeadershipCount is the shared summon/pet/lord-guard cap. V1 hard caps it at five.

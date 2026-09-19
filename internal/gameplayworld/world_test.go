@@ -7,7 +7,7 @@ import (
 )
 
 const validWorldJSON = `{
-  "schema_version": 4,
+  "schema_version": 5,
   "world_id": "test-world",
   "revision": "r1",
   "units": "meters",
@@ -17,6 +17,7 @@ const validWorldJSON = `{
     "bounds":{"min_x":-10,"max_x":10,"min_z":-10,"max_z":10},
     "plane":{"origin_x":0,"origin_z":0,"base_y":0,"slope_x":0,"slope_z":0}
   }],
+  "heightfields": [],
   "regions": [],
   "maps": [],
   "portals": [],
@@ -72,5 +73,36 @@ func TestValidateRejectsGateWithMissingBlocker(t *testing.T) {
 	}}
 	if err := Validate(d); !errors.Is(err, ErrInvalidDefinition) {
 		t.Fatalf("Validate() error = %v, want ErrInvalidDefinition", err)
+	}
+}
+
+func TestValidateHeightfieldBinding(t *testing.T) {
+	loaded, err := Load(strings.NewReader(validWorldJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := loaded.Definition
+	d.Heightfields = []HeightfieldBinding{{
+		SurfaceID: "ground",
+		Manifest: "terrain/map1/terrain.json",
+		ShellID: "land",
+		DataSHA256: "eff137f190c02355ba775fa4ac3df9c958b87640af1c770e1fccc25718f678f0",
+	}}
+	if err := Validate(d); err != nil {
+		t.Fatalf("valid heightfield binding: %v", err)
+	}
+
+	bad := d
+	bad.Heightfields = append([]HeightfieldBinding(nil), d.Heightfields...)
+	bad.Heightfields[0].Manifest = "../assets/land.json"
+	if err := Validate(bad); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("unsafe manifest err=%v", err)
+	}
+
+	bad = d
+	bad.Heightfields = append([]HeightfieldBinding(nil), d.Heightfields...)
+	bad.Heightfields[0].DataSHA256 = "EFF137"
+	if err := Validate(bad); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("bad hash err=%v", err)
 	}
 }

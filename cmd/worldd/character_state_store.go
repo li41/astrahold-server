@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -93,7 +94,7 @@ func applyCharacterStateJournalRecord(store *characterstate.Store, record charac
 		}
 		return nil
 	}
-	if exists && currentRevision == record.ExpectedRevision+1 && current.Snapshot == intent.Snapshot {
+	if exists && currentRevision == record.ExpectedRevision+1 && reflect.DeepEqual(current.Snapshot, intent.Snapshot) {
 		return nil
 	}
 	return fmt.Errorf("apply character state record_id=%d character=%s journal_expected_revision=%d current_revision=%d: %w", record.RecordID, intent.Identity.ID, record.ExpectedRevision, currentRevision, characterstate.ErrRevisionConflict)

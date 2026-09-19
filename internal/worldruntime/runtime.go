@@ -21,6 +21,7 @@ import (
 	"github.com/li41/astrahold-server/internal/siege"
 	"github.com/li41/astrahold-server/internal/simulation"
 	"github.com/li41/astrahold-server/internal/spatial"
+	"github.com/li41/astrahold-server/internal/warehouse"
 	"github.com/li41/astrahold-server/internal/world"
 )
 
@@ -211,6 +212,8 @@ type Runtime struct {
 	characterStateAutosaveNextTick uint64
 	characterSkills                characterSkillRuntime
 	inventories                    map[characteridentity.ID]*inventory.Inventory
+	sessionAmmunitionSelection     map[session.ID]string
+	warehouses                     map[characteridentity.ID]*warehouse.Storage
 	itemUseCooldownReadyTick       map[itemUseCooldownKey]uint64
 	pendingItemUseResults          map[session.ID][]protocol.ItemUseResult
 	pendingResourceMessages        map[session.ID][]protocol.Message
@@ -230,11 +233,13 @@ type Runtime struct {
 	combat                         *combat.Service
 	autonomousMeleeAgents          []autonomousMeleeAgent
 	monsterLifecycles              []monsterLifecycle
+	monsterCombatStats             map[world.EntityID]MonsterCombatStats
 	monsterLootCatalog             *loot.Catalog
 	monsterLootStates              map[world.EntityID]*monsterLootState
 	monsterLootEntityIDs           []world.EntityID
 	nextItemDropEntityID           world.EntityID
 	itemDropExpireTick             map[world.EntityID]uint64
+	itemDropPayloads               map[world.EntityID]itemDropPayload
 	respawnPolicy                  *respawnpolicy.Service
 	deathPenalty                   *deathpenalty.Service
 	deathOutbox                    *deathoutcome.Outbox
@@ -320,6 +325,8 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characterIdentities:            newCharacterIdentityRegistry(),
 		characterStateAutosaveLastTick: make(map[world.EntityID]uint64),
 		inventories:                    make(map[characteridentity.ID]*inventory.Inventory),
+		sessionAmmunitionSelection:     make(map[session.ID]string),
+		warehouses:                     make(map[characteridentity.ID]*warehouse.Storage),
 		itemUseCooldownReadyTick:       make(map[itemUseCooldownKey]uint64),
 		pendingItemUseResults:          make(map[session.ID][]protocol.ItemUseResult),
 		pendingResourceMessages:        make(map[session.ID][]protocol.Message),
@@ -329,9 +336,11 @@ func New(w *simulation.World, config Config, options ...Option) *Runtime {
 		characters:                     characters,
 		queue:                          newCommandQueue(config.CommandQueueCapacity),
 		config:                         config,
+		monsterCombatStats:             make(map[world.EntityID]MonsterCombatStats),
 		monsterLootStates:              make(map[world.EntityID]*monsterLootState),
 		nextItemDropEntityID:           firstItemDropEntityID,
 		itemDropExpireTick:             make(map[world.EntityID]uint64),
+		itemDropPayloads:               make(map[world.EntityID]itemDropPayload),
 		deathRevision:                  make(map[world.EntityID]uint64),
 		sessionDynamicRevision:         make(map[session.ID]uint64),
 		sessionSiegeState:              make(map[session.ID]siegeDeliveryStamp),

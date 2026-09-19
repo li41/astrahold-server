@@ -92,7 +92,7 @@ func TestHandlerTrustedE2EBootstrapUsesServerOwnedIdentityAndClasslessRestore(t 
 		return TrustedE2EBootstrap{Identity:identity,Restore:worldruntime.CharacterRestore{
 			SchemaVersion:characterstate.SchemaVersion,CharacterID:identity.ID,Revision:1,World:config.WorldIdentity,
 			HP:1000,MaxHP:1000,MP:100,MaxMP:100,PrimaryStats:characterstats.DefaultPrimary(),
-			Transform:world.Transform{Position:world.Position{Layer:0}},Inventory:characterstate.InventoryState{Initialized:true},
+			Transform:world.Transform{Position:world.Position{Layer:0}},Inventory:characterstate.InventoryState{Initialized:true},Warehouse:characterstate.EmptyWarehouseState(),
 		}}, nil
 	}
 	httpServer := httptest.NewServer(NewHandler(config, runtime, gamev1.Codec{})); defer httpServer.Close()

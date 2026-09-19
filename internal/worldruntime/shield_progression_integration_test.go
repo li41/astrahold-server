@@ -49,9 +49,9 @@ func TestHighRunedShieldUniqueInstanceAppliesBaseAndRolledMitigation(t *testing.
 		t.Fatal(err)
 	}
 	// Shield physical defense 4 + rolled physical defense 3 = 7.
-	// 100 * (1 - 7/(7+20)) = 74.07..., rounded once to 74.
-	if physical.FinalDamage != 74 || physical.Blocked {
-		t.Fatalf("physical result=%#v want damage=74 blocked=false", physical)
+	// 100 * (1 - 7/(7+100)) = 93.45..., rounded once to 93.
+	if physical.FinalDamage != 93 || physical.Blocked {
+		t.Fatalf("physical result=%#v want damage=93 blocked=false", physical)
 	}
 
 	magic, err := runtime.resolveIncomingDamage(DamageRequest{
@@ -63,8 +63,8 @@ func TestHighRunedShieldUniqueInstanceAppliesBaseAndRolledMitigation(t *testing.
 		t.Fatal(err)
 	}
 	// Rolled magic defense 2 mitigates first, then the shield's independent 16%% magic reduction.
-	// 100 * (1 - 2/(2+20)) * 0.84 = 76.36..., rounded once to 76.
-	if magic.FinalDamage != 76 || magic.Blocked {
-		t.Fatalf("magic result=%#v want damage=76 blocked=false", magic)
+	// 100 * (1 - 2/(2+100)) * 0.84 = 82.35..., rounded once to 82.
+	if magic.FinalDamage != 82 || magic.Blocked {
+		t.Fatalf("magic result=%#v want damage=82 blocked=false", magic)
 	}
 }

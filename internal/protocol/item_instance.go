@@ -15,9 +15,10 @@ type ItemAffixState struct {
 }
 
 type ItemInstanceState struct {
-	ItemInstanceID  string
-	ItemArchetypeID string
-	Affixes         []ItemAffixState
+	ItemInstanceID   string
+	ItemArchetypeID  string
+	EnhancementLevel uint16
+	Affixes           []ItemAffixState
 }
 
 // ClientEquipmentInstanceCommand identifies one exact Server-authoritative equipment instance.

@@ -90,6 +90,7 @@ type Session struct {
 	CharacterIdentity           characteridentity.Binding
 	AOIRadius                   float32
 	connection                  Connection
+	authenticationSubject       string
 	lastProcessedInputSequence  uint32
 	lastProcessedActionSequence uint32
 	nextReliableSequence        uint32
@@ -108,14 +109,29 @@ func New(id ID, entityID world.EntityID, aoiRadius float32, connection Connectio
 }
 
 // NewWithCharacterIdentity is the trusted integration seam used after an upstream
-// account/character resolver has selected an identity.
+// account/character resolver has selected an identity. It intentionally carries no account
+// authentication subject; callers that have one must use NewWithCharacterIdentityAndAuthenticationSubject.
 func NewWithCharacterIdentity(id ID, entityID world.EntityID, identity characteridentity.Binding, aoiRadius float32, connection Connection) (*Session, error) {
+	return NewWithCharacterIdentityAndAuthenticationSubject(id, entityID, identity, "", aoiRadius, connection)
+}
+
+// NewWithCharacterIdentityAndAuthenticationSubject preserves Server-authenticated account
+// provenance alongside the character binding. authenticationSubject is Server-only opaque data;
+// it is never accepted from Client gameplay messages and never participates in character identity.
+func NewWithCharacterIdentityAndAuthenticationSubject(id ID, entityID world.EntityID, identity characteridentity.Binding, authenticationSubject string, aoiRadius float32, connection Connection) (*Session, error) {
 	if id == 0 || entityID == 0 || !identity.Valid() || aoiRadius <= 0 || connection == nil {
 		return nil, ErrInvalidSession
 	}
-	return &Session{ID: id, EntityID: entityID, CharacterIdentity: identity, AOIRadius: aoiRadius, connection: connection}, nil
+	if authenticationSubject != "" && identity.Assurance != characteridentity.AssuranceTrusted {
+		return nil, ErrInvalidSession
+	}
+	return &Session{
+		ID: id, EntityID: entityID, CharacterIdentity: identity, AOIRadius: aoiRadius,
+		connection: connection, authenticationSubject: authenticationSubject,
+	}, nil
 }
 func (s *Session) Connection() Connection             { return s.connection }
+func (s *Session) AuthenticationSubject() string      { if s == nil { return "" }; return s.authenticationSubject }
 func (s *Session) LastProcessedInputSequence() uint32 { return s.lastProcessedInputSequence }
 func (s *Session) ValidateInputSequence(sequence uint32) error {
 	if sequence <= s.lastProcessedInputSequence {

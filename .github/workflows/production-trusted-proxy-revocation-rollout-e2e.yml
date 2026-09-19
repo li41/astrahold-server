@@ -157,7 +157,6 @@ jobs:
           a_log="$root/a.log"; b_log="$root/b.log"
           a_pid="$(start_instance instance-a "$a" 39751 39971 39972 "$a_log")"
           b_pid="$(start_instance instance-b "$b" 39752 39973 39974 "$b_log")"
-
           wait_marker() {
             file="$1"; marker="$2"; pid="$3"
             for _ in $(seq 1 300); do
@@ -196,8 +195,8 @@ jobs:
 
           wait_marker "$a_log" "session trusted proxy leaf revocation distribution: enabled=true instance_id=instance-a epoch=1" "$a_pid"
           wait_marker "$b_log" "session trusted proxy leaf revocation distribution: enabled=true instance_id=instance-b epoch=1" "$b_pid"
-          wait_marker "$a_log" "Astrahold worldd ready: protocol=28" "$a_pid"
-          wait_marker "$b_log" "Astrahold worldd ready: protocol=28" "$b_pid"
+          wait_marker "$a_log" "Astrahold worldd ready: protocol=34" "$a_pid"
+          wait_marker "$b_log" "Astrahold worldd ready: protocol=34" "$b_pid"
           "$REVOCATIONCTL" wait -plan "$root/plan-epoch1.json" >"$root/wait1.json"
           python3 - "$root/wait1.json" <<'PY'
           import json,sys
@@ -319,4 +318,4 @@ jobs:
           if grep -Fq 'BEGIN PRIVATE KEY' "$a_log" "$b_log"; then
             echo 'private key material leaked to server log'; exit 1
           fi
-          echo "ASTRAHOLD_F26_REVOCATION_ROLLOUT_OK required_ack_gate=true delayed_member_blocks_convergence=true timeout_incomplete=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=28 tls=1.3"
+          echo "ASTRAHOLD_F26_REVOCATION_ROLLOUT_OK required_ack_gate=true delayed_member_blocks_convergence=true timeout_incomplete=true resumable_wait=true rollback_fenced=true healthy_leaf_survives=true direct_client_unchanged=true protocol=34 tls=1.3"

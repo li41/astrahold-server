@@ -1,4 +1,4 @@
-// Command browserwse2e is a loopback-only BrowserWS integration harness for Protocol v27.
+// Command browserwse2e is a loopback-only BrowserWS integration harness for the current Protocol.
 // It composes the real BrowserWS adapter, game codec and authoritative worldruntime while
 // keeping deterministic trusted identity bootstrap out of normal cmd/worldd behavior.
 package main
@@ -38,6 +38,7 @@ import (
 
 const (
 	e2eCharacterID         = "e2e-browser-shadowblade"
+	e2eMapID               = "map1"
 	e2eWorldID             = "browserws-target-resource-e2e"
 	e2eWorldRevision       = "v27-shadowblade-flaw-basic-attack-002"
 	e2eBasicAttackActionID = "basic-attack"
@@ -94,11 +95,7 @@ func main() {
 	}
 
 	worldIdentity := e2eWorldIdentity()
-	stateWorld := characterstate.WorldRef{
-		WorldID:        worldIdentity.WorldID,
-		Revision:       worldIdentity.Revision,
-		GameplaySHA256: worldIdentity.GameplaySHA256,
-	}
+	stateWorld := e2eCharacterStateWorld(worldIdentity)
 	stateOutbox, err := characterstate.NewOutbox(32)
 	if err != nil {
 		log.Fatal(err)
@@ -278,6 +275,15 @@ func e2eWorldIdentity() protocol.WorldIdentity {
 	}
 }
 
+func e2eCharacterStateWorld(worldIdentity protocol.WorldIdentity) characterstate.WorldRef {
+	return characterstate.WorldRef{
+		MapID:          e2eMapID,
+		WorldID:        worldIdentity.WorldID,
+		Revision:       worldIdentity.Revision,
+		GameplaySHA256: worldIdentity.GameplaySHA256,
+	}
+}
+
 func e2eBasicAttackTargetSpawn() worldruntime.SpawnEntityRequest {
 	return worldruntime.SpawnEntityRequest{
 		Entity: world.EntityState{
@@ -306,6 +312,7 @@ func e2eCharacterRestore(identity characteridentity.Binding, worldIdentity proto
 		SchemaVersion: characterstate.SchemaVersion,
 		CharacterID:   identity.ID,
 		Revision:      1,
+		MapID:         e2eMapID,
 		World:         worldIdentity,
 		HP:            1000,
 		MaxHP:         1000,
@@ -313,6 +320,7 @@ func e2eCharacterRestore(identity characteridentity.Binding, worldIdentity proto
 		MaxMP:         100,
 		Transform:     world.Transform{Position: world.Position{Layer: 0}},
 		Inventory:     inventory,
+		Warehouse:     characterstate.EmptyWarehouseState(),
 		PrimaryStats:  characterstats.DefaultPrimary(),
 	}, nil
 }

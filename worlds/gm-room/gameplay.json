@@ -1,0 +1,271 @@
+{
+  "schema_version": 5,
+  "world_id": "gm-room",
+  "revision": "map0-gm-room-v1",
+  "units": "meters",
+  "agent": {
+    "radius": 0.35,
+    "height": 1.8,
+    "max_step_height": 0.5
+  },
+  "surfaces": [
+    {
+      "id": "map0-floor",
+      "layer": 0,
+      "bounds": {
+        "min_x": -8.5,
+        "max_x": 8.5,
+        "min_z": -7.5,
+        "max_z": 7.5
+      },
+      "plane": {
+        "origin_x": 0,
+        "origin_z": 0,
+        "base_y": 0,
+        "slope_x": 0,
+        "slope_z": 0
+      }
+    }
+  ],
+  "regions": [],
+  "maps": [
+    {
+      "id": "map0",
+      "kind": "isolated",
+      "envelope": {
+        "width_x": 20,
+        "length_z": 18
+      }
+    }
+  ],
+  "portals": [],
+  "blockers": [
+    {
+      "id": "stock-crate-1",
+      "layer": 0,
+      "bounds": {
+        "min_x": -1.34,
+        "max_x": -0.66,
+        "min_z": 3.77,
+        "max_z": 4.45
+      },
+      "min_y": 0,
+      "max_y": 0.61,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-crate-2",
+      "layer": 0,
+      "bounds": {
+        "min_x": -0.49,
+        "max_x": 0.16,
+        "min_z": 3,
+        "max_z": 3.65
+      },
+      "min_y": 0,
+      "max_y": 0.72,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-crate-3",
+      "layer": 0,
+      "bounds": {
+        "min_x": 0.65,
+        "max_x": 1.24,
+        "min_z": 2.84,
+        "max_z": 3.64
+      },
+      "min_y": 0,
+      "max_y": 0.4,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-crate-4",
+      "layer": 0,
+      "bounds": {
+        "min_x": -0.52,
+        "max_x": 0.41,
+        "min_z": 4.89,
+        "max_z": 5.82
+      },
+      "min_y": 0,
+      "max_y": 0.61,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-crate-5",
+      "layer": 0,
+      "bounds": {
+        "min_x": 0.76,
+        "max_x": 1.29,
+        "min_z": 4.37,
+        "max_z": 4.9
+      },
+      "min_y": 0,
+      "max_y": 0.72,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-crate-7",
+      "layer": 0,
+      "bounds": {
+        "min_x": -0.3,
+        "max_x": 0.5,
+        "min_z": 3.95,
+        "max_z": 4.56
+      },
+      "min_y": 0,
+      "max_y": 0.4,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-crate-6",
+      "layer": 0,
+      "bounds": {
+        "min_x": -0.57,
+        "max_x": 0.23,
+        "min_z": 2.96,
+        "max_z": 3.69
+      },
+      "min_y": 0.72,
+      "max_y": 1.13,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-chest-1",
+      "layer": 0,
+      "bounds": {
+        "min_x": 0.46,
+        "max_x": 1.42,
+        "min_z": 2.99,
+        "max_z": 3.49
+      },
+      "min_y": 0.4,
+      "max_y": 1.23,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-chest-2",
+      "layer": 0,
+      "bounds": {
+        "min_x": 1.51,
+        "max_x": 2.74,
+        "min_z": 4.07,
+        "max_z": 4.95
+      },
+      "min_y": 0,
+      "max_y": 0.83,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-chest-3",
+      "layer": 0,
+      "bounds": {
+        "min_x": -1.56,
+        "max_x": -0.43,
+        "min_z": 3.83,
+        "max_z": 4.38
+      },
+      "min_y": 0.61,
+      "max_y": 1.44,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "stock-keeper",
+      "layer": 0,
+      "bounds": {
+        "min_x": -0.24,
+        "max_x": 0.4,
+        "min_z": 2.28,
+        "max_z": 2.92
+      },
+      "min_y": 0,
+      "max_y": 2,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "wall-north",
+      "layer": 0,
+      "bounds": {
+        "min_x": -10,
+        "max_x": 10,
+        "min_z": -9,
+        "max_z": -7.5
+      },
+      "min_y": 0,
+      "max_y": 4,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "wall-south",
+      "layer": 0,
+      "bounds": {
+        "min_x": -10,
+        "max_x": 10,
+        "min_z": 7.5,
+        "max_z": 9
+      },
+      "min_y": 0,
+      "max_y": 4,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "wall-west",
+      "layer": 0,
+      "bounds": {
+        "min_x": -10,
+        "max_x": -8.5,
+        "min_z": -7.5,
+        "max_z": 7.5
+      },
+      "min_y": 0,
+      "max_y": 4,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    },
+    {
+      "id": "wall-east",
+      "layer": 0,
+      "bounds": {
+        "min_x": 8.5,
+        "max_x": 10,
+        "min_z": -7.5,
+        "max_z": 7.5
+      },
+      "min_y": 0,
+      "max_y": 4,
+      "blocks_movement": true,
+      "blocks_los": true,
+      "enabled": true
+    }
+  ],
+  "gates": [],
+  "heightfields": []
+}

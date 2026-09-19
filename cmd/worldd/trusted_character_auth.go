@@ -342,8 +342,9 @@ func (a *trustedCharacterAuthenticator) Authenticate(ctx context.Context, reques
 	}
 
 	result := tcpudp.TrustedCharacterConnectionAuthentication{
-		Identity:        grant.Identity,
-		RevocationScope: grant.RevocationScope,
+		Identity:              grant.Identity,
+		RevocationScope:       grant.RevocationScope,
+		AuthenticationSubject: grant.AuthenticationSubject,
 	}
 	if grant.AllowActiveTakeover {
 		characterID := grant.Identity.ID

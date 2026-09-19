@@ -16,8 +16,8 @@ func TestPhysicalDefenseIgnoreAffectsOnlyDefenseTerm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normal.Blocked || normal.FinalDamage != 175 {
-		t.Fatalf("normal=%+v want 175 unblocked", normal)
+	if normal.Blocked || normal.FinalDamage != 202 {
+		t.Fatalf("normal=%+v want 202 unblocked", normal)
 	}
 
 	base.PhysicalDefenseIgnorePercent = 25
@@ -25,12 +25,12 @@ func TestPhysicalDefenseIgnoreAffectsOnlyDefenseTerm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if piercing.Blocked || piercing.FinalDamage != 183 {
-		t.Fatalf("piercing=%+v want 183 unblocked", piercing)
+	if piercing.Blocked || piercing.FinalDamage != 204 {
+		t.Fatalf("piercing=%+v want 204 unblocked", piercing)
 	}
 
 	again, err := resolveDamageMitigation(DamageRequest{RawDamage: 210, DamageType: combat.DamagePhysical}, guard, 99)
-	if err != nil || again.FinalDamage != 175 {
+	if err != nil || again.FinalDamage != 202 {
 		t.Fatalf("later normal=%+v err=%v; ignore must not mutate shield", again, err)
 	}
 }
@@ -46,8 +46,8 @@ func TestPhysicalDefenseIgnoreDoesNotBypassBlockReduction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Blocked || got.FinalDamage != 128 {
-		t.Fatalf("got=%+v want damage=128 blocked=true", got)
+	if !got.Blocked || got.FinalDamage != 143 {
+		t.Fatalf("got=%+v want damage=143 blocked=true", got)
 	}
 }
 

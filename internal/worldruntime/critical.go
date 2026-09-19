@@ -20,6 +20,10 @@ func (r *Runtime) resolveCritical(actorID world.EntityID, prepared combat.Prepar
 	if !prepared.Definition.CriticalEligible || prepared.Definition.Effect != combat.EffectDamage {
 		return false, nil
 	}
+	if stats, ok := r.monsterStats(actorID); ok {
+		chance := combat.CriticalChanceBasisPoints(0, stats.CriticalRating)
+		return criticalRoll() < chance, nil
+	}
 	stats, err := r.characterEffectivePrimaryStats(actorID)
 	if err != nil {
 		return false, err

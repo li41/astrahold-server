@@ -17,8 +17,8 @@ func (r *Runtime) Step(tick uint64, delta time.Duration) StepReport {
 	}
 
 	report := StepReport{Tick: tick}
-	// Resource presentation feedback is Reliable and bounded. Retry older backpressured
-	// Type117/Type118 state once before this tick can append newer resource feedback behind it.
+	// Type118 target-resource feedback is Reliable and bounded. Retry older backpressured state
+	// once before this tick can append newer target-resource feedback behind it.
 	r.retryPendingResourceMessages(tick, &report)
 	var stageStart time.Time
 	if measure {

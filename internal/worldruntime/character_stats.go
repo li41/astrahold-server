@@ -37,6 +37,21 @@ func primaryBonusFromEquipmentModifiers(modifiers equipmentstats.Modifiers) char
 	}
 }
 
+// derivedCharacterMaxVitals is the pure composition seam for the future live level owner.
+// It deliberately does not invent a level or mutate current HP/MP; callers must supply the
+// authoritative level once progression persistence exists.
+func derivedCharacterMaxVitals(level uint32, base characterstats.Primary, learned learnedskills.Set, modifiers equipmentstats.Modifiers) (uint32, uint32, error) {
+	effective, err := effectivePrimaryStatsFromLearned(base, learned)
+	if err != nil {
+		return 0, 0, err
+	}
+	effective, err = characterstats.Effective(effective, primaryBonusFromEquipmentModifiers(modifiers))
+	if err != nil {
+		return 0, 0, err
+	}
+	return characterstats.DerivedMaxVitals(level, effective, modifiers.MaxHP, modifiers.MaxMP)
+}
+
 // characterEffectivePrimaryStats is the world-owner read seam for combat scaling. Durable base
 // stats are composed with learned passives first, then with currently equipped fixed/rolled primary
 // bonuses. Equipment remains derived truth and is never copied into durable base attributes.

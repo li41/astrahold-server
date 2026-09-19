@@ -9,6 +9,7 @@ import (
 
 	"github.com/li41/astrahold-server/internal/combat"
 	"github.com/li41/astrahold-server/internal/movement"
+	"github.com/li41/astrahold-server/internal/monstercatalog"
 	threatpkg "github.com/li41/astrahold-server/internal/threat"
 	"github.com/li41/astrahold-server/internal/world"
 )
@@ -25,15 +26,22 @@ var ErrInvalidAutonomousMeleeAgent = errors.New("worldruntime: invalid autonomou
 // Every point must stay on Home's layer and inside LeashRange. Patrol movement is presentation-
 // visible gameplay state, but the Server remains the sole owner of position, aggro and encounter reset.
 type AutonomousMeleeAgentConfig struct {
-	EntityID        world.EntityID
-	Home            world.Position
-	ActionID        string
-	AggroRange      float32
-	LeashRange      float32
-	AttackRange     float32
-	ReturnTolerance float32
-	IdlePatrol      []world.Position
-	PatrolTolerance float32
+	EntityID              world.EntityID
+	Home                  world.Position
+	ActionID              string
+	AggroRange            float32
+	LeashRange            float32
+	AttackRange           float32
+	AttackIntervalSeconds float32
+	AggroMode             monstercatalog.AggroMode
+	EncounterGroupID      string
+	AssistFamilyID        string
+	AssistPolicy          monstercatalog.AssistPolicy
+	AssistRadius          float32
+	MaxAssist             uint8
+	ReturnTolerance       float32
+	IdlePatrol            []world.Position
+	PatrolTolerance       float32
 }
 
 type autonomousMeleeAgent struct {
@@ -41,6 +49,7 @@ type autonomousMeleeAgent struct {
 	targetID      world.EntityID
 	returningHome bool
 	patrolIndex   int
+	assistAlerted bool
 	threat        *threatpkg.Table
 }
 
@@ -73,6 +82,26 @@ func validateAutonomousMeleeAgentConfig(config AutonomousMeleeAgentConfig) error
 		return ErrInvalidAutonomousMeleeAgent
 	}
 	if config.LeashRange < config.AggroRange || config.AttackRange > config.AggroRange {
+		return ErrInvalidAutonomousMeleeAgent
+	}
+	if config.AttackIntervalSeconds != 0 && !positiveFiniteFloat32(config.AttackIntervalSeconds) {
+		return ErrInvalidAutonomousMeleeAgent
+	}
+	switch effectiveAutonomousAggroMode(config.AggroMode) {
+	case monstercatalog.AggroAggressive, monstercatalog.AggroPassive:
+	default:
+		return ErrInvalidAutonomousMeleeAgent
+	}
+	switch effectiveAutonomousAssistPolicy(config.AssistPolicy) {
+	case monstercatalog.AssistNone:
+		if config.AssistFamilyID != "" || config.AssistRadius != 0 || config.MaxAssist != 0 {
+			return ErrInvalidAutonomousMeleeAgent
+		}
+	case monstercatalog.AssistSameFamily:
+		if config.EncounterGroupID == "" || config.AssistFamilyID == "" || !positiveFiniteFloat32(config.AssistRadius) || config.MaxAssist == 0 {
+			return ErrInvalidAutonomousMeleeAgent
+		}
+	default:
 		return ErrInvalidAutonomousMeleeAgent
 	}
 	if !finiteFloat32(config.ReturnTolerance) || config.ReturnTolerance < 0 {
@@ -239,6 +268,7 @@ func (r *Runtime) beginAutonomousMeleeReturnHome(agent *autonomousMeleeAgent, ac
 	agent.targetID = 0
 	agent.returningHome = true
 	agent.patrolIndex = 0
+	agent.assistAlerted = false
 	if agent.threat != nil {
 		agent.threat.Clear()
 	}
@@ -272,6 +302,7 @@ func resetAutonomousMeleeAgentState(agent *autonomousMeleeAgent) {
 	agent.targetID = 0
 	agent.returningHome = false
 	agent.patrolIndex = 0
+	agent.assistAlerted = false
 	if agent.threat != nil {
 		agent.threat.Clear()
 	}
@@ -312,6 +343,9 @@ func (r *Runtime) autonomousMeleeTarget(actor world.EntityState, config Autonomo
 }
 
 func (r *Runtime) acquireAutonomousMeleeTarget(actor world.EntityState, config AutonomousMeleeAgentConfig, tick uint64) (world.EntityState, bool) {
+	if effectiveAutonomousAggroMode(config.AggroMode) == monstercatalog.AggroPassive {
+		return world.EntityState{}, false
+	}
 	aggroSq := config.AggroRange * config.AggroRange
 	leashSq := config.LeashRange * config.LeashRange
 	var best world.EntityState
@@ -355,6 +389,20 @@ func (r *Runtime) setAutonomousFacing(entityID world.EntityID, direction world.V
 	if err := r.world.SetFacingDirection(entityID, direction); err != nil {
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: "autonomous_melee_face", Err: err})
 	}
+}
+
+func effectiveAutonomousAggroMode(mode monstercatalog.AggroMode) monstercatalog.AggroMode {
+	if mode == "" {
+		return monstercatalog.AggroAggressive
+	}
+	return mode
+}
+
+func effectiveAutonomousAssistPolicy(policy monstercatalog.AssistPolicy) monstercatalog.AssistPolicy {
+	if policy == "" {
+		return monstercatalog.AssistNone
+	}
+	return policy
 }
 
 func positiveFiniteFloat32(value float32) bool {

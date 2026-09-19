@@ -1,6 +1,10 @@
 package characterstats
 
-import "testing"
+import (
+	"errors"
+	"math"
+	"testing"
+)
 
 func TestMeleePhysicalDamageBonus(t *testing.T) {
 	for _, tc := range []struct{ stat, want uint32 }{{9,0},{10,0},{11,0},{12,1},{19,4},{20,5}} {
@@ -28,6 +32,67 @@ func TestAgilityDerivedValues(t *testing.T) {
 func TestMagicPowerBonus(t *testing.T) {
 	for _, tc := range []struct{ intelligence, want uint32 }{{10,0},{14,0},{15,1},{20,2},{34,4}} {
 		if got := MagicPowerBonus(tc.intelligence); got != tc.want { t.Fatalf("int=%d got=%d want=%d", tc.intelligence, got, tc.want) }
+	}
+}
+
+func TestBaseMaxVitalsGrowth(t *testing.T) {
+	for _, tc := range []struct {
+		level       uint32
+		wantHP      uint64
+		wantMP      uint64
+	}{
+		{1, 15, 6},
+		{5, 59, 14},
+		{10, 114, 24},
+		{15, 169, 34},
+		{18, 202, 40},
+		{22, 246, 48},
+		{50, 554, 104},
+	} {
+		hp, err := BaseMaxHP(tc.level)
+		if err != nil {
+			t.Fatalf("level=%d hp err=%v", tc.level, err)
+		}
+		mp, err := BaseMaxMP(tc.level)
+		if err != nil {
+			t.Fatalf("level=%d mp err=%v", tc.level, err)
+		}
+		if hp != tc.wantHP || mp != tc.wantMP {
+			t.Fatalf("level=%d hp/mp=%d/%d want=%d/%d", tc.level, hp, mp, tc.wantHP, tc.wantMP)
+		}
+	}
+	if _, err := BaseMaxHP(0); !errors.Is(err, ErrInvalidLevel) {
+		t.Fatalf("BaseMaxHP(0) err=%v", err)
+	}
+	if _, err := BaseMaxMP(0); !errors.Is(err, ErrInvalidLevel) {
+		t.Fatalf("BaseMaxMP(0) err=%v", err)
+	}
+}
+
+func TestDerivedMaxVitalsComposesEffectiveAttributesAndFlatEquipment(t *testing.T) {
+	maxHP, maxMP, err := DerivedMaxVitals(20, Primary{
+		Strength: 10, Agility: 10, Constitution: 18,
+		Intelligence: 10, Spirit: 16, Charisma: 10,
+	}, 40, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxHP != 324 || maxMP != 104 {
+		t.Fatalf("max hp/mp=%d/%d want=324/104", maxHP, maxMP)
+	}
+
+	neutralHP, neutralMP, err := DerivedMaxVitals(1, DefaultPrimary(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if neutralHP != 15 || neutralMP != 7 {
+		t.Fatalf("neutral level-1 hp/mp=%d/%d want=15/7", neutralHP, neutralMP)
+	}
+}
+
+func TestDerivedMaxVitalsRejectsUint32Overflow(t *testing.T) {
+	if _, _, err := DerivedMaxVitals(math.MaxUint32, DefaultPrimary(), 0, 0); !errors.Is(err, ErrOverflow) {
+		t.Fatalf("overflow err=%v", err)
 	}
 }
 

@@ -137,6 +137,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("load gameplay world %q: %v", *worldPath, err)
 	}
+	heightfields, err := loadWorldHeightfields(*worldPath, loadedWorld.Definition)
+	if err != nil {
+		log.Fatalf("load gameplay world terrain %q: %v", *worldPath, err)
+	}
+	nav, err := navigation.NewGameplayNavigatorWithHeightfields(loadedWorld.Definition, heightfields)
+	if err != nil {
+		log.Fatalf("build gameplay navigator: %v", err)
+	}
 	loadedCombat, err := combat.LoadFile(*combatPath)
 	if err != nil {
 		log.Fatalf("load combat actions %q: %v", *combatPath, err)
@@ -149,14 +157,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("load respawn policy %q: %v", *respawnPolicyPath, err)
 	}
-	if err := respawnpolicy.ValidateAgainstWorld(loadedRespawnPolicy.Definition, loadedWorld.Definition); err != nil {
-		log.Fatalf("validate respawn policy %q against gameplay world: %v", *respawnPolicyPath, err)
+	resolvedRespawnPolicy, err := respawnpolicy.ResolveGroundPositions(loadedRespawnPolicy.Definition, loadedWorld.Definition, nav)
+	if err != nil {
+		log.Fatalf("resolve respawn policy %q against gameplay world terrain: %v", *respawnPolicyPath, err)
 	}
-	respawnService, err := respawnpolicy.NewService(loadedRespawnPolicy.Definition, *tickRate)
+	respawnService, err := respawnpolicy.NewService(resolvedRespawnPolicy, *tickRate)
 	if err != nil {
 		log.Fatalf("build respawn policy service: %v", err)
 	}
-	freshSpawn, err := freshPlayerSpawn(loadedRespawnPolicy.Definition)
+	freshSpawn, err := freshPlayerSpawn(resolvedRespawnPolicy)
 	if err != nil {
 		log.Fatalf("resolve fresh player spawn from respawn policy %q: %v", *respawnPolicyPath, err)
 	}
@@ -171,11 +180,6 @@ func main() {
 	pveRespawnDelay, _ := respawnService.DelayTicks(respawnpolicy.DeathContextPvE)
 	pvpRespawnDelay, _ := respawnService.DelayTicks(respawnpolicy.DeathContextPvP)
 	siegeRespawnDelay, _ := respawnService.DelayTicks(respawnpolicy.DeathContextSiege)
-	nav, err := navigation.NewGameplayNavigator(loadedWorld.Definition)
-	if err != nil {
-		log.Fatalf("build gameplay navigator: %v", err)
-	}
-
 	move := movement.NewService(nav, 0.1)
 	sim := simulation.New(spatial.NewGrid(32), move)
 	runtimeConfig := worldruntime.DefaultConfig()
@@ -232,17 +236,22 @@ func main() {
 	} else {
 		log.Printf("siege match: enabled=false")
 	}
+	var playtestFixture groundedPlaytestMonsterFixture
 	if *playtestMonster {
+		playtestFixture, err = newGroundedPlaytestMonsterFixture(nav, loadedWorld.Definition.Agent, *tickRate)
+		if err != nil {
+			log.Fatalf("resolve playtest Monster against gameplay terrain: %v", err)
+		}
 		runtimeOptions = append(
 			runtimeOptions,
-			worldruntime.WithAutonomousMeleeAgent(newPlaytestMonsterAIConfig()),
+			worldruntime.WithAutonomousMeleeAgent(playtestFixture.AI),
 			worldruntime.WithMonsterLootCatalog(newPlaytestMonsterLootCatalog()),
-			worldruntime.WithMonsterLifecycle(newPlaytestMonsterLifecycleConfig(loadedWorld.Definition.Agent, *tickRate)),
+			worldruntime.WithMonsterLifecycle(playtestFixture.Lifecycle),
 		)
 	}
 	runtime := worldruntime.New(sim, runtimeConfig, runtimeOptions...)
 	if *playtestMonster {
-		if err := runtime.EnqueueSpawnEntity(newPlaytestMonsterSpawn(loadedWorld.Definition.Agent)); err != nil {
+		if err := runtime.EnqueueSpawnEntity(playtestFixture.Spawn); err != nil {
 			log.Fatalf("queue playtest Monster spawn: %v", err)
 		}
 	}

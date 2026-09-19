@@ -14,10 +14,18 @@ const defaultItemDropLifetimeTicks uint64 = 20 * 60
 // spawnItemDrop primitive remains useful for focused tests and other explicitly managed item-drop
 // lifecycles, while gameplay loot always receives a bounded Server-owned deadline.
 func (r *Runtime) spawnExpiringItemDrop(itemArchetypeID string, position world.Position, tick uint64) (world.EntityID, error) {
-	dropID, err := r.spawnItemDrop(itemArchetypeID, position)
+	return r.spawnExpiringItemDropPayload(stackItemDropPayload(itemArchetypeID, 1), position, tick)
+}
+
+func (r *Runtime) spawnExpiringItemDropPayload(payload itemDropPayload, position world.Position, tick uint64) (world.EntityID, error) {
+	if err := r.validateItemDropPayload(payload); err != nil {
+		return 0, err
+	}
+	dropID, err := r.spawnItemDrop(payload.ItemArchetypeID, position)
 	if err != nil {
 		return 0, err
 	}
+	r.itemDropPayloads[dropID] = payload
 	r.itemDropExpireTick[dropID] = itemDropExpiryTick(tick, defaultItemDropLifetimeTicks)
 	return dropID, nil
 }
@@ -35,6 +43,7 @@ func (r *Runtime) stepItemDropExpiry(tick uint64) {
 		entity, exists := r.world.Entity(dropID)
 		if !exists || entity.Kind != world.EntityItemDrop {
 			delete(r.itemDropExpireTick, dropID)
+			delete(r.itemDropPayloads, dropID)
 			continue
 		}
 		if tick >= expireTick {
@@ -54,6 +63,7 @@ func (r *Runtime) stepItemDropExpiry(tick uint64) {
 			r.world.Remove(dropID)
 		}
 		delete(r.itemDropExpireTick, dropID)
+		delete(r.itemDropPayloads, dropID)
 	}
 }
 

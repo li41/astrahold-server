@@ -25,9 +25,10 @@ type WeaponType string
 type ArmorClass string
 
 const (
-	KindWeapon Kind = "weapon"
-	KindShield Kind = "shield"
-	KindArmor  Kind = "armor"
+	KindWeapon    Kind = "weapon"
+	KindShield    Kind = "shield"
+	KindArmor     Kind = "armor"
+	KindAccessory Kind = "accessory"
 
 	SlotMainHand Slot = "main_hand"
 	SlotOffHand  Slot = "off_hand"
@@ -36,6 +37,9 @@ const (
 	SlotGloves   Slot = "gloves"
 	SlotLegs     Slot = "legs"
 	SlotBoots    Slot = "boots"
+	SlotNecklace Slot = "necklace"
+	SlotRing     Slot = "ring"
+	SlotBelt     Slot = "belt"
 
 	ArmorClassCloth   ArmorClass = "cloth"
 	ArmorClassLeather ArmorClass = "leather"
@@ -52,6 +56,7 @@ const (
 	WeaponTypeOneHandSword WeaponType = "one_hand_sword"
 	WeaponTypeOneHandAxe   WeaponType = "one_hand_axe"
 	WeaponTypeMace         WeaponType = "mace"
+	WeaponTypeBow          WeaponType = "bow"
 )
 
 type DamageRange struct {
@@ -87,7 +92,7 @@ type Definition struct {
 	Slot             Slot                  `json:"slot"`
 	Tier             Tier                  `json:"tier"`
 	Weight           uint32                `json:"weight"`
-	Material         string                `json:"material"`
+	Material         MaterialID            `json:"material"`
 	ArmorClass       ArmorClass            `json:"armor_class,omitempty"`
 	SetID            SetID                 `json:"set_id,omitempty"`
 	BaseRequirements []BaseStatRequirement `json:"base_requirements,omitempty"`
@@ -119,11 +124,16 @@ func Default() (*Catalog, error) {
 		return nil, err
 	}
 	// The historical revision identifies the authored weapon progression in default.json. Protocol
-	// v29 is the compatibility fence for the seven-slot model, so adding armor does not rewrite that
-	// weapon-data revision string.
+	// v31 extends equipment locations to eleven slots without rewriting that weapon-data revision.
 	def.Items = append(def.Items, defaultLowTierArmor()...)
 	def.Items = append(def.Items, defaultRemainingArmor()...)
 	def.Sets = append(def.Sets, defaultArmorSets()...)
+	if err := applyDefaultProductionMaterials(def.Items); err != nil {
+		return nil, err
+	}
+	if err := applyDefaultRangedAmmunitionBalance(def.Items); err != nil {
+		return nil, err
+	}
 	return New(def)
 }
 
@@ -180,10 +190,10 @@ func New(def CatalogDefinition) (*Catalog, error) {
 	}
 	for _, item := range def.Items {
 		item.ItemArchetypeID = strings.TrimSpace(item.ItemArchetypeID)
-		item.Material = strings.TrimSpace(item.Material)
+		item.Material = canonicalMaterialID(item.Material)
 		item.ArmorClass = ArmorClass(strings.TrimSpace(string(item.ArmorClass)))
 		item.SetID = SetID(strings.TrimSpace(string(item.SetID)))
-		if item.ItemArchetypeID == "" || item.Material == "" || item.Weight == 0 || !validTier(item.Tier) {
+		if item.ItemArchetypeID == "" || !item.Material.Valid() || item.Weight == 0 || !validTier(item.Tier) {
 			return nil, ErrInvalidCatalog
 		}
 		if _, exists := catalog.byItem[item.ItemArchetypeID]; exists {
@@ -234,6 +244,11 @@ func New(def CatalogDefinition) (*Catalog, error) {
 				return nil, ErrInvalidCatalog
 			}
 			catalog.armorByItem[item.ItemArchetypeID] = item
+		case KindAccessory:
+			if !validAccessorySlot(item.Slot) || item.Weapon != nil || item.Shield != nil || item.ArmorClass != "" {
+				return nil, ErrInvalidCatalog
+			}
+			catalog.byItem[item.ItemArchetypeID] = item
 		default:
 			return nil, ErrInvalidCatalog
 		}
@@ -247,6 +262,15 @@ func New(def CatalogDefinition) (*Catalog, error) {
 func validArmorSlot(slot Slot) bool {
 	switch slot {
 	case SlotHelmet, SlotChest, SlotGloves, SlotLegs, SlotBoots:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAccessorySlot(slot Slot) bool {
+	switch slot {
+	case SlotNecklace, SlotRing, SlotBelt:
 		return true
 	default:
 		return false

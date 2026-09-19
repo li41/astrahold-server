@@ -237,6 +237,46 @@ func ValidateAgainstWorld(d Definition, gameplay gameplayworld.Definition) error
 	return nil
 }
 
+// GroundResolver is the narrow Server navigation seam respawn policy needs.
+// It projects an authored X/Z/layer anchor onto current authoritative ground.
+type GroundResolver interface {
+	ResolveGroundPosition(world.Position) (world.Position, error)
+}
+
+// ResolveGroundPositions keeps respawn X/Z/layer policy-authored while replacing the legacy
+// flat-plane Y with the current authoritative terrain height. The source definition must first
+// be valid against the gameplay proxy, so this cannot move an invalid spawn into legality.
+func ResolveGroundPositions(d Definition, gameplay gameplayworld.Definition, resolver GroundResolver) (Definition, error) {
+	if resolver == nil {
+		return Definition{}, fmt.Errorf("%w: nil ground resolver", ErrInvalidDefinition)
+	}
+	if err := ValidateAgainstWorld(d, gameplay); err != nil {
+		return Definition{}, err
+	}
+	resolved := d
+	resolved.SpawnPoints = append([]SpawnPoint(nil), d.SpawnPoints...)
+	for i := range resolved.SpawnPoints {
+		point := &resolved.SpawnPoints[i]
+		projected, err := resolver.ResolveGroundPosition(point.Position())
+		if err != nil {
+			return Definition{}, fmt.Errorf("%w: resolve spawn point %q ground: %v", ErrInvalidDefinition, point.ID, err)
+		}
+		if projected.X != point.X || projected.Z != point.Z || projected.Layer != point.Layer || !finite32(projected.Y) {
+			return Definition{}, fmt.Errorf("%w: resolver changed spawn point %q identity", ErrInvalidDefinition, point.ID)
+		}
+		point.Y = projected.Y
+		for _, blocker := range gameplay.Blockers {
+			if !blocker.Enabled || !blocker.BlocksMovement || blocker.Layer != point.Layer {
+				continue
+			}
+			if blocker.Bounds.Contains(point.X, point.Z) && point.Y >= blocker.MinY && point.Y <= blocker.MaxY {
+				return Definition{}, fmt.Errorf("%w: grounded spawn point %q intersects blocker %q", ErrInvalidDefinition, point.ID, blocker.ID)
+			}
+		}
+	}
+	return resolved, nil
+}
+
 type Scheduled struct {
 	EntityID     world.EntityID
 	Context      DeathContext

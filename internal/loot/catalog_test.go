@@ -7,30 +7,34 @@ import (
 
 func TestCatalogLookupReturnsOwnedDrops(t *testing.T) {
 	catalog, err := New(Definition{
-		Revision: "test-v1",
+		Revision: "test-v2",
 		Tables: []Table{{
 			SourceArchetypeID: "monster-a",
 			Drops: []Drop{
 				{ItemArchetypeID: "item-a"},
-				{ItemArchetypeID: "item-b", ChanceBasisPoints: 2_500},
+				{ItemArchetypeID: "item-b", ChanceBasisPoints: 2_500, QuantityMin: 2, QuantityMax: 5},
+				{Kind: DropKindEquipmentInstance, ItemArchetypeID: "item-mid", ChanceBasisPoints: 100},
 			},
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := catalog.Revision(); got != "test-v1" {
+	if got := catalog.Revision(); got != "test-v2" {
 		t.Fatalf("revision=%q", got)
 	}
 	drops, ok := catalog.DropsFor("monster-a")
-	if !ok || len(drops) != 2 {
+	if !ok || len(drops) != 3 {
 		t.Fatalf("drops=%#v ok=%v", drops, ok)
 	}
-	if drops[0].ItemArchetypeID != "item-a" || drops[0].ChanceBasisPoints != ChanceBasisPointsScale {
-		t.Fatalf("default chance not normalized to guaranteed: %#v", drops[0])
+	if drops[0].Kind != DropKindStack || drops[0].ItemArchetypeID != "item-a" || drops[0].ChanceBasisPoints != ChanceBasisPointsScale || drops[0].QuantityMin != 1 || drops[0].QuantityMax != 1 {
+		t.Fatalf("default drop not normalized: %#v", drops[0])
 	}
-	if drops[1].ItemArchetypeID != "item-b" || drops[1].ChanceBasisPoints != 2_500 {
-		t.Fatalf("explicit chance changed: %#v", drops[1])
+	if drops[1].ItemArchetypeID != "item-b" || drops[1].ChanceBasisPoints != 2_500 || drops[1].QuantityMin != 2 || drops[1].QuantityMax != 5 {
+		t.Fatalf("explicit stack changed: %#v", drops[1])
+	}
+	if drops[2].Kind != DropKindEquipmentInstance || drops[2].QuantityMin != 1 || drops[2].QuantityMax != 1 {
+		t.Fatalf("instance default quantity not normalized: %#v", drops[2])
 	}
 	if !drops[1].IncludesRoll(2_499) || drops[1].IncludesRoll(2_500) {
 		t.Fatalf("chance threshold semantics are not [0,chance): %#v", drops[1])
@@ -57,6 +61,10 @@ func TestCatalogRejectsInvalidAndDuplicateTables(t *testing.T) {
 		{name: "empty drops", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a"}}}, want: ErrInvalidDefinition},
 		{name: "empty item", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{}}}}}, want: ErrInvalidDefinition},
 		{name: "chance above scale", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "x", ChanceBasisPoints: ChanceBasisPointsScale + 1}}}}}, want: ErrInvalidDefinition},
+		{name: "bad quantity zero min", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "x", QuantityMax: 2}}}}}, want: ErrInvalidDefinition},
+		{name: "bad quantity inverted", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "x", QuantityMin: 3, QuantityMax: 2}}}}}, want: ErrInvalidDefinition},
+		{name: "unknown kind", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{Kind: DropKind("future"), ItemArchetypeID: "x"}}}}}, want: ErrInvalidDefinition},
+		{name: "instance quantity range", def: Definition{Revision: "v1", Tables: []Table{{SourceArchetypeID: "a", Drops: []Drop{{Kind: DropKindEquipmentInstance, ItemArchetypeID: "x", QuantityMin: 1, QuantityMax: 2}}}}}, want: ErrInvalidDefinition},
 		{name: "duplicate source", def: Definition{Revision: "v1", Tables: []Table{
 			{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "x"}}},
 			{SourceArchetypeID: "a", Drops: []Drop{{ItemArchetypeID: "y"}}},

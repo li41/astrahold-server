@@ -3,7 +3,6 @@ package worldruntime
 import (
 	"errors"
 
-	"github.com/li41/astrahold-server/internal/characteridentity"
 	"github.com/li41/astrahold-server/internal/characterstate"
 	"github.com/li41/astrahold-server/internal/equipmentcatalog"
 	"github.com/li41/astrahold-server/internal/inventory"
@@ -17,7 +16,7 @@ const defaultInventoryCarryCapacity = uint64(100)
 var defaultInventoryUnitWeights = mustDefaultInventoryUnitWeights()
 
 func mustDefaultInventoryUnitWeights() map[string]uint32 {
-	weights := map[string]uint32{"item_minor_healing_potion": 1, "item_minor_mana_potion": 1, "item_training_blade": 8, "item_gray_wolf_pelt": 2}
+	weights := map[string]uint32{"item_gold_coin": 0, "item_minor_healing_potion": 1, "item_minor_mana_potion": 1, "item_minor_speed_potion": 1, "item_training_blade": 8, "item_gray_wolf_pelt": 2}
 	for id, weight := range defaultEquipmentCatalog.UnitWeights() {
 		if id == "" || weight == 0 {
 			panic("worldruntime: invalid equipment catalog weight")
@@ -218,9 +217,6 @@ func (r *Runtime) ensureSessionInventory(s *session.Session) {
 		}
 		r.inventories[identity] = inv
 	}
-	if s.CharacterIdentity.Assurance == characteridentity.AssuranceTrusted {
-		r.queueCurrentActionResourceState(s)
-	}
 	r.sessionInventoryPending[s.ID] = struct{}{}
 }
 func (r *Runtime) removeSessionInventoryDelivery(id session.ID) {
@@ -276,12 +272,16 @@ func (r *Runtime) replicatePendingInventories(tick uint64, report *StepReport) {
 		for _, stack := range stacks {
 			items = append(items, protocol.InventoryItemStack{ArchetypeID: stack.ArchetypeID, Quantity: stack.Quantity})
 		}
+		ammunitionState, ammunitionSelectionChanged := r.reconcileAmmunitionSelection(s)
 		messages := []protocol.Message{
 			protocol.InventorySnapshot{Revision: inv.Revision(), CurrentCarryWeight: inv.CurrentWeight(), MaxCarryWeight: inv.MaxWeight(), Items: items},
 			inventoryInstanceMessage,
 			protocol.EquipmentSnapshot{Revision: inv.EquipmentRevision(), Slots: buildEquipmentArchetypeSlots(inv)},
 			equipmentInstanceMessage,
 			r.appearanceSnapshotForSession(s),
+		}
+		if ammunitionSelectionChanged {
+			messages = append(messages, ammunitionState)
 		}
 		for _, message := range messages {
 			envelope := protocol.Envelope{Delivery: protocol.DeliveryReliableOrdered, Sequence: s.NextOutboundSequence(protocol.DeliveryReliableOrdered), ServerTick: tick, Message: message}

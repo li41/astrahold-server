@@ -9,7 +9,7 @@ import (
 func protocolItemInstanceState(instance iteminstance.Instance) protocol.ItemInstanceState {
 	affixes := make([]protocol.ItemAffixState, 0, len(instance.Affixes))
 	for _, affix := range instance.Affixes { affixes = append(affixes, protocol.ItemAffixState{AffixID:string(affix.ID), Strength:affix.Strength, Value:affix.Value}) }
-	return protocol.ItemInstanceState{ItemInstanceID:string(instance.ID), ItemArchetypeID:instance.ItemArchetypeID, Affixes:affixes}
+	return protocol.ItemInstanceState{ItemInstanceID:string(instance.ID), ItemArchetypeID:instance.ItemArchetypeID, EnhancementLevel:instance.EnhancementLevel, Affixes:affixes}
 }
 func buildInventoryInstanceSnapshot(inv *inventory.Inventory) (protocol.InventoryInstanceSnapshot, error) {
 	snapshot := protocol.InventoryInstanceSnapshot{Revision:inv.Revision()}; instances := inv.InstanceSnapshot(); if len(instances) == 0 { return snapshot, nil }

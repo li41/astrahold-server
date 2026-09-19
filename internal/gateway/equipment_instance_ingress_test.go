@@ -59,7 +59,7 @@ func TestIngressRejectsInvalidEquipmentInstanceIntent(t *testing.T) {
 		{name: "padded identity", delivery: protocol.DeliveryReliableOrdered, command: protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotMainHand, ItemInstanceID: " item-instance:1 "}, want: ErrInvalidClientEnvelope},
 		{name: "missing identity", delivery: protocol.DeliveryReliableOrdered, command: protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlotMainHand}, want: ErrInvalidClientEnvelope},
 		{name: "unequip identity", delivery: protocol.DeliveryReliableOrdered, command: protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperationUnequip, Slot: protocol.EquipmentSlotMainHand, ItemInstanceID: "item-instance:1"}, want: ErrInvalidClientEnvelope},
-		{name: "bad slot", delivery: protocol.DeliveryReliableOrdered, command: protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlot("helmet"), ItemInstanceID: "item-instance:1"}, want: ErrInvalidClientEnvelope},
+		{name: "bad slot", delivery: protocol.DeliveryReliableOrdered, command: protocol.ClientEquipmentInstanceCommand{Operation: protocol.EquipmentOperationEquip, Slot: protocol.EquipmentSlot("unknown"), ItemInstanceID: "item-instance:1"}, want: ErrInvalidClientEnvelope},
 	}
 	for i, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

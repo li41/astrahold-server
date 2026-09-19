@@ -22,6 +22,7 @@ type SpawnEntityRequest struct {
 	HP            uint32
 	MaxHP         uint32
 	BodySize      equipmentcatalog.BodySize
+	MonsterStats  MonsterCombatStats
 }
 
 func validateSpawnEntityRequest(request SpawnEntityRequest) error {
@@ -35,6 +36,11 @@ func validateSpawnEntityRequest(request SpawnEntityRequest) error {
 	case "", equipmentcatalog.BodySizeSmall, equipmentcatalog.BodySizeLarge, equipmentcatalog.BodySizeGiant:
 	default:
 		return ErrInvalidSpawnEntityRequest
+	}
+	if request.MonsterStats != (MonsterCombatStats{}) {
+		if request.Entity.Kind != world.EntityMonster || request.MonsterStats.MaxHP != request.MaxHP || validateMonsterCombatStats(request.MonsterStats) != nil {
+			return ErrInvalidSpawnEntityRequest
+		}
 	}
 	return nil
 }
@@ -55,6 +61,12 @@ func (r *Runtime) applySpawnEntity(name string, request SpawnEntityRequest, repo
 	if err := r.characters.RegisterState(character.State{EntityID: entity.ID, HP: request.HP, MaxHP: request.MaxHP}); err != nil {
 		r.world.Remove(entity.ID)
 		report.CommandErrors = append(report.CommandErrors, CommandError{Command: name, Err: err}); return
+	}
+	if entity.Kind == world.EntityMonster {
+		delete(r.monsterCombatStats, entity.ID)
+		if request.MonsterStats != (MonsterCombatStats{}) {
+			r.monsterCombatStats[entity.ID] = request.MonsterStats
+		}
 	}
 	r.ensureEntityVitalsRevision(entity.ID)
 	r.trackMonsterLootEntity(entity)

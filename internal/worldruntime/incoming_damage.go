@@ -10,7 +10,7 @@ import (
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const physicalDefenseScale = 20.0
+const physicalDefenseScale = 100.0
 
 var (
 	ErrUnsupportedIncomingDamageType = errors.New("worldruntime: unsupported incoming damage type")
@@ -83,6 +83,10 @@ func (r *Runtime) resolveIncomingDamage(request DamageRequest, tick uint64) (Dam
 	var shield *equipmentcatalog.Shield
 	if definition, ok := r.equippedCatalogShield(request.TargetEntityID); ok {
 		shield = definition.Shield
+	}
+	if stats, ok := r.monsterStats(request.TargetEntityID); ok {
+		request.AdditionalPhysicalDefense = saturatingAddUint32(request.AdditionalPhysicalDefense, stats.PhysicalDefense)
+		request.MagicDefense = saturatingAddUint32(request.MagicDefense, stats.MagicDefense)
 	}
 	modifiers, err := r.equippedInstanceModifiers(request.TargetEntityID)
 	if err != nil {

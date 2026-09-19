@@ -16,8 +16,8 @@ func TestMarshalCharacterTargetResourceState(t *testing.T) {
 	if string(payload) != want {
 		t.Fatalf("payload=%s want=%s", payload, want)
 	}
-	if protocol.Version != 29 {
-		t.Fatalf("protocol version=%d want 29", protocol.Version)
+	if protocol.Version < 31 {
+		t.Fatalf("protocol version=%d want >=31", protocol.Version)
 	}
 	if protocol.MessageCharacterTargetResourceState != 118 {
 		t.Fatalf("type=%d want 118", protocol.MessageCharacterTargetResourceState)

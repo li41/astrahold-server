@@ -14,90 +14,40 @@ var ErrCommandQueueFull = errors.New("worldruntime: command queue full")
 type command interface{ name() string }
 
 type registerSessionCommand struct{ session *session.Session }
-
 func (registerSessionCommand) name() string { return "register_session" }
-
 type unregisterSessionCommand struct{ id session.ID }
-
 func (unregisterSessionCommand) name() string { return "unregister_session" }
 
-type characterAdmissionCommand struct {
-	identity   characterAdmissionOperation
-	completion chan error
-}
-
-func (c characterAdmissionCommand) name() string {
-	if c.identity.release {
-		return "release_character_admission"
-	}
-	if c.identity.ownership != nil {
-		return "plan_character_connection"
-	}
-	return "admit_character"
-}
-
-type joinCommand struct {
-	request    JoinRequest
-	completion chan error
-}
-
+type characterAdmissionCommand struct { identity characterAdmissionOperation; completion chan error }
+func (c characterAdmissionCommand) name() string { if c.identity.release { return "release_character_admission" }; if c.identity.ownership != nil { return "plan_character_connection" }; return "admit_character" }
+type joinCommand struct { request JoinRequest; completion chan error }
 func (joinCommand) name() string { return "join_world" }
-
-type ownershipLookupCommand struct {
-	identity   characteridentity.Binding
-	result     *SessionOwnershipFence
-	completion chan error
-}
-
+type ownershipLookupCommand struct { identity characteridentity.Binding; result *SessionOwnershipFence; completion chan error }
 func (ownershipLookupCommand) name() string { return "lookup_character_ownership" }
-
-type ownershipTransferCommand struct {
-	request    OwnershipTransferRequest
-	completion chan error
-}
-
+type ownershipTransferCommand struct { request OwnershipTransferRequest; completion chan error }
 func (ownershipTransferCommand) name() string { return "transfer_character_ownership" }
-
-type leaveCommand struct {
-	id        session.ID
-	ownership SessionOwnershipFence
-}
-
-func (leaveCommand) name() string { return "leave_world" }
-
-type moveInputCommand struct {
-	sessionID session.ID
-	sequence  uint32
-	input     protocol.ClientMoveInput
-	ownership SessionOwnershipFence
-}
-
+type leaveCommand struct { id session.ID; ownership SessionOwnershipFence; mapExit *MapExitRequest }
+func (c leaveCommand) name() string { if c.mapExit != nil { return "exit_map" }; return "leave_world" }
+type moveInputCommand struct { sessionID session.ID; sequence uint32; input protocol.ClientMoveInput; ownership SessionOwnershipFence }
 func (moveInputCommand) name() string { return "move_input" }
-
-type teleportCommand struct {
-	entityID world.EntityID
-	position world.Position
-}
-
+type teleportCommand struct { entityID world.EntityID; position world.Position }
 func (teleportCommand) name() string { return "teleport_entity" }
-
 type teleportBatchCommand struct{ requests []TeleportRequest }
-
 func (teleportBatchCommand) name() string { return "teleport_batch" }
-
 type spawnEntityCommand struct{ request SpawnEntityRequest }
-
 func (spawnEntityCommand) name() string { return "spawn_entity" }
 
-// useActionCommand is the existing bounded Reliable client-intent carrier. Equipment, pickup,
-// item-use and respawn keep their own typed protocol payloads and are routed before combat
-// preparation; none is a skill/action alias.
+// useActionCommand is the existing bounded Reliable client-intent carrier. Typed non-combat
+// payloads are routed before combat preparation and keep the same ownership/action-sequence fence.
 type useActionCommand struct {
 	sessionID         session.ID
 	sequence          uint32
 	action            protocol.ClientUseAction
 	equipment         *protocol.ClientEquipmentCommand
 	equipmentInstance *protocol.ClientEquipmentInstanceCommand
+	enhancement       *protocol.ClientEnhanceEquipment
+	warehouse         *protocol.ClientWarehouseCommand
+	ammunition        *protocol.ClientAmmunitionCommand
 	pickup            *protocol.ClientPickupItem
 	useItem           *protocol.ClientUseItem
 	respawn           *protocol.ClientRespawnRequest
@@ -105,91 +55,38 @@ type useActionCommand struct {
 }
 
 func (c useActionCommand) name() string {
-	if c.equipmentInstance != nil {
-		return "equipment_instance_command"
-	}
-	if c.equipment != nil {
-		return "equipment_command"
-	}
-	if c.pickup != nil {
-		return "pickup_item"
-	}
-	if c.useItem != nil {
-		return "use_item"
-	}
-	if c.respawn != nil {
-		return "respawn_request"
-	}
+	if c.equipmentInstance != nil { return "equipment_instance_command" }
+	if c.enhancement != nil { return "enhance_equipment" }
+	if c.warehouse != nil { return "warehouse_command" }
+	if c.ammunition != nil { return "ammunition_command" }
+	if c.equipment != nil { return "equipment_command" }
+	if c.pickup != nil { return "pickup_item" }
+	if c.useItem != nil { return "use_item" }
+	if c.respawn != nil { return "respawn_request" }
 	return "use_action"
 }
 
 type equipmentCommand = useActionCommand
 
-type npcCommand struct {
-	sessionID session.ID
-	sequence  uint32
-	intent    protocol.ClientInteractNPC
-	ownership SessionOwnershipFence
-}
-
+type npcCommand struct { sessionID session.ID; sequence uint32; intent protocol.ClientInteractNPC; ownership SessionOwnershipFence }
 func (npcCommand) name() string { return "interact_npc" }
-
-type shopCommand struct {
-	sessionID session.ID
-	sequence  uint32
-	intent    protocol.ClientShopCommand
-	ownership SessionOwnershipFence
-}
-
+type shopCommand struct { sessionID session.ID; sequence uint32; intent protocol.ClientShopCommand; ownership SessionOwnershipFence }
 func (shopCommand) name() string { return "shop_command" }
-
-// setBlockerCommand remains the existing Step dispatch carrier for DynamicWorld mutations.
-type setBlockerCommand struct {
-	id                  string
-	enabled             bool
-	startNextSiegeRound bool
-}
-
-func (c setBlockerCommand) name() string {
-	if c.startNextSiegeRound {
-		return "start_next_siege_round"
-	}
-	return "set_blocker"
-}
+type setBlockerCommand struct { id string; enabled bool; startNextSiegeRound bool }
+func (c setBlockerCommand) name() string { if c.startNextSiegeRound { return "start_next_siege_round" }; return "set_blocker" }
 
 type commandQueue struct{ ch chan command }
-
-func newCommandQueue(capacity int) *commandQueue {
-	if capacity <= 0 {
-		panic("worldruntime: command queue capacity must be > 0")
-	}
-	return &commandQueue{ch: make(chan command, capacity)}
-}
-func (q *commandQueue) tryPush(c command) error {
-	select {
-	case q.ch <- c:
-		return nil
-	default:
-		return ErrCommandQueueFull
-	}
-}
+func newCommandQueue(capacity int) *commandQueue { if capacity <= 0 { panic("worldruntime: command queue capacity must be > 0") }; return &commandQueue{ch: make(chan command, capacity)} }
+func (q *commandQueue) tryPush(c command) error { select { case q.ch <- c: return nil; default: return ErrCommandQueueFull } }
 func (q *commandQueue) drain(max int) []command {
-	if max <= 0 {
-		return nil
-	}
+	if max <= 0 { return nil }
 	out := make([]command, 0, max)
 	for len(out) < max {
 		select {
 		case c := <-q.ch:
-			// A step fence is a queue boundary, not gameplay work. Returning immediately keeps
-			// every later command in the channel for a subsequent authoritative Step.
-			if fence, ok := c.(stepFenceCommand); ok {
-				close(fence.reached)
-				return out
-			}
+			if fence, ok := c.(stepFenceCommand); ok { close(fence.reached); return out }
 			out = append(out, c)
-		default:
-			return out
+		default: return out
 		}
 	}
 	return out

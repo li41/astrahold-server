@@ -22,9 +22,13 @@ const (
 	EquipmentSlotGloves   EquipmentSlot = "gloves"
 	EquipmentSlotLegs     EquipmentSlot = "legs"
 	EquipmentSlotBoots    EquipmentSlot = "boots"
+	EquipmentSlotNecklace EquipmentSlot = "necklace"
+	EquipmentSlotRing1    EquipmentSlot = "ring_1"
+	EquipmentSlotRing2    EquipmentSlot = "ring_2"
+	EquipmentSlotBelt     EquipmentSlot = "belt"
 )
 
-// EquipmentSlots returns the formal Protocol v29 equipment-slot order. The order is stable wire
+// EquipmentSlots returns the formal Protocol v31 equipment-slot order. The order is stable wire
 // presentation policy only; gameplay legality remains Server-owned and is validated per item.
 func EquipmentSlots() []EquipmentSlot {
 	return []EquipmentSlot{
@@ -35,6 +39,10 @@ func EquipmentSlots() []EquipmentSlot {
 		EquipmentSlotGloves,
 		EquipmentSlotLegs,
 		EquipmentSlotBoots,
+		EquipmentSlotNecklace,
+		EquipmentSlotRing1,
+		EquipmentSlotRing2,
+		EquipmentSlotBelt,
 	}
 }
 

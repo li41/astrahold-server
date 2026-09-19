@@ -20,16 +20,28 @@ func TestFreshPlayerUsesWorldMasterSpawnAndCanReachEmberwatchCenter(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := respawnpolicy.ValidateAgainstWorld(loadedRespawn.Definition, loadedWorld.Definition); err != nil {
+	heightfields, err := loadWorldHeightfields("../../worlds/castle-sandbox/gameplay.json", loadedWorld.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nav, err := navigation.NewGameplayNavigatorWithHeightfields(loadedWorld.Definition, heightfields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRespawn, err := respawnpolicy.ResolveGroundPositions(loadedRespawn.Definition, loadedWorld.Definition, nav)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	spawn, err := freshPlayerSpawn(loadedRespawn.Definition)
+	spawn, err := freshPlayerSpawn(resolvedRespawn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if spawn.ID != "field-camp" || spawn.Layer != 0 || spawn.X != 0 || spawn.Z != -220 {
 		t.Fatalf("fresh spawn=%#v; want field-camp on layer 0 at (0,-220)", spawn)
+	}
+	if spawn.Y == 0 {
+		t.Fatalf("fresh spawn y=%g; want authoritative Map1 terrain height", spawn.Y)
 	}
 
 	factory := newWorldPlayerFactory(spawn, loadedWorld.Definition.Agent)
@@ -47,10 +59,6 @@ func TestFreshPlayerUsesWorldMasterSpawnAndCanReachEmberwatchCenter(t *testing.T
 		MaxStepHeight: spec.MaxStepHeight,
 	}
 
-	nav, err := navigation.NewGameplayNavigator(loadedWorld.Definition)
-	if err != nil {
-		t.Fatal(err)
-	}
 	move := movement.NewService(nav, 0.1)
 	if err := move.AcceptInput(&state, movement.Input{Direction: world.Vec3{Z: 1}}); err != nil {
 		t.Fatal(err)

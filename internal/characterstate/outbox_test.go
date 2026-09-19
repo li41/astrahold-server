@@ -26,7 +26,7 @@ func TestSaveOutboxPendingIsNonDestructiveAndConfirmOrdered(t *testing.T) {
 		t.Fatalf("second=%#v err=%v", second, err)
 	}
 	pending := outbox.Pending(1)
-	if len(pending) != 1 || pending[0] != first || outbox.Depth() != 2 {
+	if len(pending) != 1 || !SaveIntentsEqual(pending[0], first) || outbox.Depth() != 2 {
 		t.Fatalf("pending=%#v depth=%d", pending, outbox.Depth())
 	}
 	if err := outbox.Confirm(second.IntentID); !errors.Is(err, ErrSaveConfirmOutOfOrder) {
@@ -36,7 +36,7 @@ func TestSaveOutboxPendingIsNonDestructiveAndConfirmOrdered(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending = outbox.Pending(0)
-	if len(pending) != 1 || pending[0] != second {
+	if len(pending) != 1 || !SaveIntentsEqual(pending[0], second) {
 		t.Fatalf("remaining=%#v", pending)
 	}
 }

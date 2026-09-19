@@ -3,6 +3,7 @@ package tcpudp
 import (
 	"context"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ func TestTrustedCharacterRestoreFactoryPopulatesJoin(t *testing.T) {
 		MaxHP:       1100,
 		MP:          100,
 		MaxMP:       100,
+		Warehouse:   characterstate.EmptyWarehouseState(),
 		PrimaryStats: characterstats.DefaultPrimary(),
 		Transform: world.Transform{
 			Position: world.Position{X: 14, Z: -2, Layer: 3},
@@ -59,7 +61,7 @@ func TestTrustedCharacterRestoreFactoryPopulatesJoin(t *testing.T) {
 	if _, err := transport.ReadEnvelope(conn, codec); err != nil { t.Fatal(err) }
 	select {
 	case join := <-runtime.joins:
-		if join.Restore == nil || *join.Restore != want { t.Fatalf("restore=%#v want=%#v", join.Restore, want) }
+		if join.Restore == nil || !reflect.DeepEqual(*join.Restore, want) { t.Fatalf("restore=%#v want=%#v", join.Restore, want) }
 	case <-time.After(time.Second):
 		t.Fatal("join not enqueued")
 	}

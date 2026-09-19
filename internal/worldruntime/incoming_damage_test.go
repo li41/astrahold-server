@@ -14,9 +14,9 @@ func TestPhysicalDefenseFormulaLocksShieldV1(t *testing.T) {
 		defense uint32
 		want    float64
 	}{
-		{2, 2.0 / 22.0},
-		{3, 3.0 / 23.0},
-		{4, 4.0 / 24.0},
+		{2, 2.0 / 102.0},
+		{3, 3.0 / 103.0},
+		{4, 4.0 / 104.0},
 	}
 	for _, tc := range cases {
 		if got := physicalMitigationRate(tc.defense); math.Abs(got-tc.want) > 1e-12 {
@@ -33,16 +33,16 @@ func TestPhysicalShieldMitigationAndBlockUseOneFinalRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !blocked.Blocked || blocked.FinalDamage != 58 {
-		t.Fatalf("blocked=%+v want damage=58 blocked=true", blocked)
+	if !blocked.Blocked || blocked.FinalDamage != 67 {
+		t.Fatalf("blocked=%+v want damage=67 blocked=true", blocked)
 	}
 
 	notBlocked, err := resolveDamageMitigation(request, guard, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if notBlocked.Blocked || notBlocked.FinalDamage != 83 {
-		t.Fatalf("notBlocked=%+v want damage=83 blocked=false", notBlocked)
+	if notBlocked.Blocked || notBlocked.FinalDamage != 96 {
+		t.Fatalf("notBlocked=%+v want damage=96 blocked=false", notBlocked)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestPhysicalDamageCanBeExplicitlyNonBlockable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Blocked || got.FinalDamage != 83 {
+	if got.Blocked || got.FinalDamage != 96 {
 		t.Fatalf("got=%+v", got)
 	}
 }

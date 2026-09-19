@@ -123,7 +123,7 @@ func TestHealingPotionUsePersistsAcrossSaveAndRestore(t *testing.T) {
 	for _, stack := range stacks { if stack.ItemArchetypeID == "item_minor_healing_potion" { persistedHealing = stack.Quantity; break } }
 	if persistedHealing != 4 { t.Fatalf("saved healing potion quantity=%d, want 4", persistedHealing) }
 
-	restore := CharacterRestoreFromRecord(characterstate.Record{SchemaVersion: characterstate.InventorySchemaVersion, CharacterID: identity.ID, Revision: 1, Snapshot: intent.Snapshot})
+	restore := CharacterRestoreFromRecord(characterstate.Record{SchemaVersion: characterstate.SchemaVersion, CharacterID: identity.ID, Revision: 1, Snapshot: intent.Snapshot})
 	rt2 := makeRestoreRuntime(t)
 	conn2 := session.NewQueueConnection(32, 32)
 	s2, err := session.NewWithCharacterIdentity(2, 2, identity, 64, conn2)

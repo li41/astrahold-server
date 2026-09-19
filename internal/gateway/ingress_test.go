@@ -10,11 +10,13 @@ import (
 )
 
 type fakeSink struct {
-	sessionID session.ID
-	sequence  uint32
-	input     protocol.ClientMoveInput
-	action    protocol.ClientUseAction
-	err       error
+	sessionID         session.ID
+	sequence          uint32
+	input             protocol.ClientMoveInput
+	action            protocol.ClientUseAction
+	equipment         protocol.ClientEquipmentCommand
+	equipmentInstance protocol.ClientEquipmentInstanceCommand
+	err               error
 }
 
 func (f *fakeSink) EnqueueMove(id session.ID, sequence uint32, input protocol.ClientMoveInput) error {
@@ -28,6 +30,20 @@ func (f *fakeSink) EnqueueUseAction(id session.ID, sequence uint32, action proto
 	f.sessionID = id
 	f.sequence = sequence
 	f.action = action
+	return f.err
+}
+
+func (f *fakeSink) EnqueueEquipmentCommand(id session.ID, sequence uint32, command protocol.ClientEquipmentCommand) error {
+	f.sessionID = id
+	f.sequence = sequence
+	f.equipment = command
+	return f.err
+}
+
+func (f *fakeSink) EnqueueEquipmentInstanceCommand(id session.ID, sequence uint32, command protocol.ClientEquipmentInstanceCommand) error {
+	f.sessionID = id
+	f.sequence = sequence
+	f.equipmentInstance = command
 	return f.err
 }
 
@@ -72,6 +88,76 @@ func TestIngressRoutesReliablePointActionWithoutTargetID(t *testing.T) {
 	}
 	if sink.sessionID != 9 || sink.sequence != 6 || sink.action.ActionID != action.ActionID || sink.action.TargetKind != protocol.ActionTargetPoint || sink.action.TargetID != "" || sink.action.TargetX == nil || sink.action.TargetZ == nil || *sink.action.TargetX != x || *sink.action.TargetZ != z {
 		t.Fatalf("unexpected point action routing: %#v", sink)
+	}
+}
+
+func TestIngressRoutesGenericEquipmentAcrossFormalSlots(t *testing.T) {
+	for i, slot := range protocol.EquipmentSlots() {
+		sink := &fakeSink{}
+		ingress := NewIngress(sink)
+		command := protocol.ClientEquipmentCommand{
+			Operation: protocol.EquipmentOperationUnequip,
+			Slot:      slot,
+		}
+		err := ingress.Handle(7, protocol.Envelope{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Sequence: uint32(i + 1),
+			Message:  command,
+		})
+		if err != nil {
+			t.Fatalf("slot %q: %v", slot, err)
+		}
+		if sink.sessionID != 7 || sink.sequence != uint32(i+1) || sink.equipment != command {
+			t.Fatalf("slot %q unexpected routing: %#v", slot, sink)
+		}
+	}
+}
+
+func TestIngressRoutesExactEquipmentAcrossFormalSlots(t *testing.T) {
+	for i, slot := range protocol.EquipmentSlots() {
+		sink := &fakeSink{}
+		ingress := NewIngress(sink)
+		command := protocol.ClientEquipmentInstanceCommand{
+			Operation:      protocol.EquipmentOperationEquip,
+			Slot:           slot,
+			ItemInstanceID: "instance-1",
+		}
+		err := ingress.Handle(8, protocol.Envelope{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Sequence: uint32(i + 1),
+			Message:  command,
+		})
+		if err != nil {
+			t.Fatalf("slot %q: %v", slot, err)
+		}
+		if sink.sessionID != 8 || sink.sequence != uint32(i+1) || sink.equipmentInstance != command {
+			t.Fatalf("slot %q unexpected routing: %#v", slot, sink)
+		}
+	}
+}
+
+func TestIngressRejectsUnknownEquipmentSlot(t *testing.T) {
+	ingress := NewIngress(&fakeSink{})
+	tests := []protocol.Message{
+		protocol.ClientEquipmentCommand{
+			Operation: protocol.EquipmentOperationUnequip,
+			Slot:      protocol.EquipmentSlot("unknown"),
+		},
+		protocol.ClientEquipmentInstanceCommand{
+			Operation:      protocol.EquipmentOperationEquip,
+			Slot:           protocol.EquipmentSlot("unknown"),
+			ItemInstanceID: "instance-1",
+		},
+	}
+	for i, message := range tests {
+		err := ingress.Handle(1, protocol.Envelope{
+			Delivery: protocol.DeliveryReliableOrdered,
+			Sequence: uint32(i + 1),
+			Message:  message,
+		})
+		if !errors.Is(err, ErrInvalidClientEnvelope) {
+			t.Fatalf("case %d err=%v, want ErrInvalidClientEnvelope", i, err)
+		}
 	}
 }
 
