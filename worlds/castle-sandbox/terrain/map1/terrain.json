@@ -1,0 +1,29 @@
+{
+  "name": "map1",
+  "format": "f32le",
+  "shells": [
+    {
+      "id": "land",
+      "file": "land.bin",
+      "samples": [
+        801,
+        704
+      ],
+      "size": [
+        1600,
+        1405
+      ],
+      "stepXZ": [
+        2,
+        1.9985775248933144
+      ],
+      "origin": {
+        "x": 200,
+        "z": -197.5
+      },
+      "minHeight": -8.77904987335205,
+      "maxHeight": 63.98769760131836,
+      "sha256": "eff137f190c02355ba775fa4ac3df9c958b87640af1c770e1fccc25718f678f0"
+    }
+  ]
+}

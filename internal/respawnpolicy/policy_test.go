@@ -218,3 +218,27 @@ func testGameplayDefinition() gameplayworld.Definition {
 		}},
 	}
 }
+
+type fixedGroundResolver struct{ y float32 }
+
+func (r fixedGroundResolver) ResolveGroundPosition(position world.Position) (world.Position, error) {
+	position.Y = r.y
+	return position, nil
+}
+
+func TestResolveGroundPositionsProjectsRuntimeYWithoutMutatingSource(t *testing.T) {
+	definition := testDefinition()
+	gameplay := testGameplayDefinition()
+	resolved, err := ResolveGroundPositions(definition, gameplay, fixedGroundResolver{y: 12.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.SpawnPoints[0].Y != 0 {
+		t.Fatalf("source mutated: y=%g", definition.SpawnPoints[0].Y)
+	}
+	for _, point := range resolved.SpawnPoints {
+		if point.Y != 12.5 {
+			t.Fatalf("spawn %q y=%g want 12.5", point.ID, point.Y)
+		}
+	}
+}

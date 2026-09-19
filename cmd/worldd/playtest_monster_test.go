@@ -3,7 +3,9 @@ package main
 import (
 	"testing"
 
+	"github.com/li41/astrahold-server/internal/gameplayworld"
 	"github.com/li41/astrahold-server/internal/loot"
+	"github.com/li41/astrahold-server/internal/world"
 	"github.com/li41/astrahold-server/internal/map1loot"
 )
 
@@ -55,5 +57,32 @@ func TestPlaytestMonsterAIUsesSmallAuthoredIdlePatrol(t *testing.T) {
 	last := config.IdlePatrol[len(config.IdlePatrol)-1]
 	if last != home {
 		t.Fatalf("idle route does not close at home: last=%#v home=%#v", last, home)
+	}
+}
+
+type playtestTerrainResolver struct{}
+
+func (playtestTerrainResolver) ResolveGroundPosition(position world.Position) (world.Position, error) {
+	position.Y = 40 + position.X*0.1 + position.Z*0.01
+	return position, nil
+}
+
+func TestGroundedPlaytestMonsterFixtureUsesAuthoritativeGroundForHomePatrolAndRespawn(t *testing.T) {
+	agent := gameplayworld.AgentDefaults{Radius: 0.35, Height: 1.8, MaxStepHeight: 0.5}
+	fixture, err := newGroundedPlaytestMonsterFixture(playtestTerrainResolver{}, agent, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := fixture.AI.Home
+	if home.Y == 0 || fixture.Spawn.Entity.Transform.Position != home || fixture.Lifecycle.Spawn.Entity.Transform.Position != home {
+		t.Fatalf("home/spawn/lifecycle not grounded: home=%#v spawn=%#v lifecycle=%#v", home, fixture.Spawn.Entity.Transform.Position, fixture.Lifecycle.Spawn.Entity.Transform.Position)
+	}
+	if len(fixture.AI.IdlePatrol) != 4 {
+		t.Fatalf("patrol=%d", len(fixture.AI.IdlePatrol))
+	}
+	for i, point := range fixture.AI.IdlePatrol {
+		if point.Y == 0 {
+			t.Fatalf("patrol[%d] not grounded: %#v", i, point)
+		}
 	}
 }

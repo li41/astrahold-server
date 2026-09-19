@@ -11,11 +11,13 @@ import (
 	"io"
 	"math"
 	"os"
+	"path"
+	"strings"
 
 	"github.com/li41/astrahold-server/internal/world"
 )
 
-const SchemaVersion uint16 = 4
+const SchemaVersion uint16 = 5
 
 var (
 	ErrUnsupportedSchema = errors.New("gameplayworld: unsupported schema version")
@@ -62,6 +64,16 @@ type Surface struct {
 	Plane  SurfacePlane  `json:"plane"`
 }
 
+// HeightfieldBinding binds a Server-local baked terrain field to one authoritative surface.
+// Manifest is relative to the gameplay world file's directory. DataSHA256 is repeated in
+// gameplay.json intentionally so WorldIdentity changes whenever the authoritative terrain bytes change.
+type HeightfieldBinding struct {
+	SurfaceID  string `json:"surface_id"`
+	Manifest   string `json:"manifest"`
+	ShellID    string `json:"shell_id"`
+	DataSHA256 string `json:"data_sha256"`
+}
+
 type Portal struct {
 	ID            string        `json:"id"`
 	FromLayer     world.LayerID `json:"from_layer"`
@@ -103,6 +115,7 @@ type Definition struct {
 	Units         string         `json:"units"`
 	Agent         AgentDefaults  `json:"agent"`
 	Surfaces      []Surface      `json:"surfaces"`
+	Heightfields  []HeightfieldBinding `json:"heightfields"`
 	Regions       []RegionCore   `json:"regions"`
 	Maps          []MapAuthority `json:"maps"`
 	Portals       []Portal       `json:"portals"`
@@ -181,6 +194,20 @@ func Validate(d Definition) error {
 				return fmt.Errorf("%w: overlapping surfaces on layer %d: %s/%s", ErrInvalidDefinition, a.Layer, a.ID, b.ID)
 			}
 		}
+	}
+
+	heightfieldSurfaces := make(map[string]struct{}, len(d.Heightfields))
+	for i, binding := range d.Heightfields {
+		if binding.SurfaceID == "" || binding.ShellID == "" || !safeBundleRelativePath(binding.Manifest) || !validSHA256(binding.DataSHA256) {
+			return fmt.Errorf("%w: heightfields[%d]", ErrInvalidDefinition, i)
+		}
+		if _, ok := surfaceIDs[binding.SurfaceID]; !ok {
+			return fmt.Errorf("%w: heightfield surface missing: %s", ErrInvalidDefinition, binding.SurfaceID)
+		}
+		if _, exists := heightfieldSurfaces[binding.SurfaceID]; exists {
+			return fmt.Errorf("%w: duplicate heightfield surface %q", ErrInvalidDefinition, binding.SurfaceID)
+		}
+		heightfieldSurfaces[binding.SurfaceID] = struct{}{}
 	}
 	if err := validateRegions(d); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidDefinition, err)
@@ -267,6 +294,22 @@ func finite(v float32) bool {
 }
 
 func positiveFinite(v float32) bool { return finite(v) && v > 0 }
+
+func safeBundleRelativePath(value string) bool {
+	if value == "" || strings.Contains(value, "\\") || strings.HasPrefix(value, "/") {
+		return false
+	}
+	clean := path.Clean(value)
+	return clean == value && clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
 
 func overlapsInterior(a, b BoundsXZ) bool {
 	return a.MinX < b.MaxX && a.MaxX > b.MinX && a.MinZ < b.MaxZ && a.MaxZ > b.MinZ

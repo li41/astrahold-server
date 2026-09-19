@@ -44,12 +44,16 @@ func playtestMonsterIdlePatrol() []world.Position {
 }
 
 func newPlaytestMonsterSpawn(agent gameplayworld.AgentDefaults) worldruntime.SpawnEntityRequest {
+	return newPlaytestMonsterSpawnAt(agent, playtestMonsterHome())
+}
+
+func newPlaytestMonsterSpawnAt(agent gameplayworld.AgentDefaults, position world.Position) worldruntime.SpawnEntityRequest {
 	definition := playtestMonsterDefinition()
 	request, err := worldruntime.NewMonsterSpawnEntityRequest(definition, world.EntityState{
 		ID:          playtestMonsterEntityID,
 		Kind:        world.EntityMonster,
 		ArchetypeID: definition.ArchetypeID,
-		Transform:   world.Transform{Position: playtestMonsterHome()},
+		Transform:   world.Transform{Position: position},
 	}, agent.Radius, agent.MaxStepHeight)
 	if err != nil {
 		panic(err)
@@ -58,10 +62,14 @@ func newPlaytestMonsterSpawn(agent gameplayworld.AgentDefaults) worldruntime.Spa
 }
 
 func newPlaytestMonsterAIConfig() worldruntime.AutonomousMeleeAgentConfig {
+	return newPlaytestMonsterAIConfigAt(playtestMonsterHome(), playtestMonsterIdlePatrol())
+}
+
+func newPlaytestMonsterAIConfigAt(home world.Position, patrol []world.Position) worldruntime.AutonomousMeleeAgentConfig {
 	definition := playtestMonsterDefinition()
 	return worldruntime.AutonomousMeleeAgentConfig{
 		EntityID:              playtestMonsterEntityID,
-		Home:                  playtestMonsterHome(),
+		Home:                  home,
 		ActionID:              definition.MeleeActionID,
 		AggroRange:            definition.AggroRange,
 		LeashRange:            definition.LeashRange,
@@ -74,18 +82,51 @@ func newPlaytestMonsterAIConfig() worldruntime.AutonomousMeleeAgentConfig {
 		AssistRadius:          definition.AssistRadius,
 		MaxAssist:             definition.MaxAssist,
 		ReturnTolerance:       0.25,
-		IdlePatrol:            playtestMonsterIdlePatrol(),
+		IdlePatrol:            append([]world.Position(nil), patrol...),
 		PatrolTolerance:       playtestMonsterPatrolToleranceMeters,
 	}
 }
 
 func newPlaytestMonsterLifecycleConfig(agent gameplayworld.AgentDefaults, tickRate int) worldruntime.MonsterLifecycleConfig {
+	return newPlaytestMonsterLifecycleConfigAt(agent, tickRate, playtestMonsterHome())
+}
+
+func newPlaytestMonsterLifecycleConfigAt(agent gameplayworld.AgentDefaults, tickRate int, position world.Position) worldruntime.MonsterLifecycleConfig {
 	definition := playtestMonsterDefinition()
 	return worldruntime.MonsterLifecycleConfig{
-		Spawn:             newPlaytestMonsterSpawn(agent),
+		Spawn:             newPlaytestMonsterSpawnAt(agent, position),
 		CorpseHoldTicks:   uint64(definition.CorpseHoldSeconds) * uint64(tickRate),
 		RespawnDelayTicks: uint64(definition.RespawnDelaySeconds) * uint64(tickRate),
 	}
+}
+
+type playtestGroundResolver interface {
+	ResolveGroundPosition(world.Position) (world.Position, error)
+}
+
+type groundedPlaytestMonsterFixture struct {
+	Spawn     worldruntime.SpawnEntityRequest
+	AI        worldruntime.AutonomousMeleeAgentConfig
+	Lifecycle worldruntime.MonsterLifecycleConfig
+}
+
+func newGroundedPlaytestMonsterFixture(resolver playtestGroundResolver, agent gameplayworld.AgentDefaults, tickRate int) (groundedPlaytestMonsterFixture, error) {
+	home, err := resolver.ResolveGroundPosition(playtestMonsterHome())
+	if err != nil {
+		return groundedPlaytestMonsterFixture{}, err
+	}
+	patrol := playtestMonsterIdlePatrol()
+	for i := range patrol {
+		patrol[i], err = resolver.ResolveGroundPosition(patrol[i])
+		if err != nil {
+			return groundedPlaytestMonsterFixture{}, err
+		}
+	}
+	return groundedPlaytestMonsterFixture{
+		Spawn:     newPlaytestMonsterSpawnAt(agent, home),
+		AI:        newPlaytestMonsterAIConfigAt(home, patrol),
+		Lifecycle: newPlaytestMonsterLifecycleConfigAt(agent, tickRate, home),
+	}, nil
 }
 
 func newPlaytestMonsterLootCatalog() *loot.Catalog {
