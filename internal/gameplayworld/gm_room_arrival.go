@@ -16,7 +16,7 @@ const (
 	// GMRoomGameplaySHA256 is the SHA-256 of worlds/gm-room/gameplay.json for the revision above.
 	// The authoritative fixture test deliberately fails when that file changes without this
 	// cross-world destination contract being reviewed.
-	GMRoomGameplaySHA256 = "33054700f287238164904982412a2bb247b66704159fe4447cd5e2091dd6a95e"
+	GMRoomGameplaySHA256 = "7deeca7dacc13fdab6952c3060d9c3c5d99ecc8c6d143f3dc13fb31a418a4d5c"
 
 	GMRoomFloorSurfaceID       = "map0-floor"
 	GMRoomStockKeeperBlockerID = "stock-keeper"

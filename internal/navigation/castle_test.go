@@ -40,27 +40,30 @@ func TestCastleSandboxEmberwatchVillageBlockers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Definition.Revision != "first-continent-world-master-v2" {
-		t.Fatalf("revision=%q, want first-continent-world-master-v2", loaded.Definition.Revision)
+	if loaded.Definition.Revision != "first-continent-map1-terrain-v1" {
+		t.Fatalf("revision=%q, want first-continent-map1-terrain-v1", loaded.Definition.Revision)
 	}
 
 	type expectedBlocker struct {
 		id        string
 		bounds    gameplayworld.BoundsXZ
+		minY      float32
 		maxY      float32
 		blocksLOS bool
 	}
 	expected := []expectedBlocker{
-		{id: "emberwatch-warden-post", bounds: gameplayworld.BoundsXZ{MinX: -11.8, MaxX: -9.2, MinZ: -43.8, MaxZ: -33.2}, maxY: 4.6, blocksLOS: true},
-		{id: "emberwatch-house-west", bounds: gameplayworld.BoundsXZ{MinX: -29.3, MaxX: -20.7, MinZ: -27.6, MaxZ: -23.4}, maxY: 5.2, blocksLOS: true},
-		{id: "emberwatch-cottage-west", bounds: gameplayworld.BoundsXZ{MinX: -16.8, MaxX: -14.2, MinZ: -18, MaxZ: -13}, maxY: 4.6, blocksLOS: true},
-		{id: "emberwatch-house-east", bounds: gameplayworld.BoundsXZ{MinX: 21.1, MaxX: 26.9, MinZ: -16.2, MaxZ: -7.8}, maxY: 5.2, blocksLOS: true},
-		{id: "emberwatch-gate-hut", bounds: gameplayworld.BoundsXZ{MinX: 6.7, MaxX: 10.3, MinZ: -8.6, MaxZ: 1.6}, maxY: 4.6, blocksLOS: true},
-		{id: "emberwatch-cottage-east", bounds: gameplayworld.BoundsXZ{MinX: 14.6, MaxX: 18.4, MinZ: -34, MaxZ: -31}, maxY: 4.6, blocksLOS: true},
-		{id: "emberwatch-chapel", bounds: gameplayworld.BoundsXZ{MinX: -23.4, MaxX: -9.6, MinZ: -7.7, MaxZ: 1.7}, maxY: 12.1, blocksLOS: true},
-		{id: "emberwatch-market-shed", bounds: gameplayworld.BoundsXZ{MinX: 4.6, MaxX: 13.4, MinZ: -38.5, MaxZ: -36.5}, maxY: 3.8, blocksLOS: true},
-		{id: "emberwatch-well", bounds: gameplayworld.BoundsXZ{MinX: 4.6, MaxX: 7.4, MinZ: -34.4, MaxZ: -31.6}, maxY: 3, blocksLOS: false},
-		{id: "emberwatch-campfire", bounds: gameplayworld.BoundsXZ{MinX: -5.4, MaxX: -3.6, MinZ: -41.4, MaxZ: -39.6}, maxY: 1, blocksLOS: false},
+		{id: "map1-emberwatch-hall", bounds: gameplayworld.BoundsXZ{MinX: -30.5, MaxX: -13.5, MinZ: -19.61, MaxZ: -8.39}, minY: 44.02, maxY: 48.02, blocksLOS: true},
+		{id: "map1-emberwatch-inn", bounds: gameplayworld.BoundsXZ{MinX: 20.23, MaxX: 27.77, MinZ: -0.31, MaxZ: 8.31}, minY: 45.36, maxY: 49.36, blocksLOS: true},
+		{id: "map1-emberwatch-supply", bounds: gameplayworld.BoundsXZ{MinX: 36.68, MaxX: 47.32, MinZ: -27.79, MaxZ: -12.21}, minY: 45.32, maxY: 49.32, blocksLOS: true},
+		{id: "map1-emberwatch-herbalist", bounds: gameplayworld.BoundsXZ{MinX: -50.13, MaxX: -40.87, MinZ: -1.46, MaxZ: 13.46}, minY: 46.2, maxY: 50.2, blocksLOS: true},
+		{id: "map1-emberwatch-bakery", bounds: gameplayworld.BoundsXZ{MinX: -24.54, MaxX: -15.46, MinZ: 18.38, MaxZ: 25.62}, minY: 46.57, maxY: 50.57, blocksLOS: true},
+		{id: "map1-emberwatch-notice", bounds: gameplayworld.BoundsXZ{MinX: 11.35, MaxX: 14.65, MinZ: -25.95, MaxZ: -24.05}, minY: 44.49, maxY: 47.49, blocksLOS: true},
+		{id: "map1-emberwatch-watch-tree", bounds: gameplayworld.BoundsXZ{MinX: -43.1, MaxX: -32.9, MinZ: 32.9, MaxZ: 43.1}, minY: 47.58, maxY: 54.38, blocksLOS: true},
+		{id: "map1-emberwatch-cottage-east", bounds: gameplayworld.BoundsXZ{MinX: 7.96, MaxX: 20.04, MinZ: 22.5, MaxZ: 29.5}, minY: 46.61, maxY: 49.61, blocksLOS: true},
+		{id: "map1-emberwatch-cottage-north", bounds: gameplayworld.BoundsXZ{MinX: -16.04, MaxX: -3.96, MinZ: -55.25, MaxZ: -48.75}, minY: 41.59, maxY: 46.59, blocksLOS: true},
+		{id: "map1-emberwatch-cottage-west", bounds: gameplayworld.BoundsXZ{MinX: -51.73, MaxX: -48.27, MinZ: -38.74, MaxZ: -29.26}, minY: 44.49, maxY: 47.49, blocksLOS: true},
+		{id: "map1-emberwatch-cottage-tall", bounds: gameplayworld.BoundsXZ{MinX: 19.67, MaxX: 24.33, MinZ: -51.96, MaxZ: -48.04}, minY: 41.43, maxY: 44.43, blocksLOS: true},
+		{id: "map1-emberwatch-cottage-south", bounds: gameplayworld.BoundsXZ{MinX: 48.94, MaxX: 55.06, MinZ: 7.85, MaxZ: 16.15}, minY: 46.32, maxY: 51.32, blocksLOS: true},
 	}
 
 	byID := make(map[string]gameplayworld.Blocker, len(loaded.Definition.Blockers))
@@ -79,8 +82,8 @@ func TestCastleSandboxEmberwatchVillageBlockers(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing blocker %q", want.id)
 		}
-		if got.Layer != 0 || got.Bounds != want.bounds || got.MinY != 0 || got.MaxY != want.maxY || !got.BlocksMovement || got.BlocksLOS != want.blocksLOS || !got.Enabled {
-			t.Fatalf("blocker %q=%+v, want bounds=%+v maxY=%g blocksLOS=%t movement/enabled=true", want.id, got, want.bounds, want.maxY, want.blocksLOS)
+		if got.Layer != 0 || got.Bounds != want.bounds || got.MinY != want.minY || got.MaxY != want.maxY || !got.BlocksMovement || got.BlocksLOS != want.blocksLOS || !got.Enabled {
+			t.Fatalf("blocker %q=%+v, want bounds=%+v minY=%g maxY=%g blocksLOS=%t movement/enabled=true", want.id, got, want.bounds, want.minY, want.maxY, want.blocksLOS)
 		}
 
 		centerX := (want.bounds.MinX + want.bounds.MaxX) / 2
@@ -90,8 +93,9 @@ func TestCastleSandboxEmberwatchVillageBlockers(t *testing.T) {
 		}
 
 		centerZ := (want.bounds.MinZ + want.bounds.MaxZ) / 2
-		losFrom := world.Position{X: want.bounds.MinX - 1, Y: 0.9, Z: centerZ, Layer: 0}
-		losTo := world.Position{X: want.bounds.MaxX + 1, Y: 0.9, Z: centerZ, Layer: 0}
+		losY := (want.minY + want.maxY) / 2
+		losFrom := world.Position{X: want.bounds.MinX - 1, Y: losY, Z: centerZ, Layer: 0}
+		losTo := world.Position{X: want.bounds.MaxX + 1, Y: losY, Z: centerZ, Layer: 0}
 		if gotLOS := nav.HasLineOfSight(losFrom, losTo); gotLOS == want.blocksLOS {
 			t.Fatalf("blocker %q LOS=%t, blocks_los=%t", want.id, gotLOS, want.blocksLOS)
 		}
